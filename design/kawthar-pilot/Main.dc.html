@@ -1,0 +1,238 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cairo:wght@400;600;700;800&family=Marhey:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  a { color: #16406b; }
+  a:hover { color: #0f1c33; }
+  .page {
+    width: 794px; height: 1123px; position: relative;
+    background: #fbf3e2;
+    font-family: 'Cairo', sans-serif;
+    direction: rtl;
+    overflow: hidden;
+  }
+  .border-outer {
+    position: absolute; inset: 14px; border: 6px solid #1b2a4a;
+    border-radius: 34px; pointer-events: none;
+  }
+  .border-inner {
+    position: absolute; inset: 23px; border: 2px solid #c9a24b;
+    border-radius: 26px; pointer-events: none;
+  }
+  .corner { position: absolute; width: 58px; height: 58px; }
+  .tl { top: 20px; left: 20px; }
+  .tr { top: 20px; right: 20px; transform: scaleX(-1); }
+  .bl { bottom: 20px; left: 20px; transform: scaleY(-1); }
+  .br { bottom: 20px; right: 20px; transform: scale(-1,-1); }
+
+  .header { position: absolute; top: 34px; left: 40px; right: 40px; height: 210px; }
+  .title-wrap { text-align: center; padding-top: 6px; }
+  .title { font-family: 'Marhey', sans-serif; font-weight: 700; font-size: 62px;
+    color: #1b2a4a; margin: 0; line-height: 1.05;
+    text-shadow: 0 2px 0 #e7c675, 0 3px 6px rgba(27,42,74,0.15); }
+  .banner-wrap { display: flex; justify-content: center; margin-top: 6px; }
+  .banner {
+    background: #1b2a4a; color: #f5e4b8; border: 2px solid #c9a24b;
+    border-radius: 999px; padding: 9px 30px; font-family: 'Cairo', sans-serif;
+    font-weight: 700; font-size: 20px; letter-spacing: 0.5px;
+  }
+  .bird-wrap { position: absolute; top: 4px; left: 4px; width: 150px; height: 108px; }
+  .lantern-wrap { position: absolute; top: -6px; right: 30px; width: 92px; height: 150px; }
+  .moon-wrap { position: absolute; top: 4px; right: 130px; width: 60px; height: 60px; }
+  .cloud-wrap-l { position: absolute; top: 96px; left: 120px; width: 110px; height: 46px; }
+  .cloud-wrap-r { position: absolute; top: 100px; right: 168px; width: 100px; height: 42px; }
+  .star-scatter { position: absolute; }
+
+  .content { position: absolute; top: 262px; left: 40px; width: 714px; height: 690px; }
+  .verse-card {
+    position: absolute; border-radius: 30px; background: #ffffff;
+    box-shadow: 0 6px 16px rgba(27,42,74,0.10);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 30px 18px 16px 18px; text-align: center;
+  }
+  .v-badge {
+    position: absolute; top: -24px; width: 48px; height: 48px; border-radius: 50%;
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-family: 'Cairo', sans-serif; font-weight: 800; font-size: 22px;
+    border: 3px solid #fff; box-shadow: 0 3px 8px rgba(0,0,0,0.18);
+  }
+  .v-text-box {
+    border: 2px dashed; border-radius: 18px; padding: 14px 12px;
+    font-family: 'Amiri Quran', serif; color: #1b2a4a; line-height: 1.9;
+    background: rgba(255,255,255,0.6);
+  }
+  .v-caption { font-size: 14px; color: #55606f; font-weight: 600; margin-top: 8px; }
+
+  .med { position: absolute; left: 297px; top: 205px; width: 160px; height: 160px;
+    border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fffdf5, #f6e9c9);
+    border: 4px solid #c9a24b; box-shadow: 0 6px 14px rgba(27,42,74,0.18);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; z-index: 3; }
+  .med-title { font-family: 'Marhey', sans-serif; font-weight: 700; font-size: 22px; color: #1b2a4a; }
+
+  .footer { position: absolute; bottom: 42px; left: 40px; right: 40px; }
+  .footer-row1 { display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .pill { border: 2px solid #c9a24b; border-radius: 999px; padding: 8px 20px;
+    font-weight: 700; font-size: 15px; color: #1b2a4a; background: #fff8e8; white-space: nowrap; }
+  .stars-row { display: flex; gap: 6px; align-items: center; }
+  .footer-row2 { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px;
+    font-weight: 700; font-size: 16px; color: #1b2a4a; }
+</style>
+</helmet>
+
+<div class="page">
+  <div class="border-outer"></div>
+  <div class="border-inner"></div>
+
+  <!-- corner ornaments -->
+  <svg class="corner tl" viewBox="0 0 58 58" fill="none"><path d="M4 54 Q4 4 54 4" stroke="#c9a24b" stroke-width="2.5"/><circle cx="10" cy="10" r="4.5" fill="#c9a24b"/><path d="M4 30 Q4 4 30 4" stroke="#c9a24b" stroke-width="1.5"/></svg>
+  <svg class="corner tr" viewBox="0 0 58 58" fill="none"><path d="M4 54 Q4 4 54 4" stroke="#c9a24b" stroke-width="2.5"/><circle cx="10" cy="10" r="4.5" fill="#c9a24b"/><path d="M4 30 Q4 4 30 4" stroke="#c9a24b" stroke-width="1.5"/></svg>
+  <svg class="corner bl" viewBox="0 0 58 58" fill="none"><path d="M4 54 Q4 4 54 4" stroke="#c9a24b" stroke-width="2.5"/><circle cx="10" cy="10" r="4.5" fill="#c9a24b"/><path d="M4 30 Q4 4 30 4" stroke="#c9a24b" stroke-width="1.5"/></svg>
+  <svg class="corner br" viewBox="0 0 58 58" fill="none"><path d="M4 54 Q4 4 54 4" stroke="#c9a24b" stroke-width="2.5"/><circle cx="10" cy="10" r="4.5" fill="#c9a24b"/><path d="M4 30 Q4 4 30 4" stroke="#c9a24b" stroke-width="1.5"/></svg>
+
+  <div class="header">
+    <!-- bird on branch -->
+    <svg class="bird-wrap" viewBox="0 0 150 108" fill="none">
+      <path d="M4 60 Q40 40 90 46 Q120 49 146 30" stroke="#7a5a3a" stroke-width="4" stroke-linecap="round" fill="none"/>
+      <ellipse cx="46" cy="52" rx="6" ry="10" fill="#89bf7a" transform="rotate(-20 46 52)"/>
+      <ellipse cx="70" cy="44" rx="6" ry="10" fill="#89bf7a" transform="rotate(10 70 44)"/>
+      <ellipse cx="100" cy="42" rx="6" ry="10" fill="#89bf7a" transform="rotate(-8 100 42)"/>
+      <g transform="translate(56 20)">
+        <ellipse cx="20" cy="24" rx="19" ry="16" fill="#7fa9d1"/>
+        <circle cx="34" cy="14" r="11" fill="#9cc0e6"/>
+        <path d="M43 12 L52 14 L43 17 Z" fill="#e7b25c"/>
+        <circle cx="37" cy="11" r="2" fill="#1b2a4a"/>
+        <path d="M8 30 Q0 34 3 42 Q10 38 14 30 Z" fill="#5f89b8"/>
+      </g>
+    </svg>
+    <!-- crescent -->
+    <svg class="moon-wrap" viewBox="0 0 60 60" fill="none">
+      <path d="M38 6 A24 24 0 1 0 38 54 A19 19 0 1 1 38 6 Z" fill="#e7c675"/>
+    </svg>
+    <!-- lantern -->
+    <svg class="lantern-wrap" viewBox="0 0 92 150" fill="none">
+      <line x1="46" y1="0" x2="46" y2="30" stroke="#c9a24b" stroke-width="2"/>
+      <ellipse cx="46" cy="34" rx="8" ry="5" fill="#c9a24b"/>
+      <path d="M22 42 Q46 30 70 42 L64 108 Q46 118 28 108 Z" fill="#f5e4b8" stroke="#c9a24b" stroke-width="2.5"/>
+      <ellipse cx="46" cy="75" rx="14" ry="20" fill="#fbe37a" opacity="0.8"/>
+      <path d="M20 44 Q46 56 72 44" stroke="#c9a24b" stroke-width="2" fill="none"/>
+      <path d="M22 106 Q46 96 70 106 L46 122 Z" fill="#c9a24b"/>
+      <circle cx="46" cy="130" r="4" fill="#c9a24b"/>
+    </svg>
+    <!-- scattered stars -->
+    <svg class="star-scatter" style="top:8px; right:14px" width="16" height="16" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="#c9a24b"/></svg>
+    <svg class="star-scatter" style="top:150px; right:70px" width="12" height="12" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="#c9a24b"/></svg>
+    <svg class="star-scatter" style="top:170px; left:80px" width="12" height="12" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="#c9a24b"/></svg>
+    <!-- clouds -->
+    <svg class="cloud-wrap-l" viewBox="0 0 110 46" fill="#ffffff" opacity="0.9"><ellipse cx="26" cy="28" rx="22" ry="14"/><ellipse cx="52" cy="20" rx="26" ry="17"/><ellipse cx="80" cy="30" rx="20" ry="13"/></svg>
+    <svg class="cloud-wrap-r" viewBox="0 0 100 42" fill="#ffffff" opacity="0.9"><ellipse cx="22" cy="26" rx="18" ry="12"/><ellipse cx="46" cy="18" rx="22" ry="15"/><ellipse cx="72" cy="27" rx="17" ry="11"/></svg>
+
+    <div class="title-wrap">
+      <h1 class="title">سورة الكوثر</h1>
+      <div class="banner-wrap"><div class="banner">خريطة النور الأولى</div></div>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Ayah 1 -->
+    <div class="verse-card" style="left:147px; top:0; width:420px; height:222px; border:4px solid #3f9d95;">
+      <div class="v-badge" style="background:#3f9d95;">١</div>
+      <div class="v-text-box" style="border-color:#8fd6cf; font-size:30px; margin-top:6px;">إِنَّآ أَعْطَيْنَٰكَ ٱلْكَوْثَرَ</div>
+      <svg width="120" height="66" viewBox="0 0 120 66" style="margin-top:6px;">
+        <path d="M0 50 Q30 30 60 46 Q90 60 120 40 L120 66 L0 66 Z" fill="#bfe0b0"/>
+        <path d="M0 58 Q30 44 60 54 Q90 64 120 50 L120 66 L0 66 Z" fill="#a9d495"/>
+        <path d="M10 44 Q40 20 70 40 Q95 55 118 36" stroke="#7fc2e6" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <circle cx="30" cy="14" r="4" fill="#f2c14e"/>
+        <circle cx="88" cy="10" r="3" fill="#f2c14e"/>
+        <path d="M52 10 Q56 4 60 10 Q56 14 52 10 Z" fill="#f2a6b0"/>
+      </svg>
+      <div class="v-caption">نهر الكوثر — خيرٌ كثير وهبه الله لنبيّه ﷺ</div>
+    </div>
+
+    <!-- Medallion -->
+    <div class="med">
+      <svg width="52" height="52" viewBox="0 0 52 52">
+        <path d="M6 30 Q18 18 26 26 Q34 34 46 22" stroke="#3f9d95" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M14 34 Q10 40 16 44" stroke="#89bf7a" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M38 20 Q42 14 38 10" stroke="#89bf7a" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="26" cy="14" r="3" fill="#e7c675"/>
+      </svg>
+      <div class="med-title">الكَوْثَر</div>
+    </div>
+
+    <!-- Ayah 2 -->
+    <div class="verse-card" style="left:8px; top:352px; width:346px; height:300px; border:4px solid #6fae5a;">
+      <div class="v-badge" style="background:#6fae5a;">٢</div>
+      <div class="v-text-box" style="border-color:#bcd9a8; font-size:26px; margin-top:6px;">فَصَلِّ لِرَبِّكَ وَٱنْحَرْ</div>
+      <svg width="140" height="110" viewBox="0 0 140 110" style="margin-top:10px;">
+        <g transform="translate(20 4)">
+          <path d="M18 30 Q10 46 18 62" stroke="#8fbf7a" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M28 30 Q36 46 28 62" stroke="#8fbf7a" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M10 62 Q23 76 36 62 L34 96 L12 96 Z" fill="#7fa9d1"/>
+          <circle cx="23" cy="18" r="13" fill="#f0c9a0"/>
+          <path d="M10 12 Q23 -2 36 12 Q36 6 23 4 Q10 6 10 12Z" fill="#e7c675"/>
+          <path d="M6 30 Q0 24 4 16" stroke="#f2a6b0" stroke-width="3" fill="none" stroke-linecap="round"/>
+        </g>
+        <g transform="translate(84 46)">
+          <ellipse cx="24" cy="34" rx="22" ry="16" fill="#f4ede2"/>
+          <ellipse cx="24" cy="34" rx="22" ry="16" fill="none" stroke="#d8cbb3" stroke-width="2"/>
+          <circle cx="10" cy="20" r="8" fill="#f4ede2" stroke="#d8cbb3" stroke-width="2"/>
+          <path d="M4 15 L2 6" stroke="#d8cbb3" stroke-width="2" stroke-linecap="round"/>
+          <path d="M16 15 L18 6" stroke="#d8cbb3" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="7" cy="21" r="1.6" fill="#1b2a4a"/>
+          <circle cx="13" cy="21" r="1.6" fill="#1b2a4a"/>
+          <path d="M14 46 L18 52" stroke="#c9b08a" stroke-width="4" stroke-linecap="round"/>
+          <path d="M34 46 L30 52" stroke="#c9b08a" stroke-width="4" stroke-linecap="round"/>
+        </g>
+      </svg>
+      <div class="v-caption">نصلّي ونشكر الله على نعمه</div>
+    </div>
+
+    <!-- Ayah 3 -->
+    <div class="verse-card" style="left:392px; top:352px; width:346px; height:300px; border:4px solid #8f6fc4;">
+      <div class="v-badge" style="background:#8f6fc4;">٣</div>
+      <div class="v-text-box" style="border-color:#d3c4ec; font-size:24px; margin-top:6px;">إِنَّ شَانِئَكَ هُوَ ٱلْأَبْتَرُ</div>
+      <svg width="150" height="100" viewBox="0 0 150 100" style="margin-top:10px;">
+        <path d="M40 90 Q40 50 40 20" stroke="#7a5a3a" stroke-width="5" stroke-linecap="round" fill="none"/>
+        <ellipse cx="22" cy="30" rx="12" ry="7" fill="#8fbf7a" transform="rotate(-30 22 30)"/>
+        <ellipse cx="58" cy="26" rx="12" ry="7" fill="#8fbf7a" transform="rotate(25 58 26)"/>
+        <ellipse cx="26" cy="52" rx="11" ry="6" fill="#8fbf7a" transform="rotate(-25 26 52)"/>
+        <ellipse cx="54" cy="50" rx="11" ry="6" fill="#8fbf7a" transform="rotate(20 54 50)"/>
+        <circle cx="40" cy="14" r="6" fill="#f2a6b0"/>
+        <path d="M120 90 Q120 66 120 44" stroke="#a99a86" stroke-width="4" stroke-linecap="round" fill="none"/>
+        <path d="M120 60 L108 52" stroke="#a99a86" stroke-width="3" stroke-linecap="round"/>
+        <ellipse cx="104" cy="70" rx="8" ry="4" fill="#cbb98f" transform="rotate(30 104 70)"/>
+      </svg>
+      <div class="v-caption">من يبغض الخير يُحرم منه ويُقطع ذكرُه</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-row1">
+      <div class="pill">الروضة - التمهيدي</div>
+      <div class="pill" style="display:flex; align-items:center; gap:8px;">
+        لوّن نجمة كلما حفظت آية
+        <span class="stars-row">
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+        </span>
+      </div>
+    </div>
+    <div class="footer-row2">
+      <span>﴾</span> مدرسة درة البيان الخاصة <span>﴿</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

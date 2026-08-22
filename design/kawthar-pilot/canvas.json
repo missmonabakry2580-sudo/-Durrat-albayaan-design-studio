@@ -1,0 +1,8 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 794, "h": 1123, "title": "خريطة الحفظ", "print": "fixed" },
+    { "file": "Page2.dc.html", "x": 874, "y": 0, "w": 794, "h": 1123, "title": "الفهم والتثبيت", "print": "fixed" },
+    { "file": "Page3.dc.html", "x": 1748, "y": 0, "w": 794, "h": 1123, "title": "صفحة التلوين", "print": "fixed" }
+  ],
+  "launch": { "view": "canvas" }
+}

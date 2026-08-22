@@ -1,0 +1,210 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cairo:wght@400;600;700;800&family=Marhey:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  a { color: #16406b; }
+  a:hover { color: #0f1c33; }
+  .page {
+    width: 794px; height: 1123px; position: relative;
+    background: #fbf3e2;
+    font-family: 'Cairo', sans-serif;
+    direction: rtl;
+    overflow: hidden;
+  }
+  .border-outer { position: absolute; inset: 14px; border: 6px solid #1b2a4a; border-radius: 34px; pointer-events: none; }
+  .border-inner { position: absolute; inset: 23px; border: 2px solid #c9a24b; border-radius: 26px; pointer-events: none; }
+
+  .header { position: absolute; top: 30px; left: 40px; right: 40px; height: 150px; }
+  .title-wrap { text-align: center; padding-top: 2px; }
+  .title { font-family: 'Marhey', sans-serif; font-weight: 700; font-size: 46px;
+    color: #1b2a4a; margin: 0; line-height: 1.05;
+    text-shadow: 0 2px 0 #e7c675, 0 3px 6px rgba(27,42,74,0.15); }
+  .banner-wrap { display: flex; justify-content: center; margin-top: 6px; }
+  .banner { background: #1b2a4a; color: #f5e4b8; border: 2px solid #c9a24b; border-radius: 999px;
+    padding: 8px 26px; font-weight: 700; font-size: 18px; }
+  .bird-wrap { position: absolute; top: 0px; left: 0px; width: 110px; height: 80px; }
+  .lantern-wrap { position: absolute; top: -4px; right: 26px; width: 66px; height: 108px; }
+  .moon-wrap { position: absolute; top: 2px; right: 96px; width: 44px; height: 44px; }
+
+  .content { position: absolute; top: 196px; left: 40px; width: 714px; height: 760px; }
+
+  .card { position: absolute; border-radius: 24px; background: #fff; padding: 16px 18px; box-shadow: 0 4px 12px rgba(27,42,74,0.08); }
+  .card-title { display:flex; align-items:center; gap:8px; font-weight:800; font-size:18px; color:#1b2a4a; margin-bottom:10px; }
+  .tag-pill { display:inline-block; border-radius:999px; padding:2px 4px; }
+
+  .meaning-card { left: 0; top: 0; width: 336px; height: 210px; border: 3px solid #6fae5a; }
+  .meaning-text { font-size: 16px; line-height: 1.9; color: #33403a; }
+
+  .words-card { left: 378px; top: 0; width: 336px; height: 210px; border: 3px solid #e0899a; }
+  .words-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .word-item { border: 2px solid #f2c6d1; border-radius: 14px; padding: 6px 8px; text-align:center; }
+  .word-item b { display:block; color:#c04f68; font-size: 14.5px; }
+  .word-item span { font-size: 12px; color:#4a4a4a; }
+
+  .lessons-band { left: 0; top: 232px; width: 714px; height: 190px; border: 3px solid #c9a24b; }
+  .lessons-title { display:flex; align-items:center; justify-content:center; gap:10px; font-weight:800; font-size:19px; color:#1b2a4a; margin-bottom:12px;}
+  .lessons-row { display:flex; justify-content:space-around; align-items:flex-start; gap: 10px; }
+  .lesson-item { display:flex; flex-direction:column; align-items:center; width:180px; }
+  .lesson-circle { width:84px; height:84px; border-radius:50%; border:3px dashed #c9a24b; display:flex; align-items:center; justify-content:center; background:#fffaf0; }
+  .lesson-cap { margin-top:8px; font-weight:700; font-size:14.5px; color:#33403a; text-align:center; }
+
+  .activity-card { left: 0; top: 444px; width: 336px; height: 210px; border: 3px solid #8f6fc4; }
+  .match-row { display:flex; justify-content:space-between; margin-top:10px; }
+  .match-col { display:flex; flex-direction:column; gap:10px; }
+  .match-chip { border:2px solid #c9b8e0; border-radius:999px; padding:6px 14px; font-size:14px; font-weight:700; color:#1b2a4a; background:#f6f1fb; text-align:center; }
+
+  .listen-card { left: 378px; top: 444px; width: 336px; height: 210px; border: 3px solid #3f9d95; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; }
+  .qr-placeholder { width: 96px; height: 96px; border: 3px dashed #3f9d95; border-radius: 14px; position:relative; display:flex; align-items:center; justify-content:center; background:#eefaf9; }
+  .qr-corner { position:absolute; width:16px; height:16px; border: 3px solid #3f9d95; }
+  .listen-note { font-size: 12.5px; color:#4a4a4a; text-align:center; line-height:1.6; }
+
+  .footer { position: absolute; bottom: 40px; left: 40px; right: 40px; }
+  .footer-row1 { display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .pill { border: 2px solid #c9a24b; border-radius: 999px; padding: 8px 20px; font-weight: 700; font-size: 15px; color: #1b2a4a; background: #fff8e8; white-space: nowrap; }
+  .stars-row { display: flex; gap: 6px; align-items: center; }
+  .footer-row2 { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; font-weight: 700; font-size: 16px; color: #1b2a4a; }
+</style>
+</helmet>
+
+<div class="page">
+  <div class="border-outer"></div>
+  <div class="border-inner"></div>
+
+  <div class="header">
+    <svg class="bird-wrap" viewBox="0 0 110 80" fill="none">
+      <path d="M3 44 Q30 30 66 34 Q88 36 106 22" stroke="#7a5a3a" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <g transform="translate(40 14)">
+        <ellipse cx="16" cy="18" rx="14" ry="12" fill="#7fa9d1"/>
+        <circle cx="25" cy="10" r="8" fill="#9cc0e6"/>
+        <path d="M31 9 L38 10 L31 12 Z" fill="#e7b25c"/>
+        <circle cx="27" cy="8" r="1.5" fill="#1b2a4a"/>
+      </g>
+    </svg>
+    <svg class="moon-wrap" viewBox="0 0 44 44" fill="none"><path d="M28 4 A18 18 0 1 0 28 40 A14 14 0 1 1 28 4 Z" fill="#e7c675"/></svg>
+    <svg class="lantern-wrap" viewBox="0 0 66 108" fill="none">
+      <line x1="33" y1="0" x2="33" y2="20" stroke="#c9a24b" stroke-width="2"/>
+      <path d="M16 30 Q33 20 50 30 L46 78 Q33 86 20 78 Z" fill="#f5e4b8" stroke="#c9a24b" stroke-width="2"/>
+      <ellipse cx="33" cy="54" rx="10" ry="14" fill="#fbe37a" opacity="0.8"/>
+      <path d="M16 76 Q33 68 50 76 L33 90 Z" fill="#c9a24b"/>
+    </svg>
+    <div class="title-wrap">
+      <h1 class="title">سورة الكوثر</h1>
+      <div class="banner-wrap"><div class="banner">الفهم والتثبيت</div></div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="card words-card">
+      <div class="card-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 5h13a3 3 0 0 1 3 3v11H7a3 3 0 0 1-3-3Z" stroke="#c04f68" stroke-width="1.8"/><path d="M4 5v9" stroke="#c04f68" stroke-width="1.8"/></svg>
+        معاني الكلمات
+      </div>
+      <div class="words-grid">
+        <div class="word-item"><b>الكَوْثَر</b><span>نهرٌ عظيم في الجنة</span></div>
+        <div class="word-item"><b>فَصَلِّ وَٱنْحَرْ</b><span>صلِّ لله واشكره</span></div>
+        <div class="word-item"><b>شَانِئَكَ</b><span>مَن يُبغضك ويكرهك</span></div>
+        <div class="word-item"><b>ٱلْأَبْتَر</b><span>المقطوع عن كل خير</span></div>
+      </div>
+    </div>
+
+    <div class="card meaning-card">
+      <div class="card-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 21s-7-4.5-9.5-9C1 8 3 4 7 4c2.2 0 3.8 1.2 5 3 1.2-1.8 2.8-3 5-3 4 0 6 4 4.5 8-2.5 4.5-9.5 9-9.5 9Z" stroke="#4a8f3c" stroke-width="1.8"/></svg>
+        المعنى المبسط للسورة
+      </div>
+      <div class="meaning-text">
+        تعلّمنا سورة الكوثر أنّ الله أعطى نبيّنا محمدًا ﷺ خيرًا كثيرًا في الدنيا والآخرة،
+        فنشكره بالصلاة والعطاء، ونتعلّم أنّ الكرم يزيدنا محبّة، وأنّ فضل نبيّنا ﷺ باقٍ لا ينقطع أبدًا.
+      </div>
+    </div>
+
+    <div class="card lessons-band">
+      <div class="lessons-title">
+        <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="#c9a24b"/></svg>
+        ما نتعلمه من السورة
+      </div>
+      <div class="lessons-row">
+        <div class="lesson-item">
+          <div class="lesson-circle">
+            <svg width="40" height="40" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 8 3 4 7 4c2.2 0 3.8 1.2 5 3 1.2-1.8 2.8-3 5-3 4 0 6 4 4.5 8-2.5 4.5-9.5 9-9.5 9Z" fill="#f2a6b0"/></svg>
+          </div>
+          <div class="lesson-cap">نشكر الله على نعمه الكثيرة</div>
+        </div>
+        <div class="lesson-item">
+          <div class="lesson-circle">
+            <svg width="40" height="40" viewBox="0 0 24 24"><path d="M12 3 4 8v3c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V8Z" fill="#8fbf7a"/></svg>
+          </div>
+          <div class="lesson-cap">نحافظ على الصلاة دائمًا</div>
+        </div>
+        <div class="lesson-item">
+          <div class="lesson-circle">
+            <svg width="40" height="40" viewBox="0 0 24 24"><path d="M12 6c-3 0-8 1-8 4v2c0 4 4 6 8 6s8-2 8-6v-2c0-3-5-4-8-4Z" fill="#7fc2e6"/><circle cx="12" cy="8" r="3" fill="#e7c675"/></svg>
+          </div>
+          <div class="lesson-cap">نكون كرماء ولا نبخل</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card activity-card">
+      <div class="card-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 20 15 4l2 2L6 22Z" stroke="#5a3fa0" stroke-width="1.8"/></svg>
+        نشاط بسيط: صِل الكلمة بمعناها
+      </div>
+      <div class="match-row">
+        <div class="match-col">
+          <div class="match-chip">الكَوْثَر</div>
+          <div class="match-chip">شَانِئَكَ</div>
+          <div class="match-chip">ٱلْأَبْتَر</div>
+        </div>
+        <div class="match-col">
+          <div class="match-chip">مَن يُبغضك ويكرهك</div>
+          <div class="match-chip">المقطوع عن كل خير</div>
+          <div class="match-chip">نهرٌ عظيم في الجنة</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card listen-card">
+      <div class="card-title" style="margin-bottom:0;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 13a8 8 0 0 1 16 0v4a2 2 0 0 1-2 2h-1v-6h3M4 13v4a2 2 0 0 0 2 2h1v-6H4" stroke="#227b74" stroke-width="1.8"/></svg>
+        ركن الاستماع
+      </div>
+      <div class="qr-placeholder">
+        <span class="qr-corner" style="top:4px; left:4px; border-width:3px 0 0 3px;"></span>
+        <span class="qr-corner" style="top:4px; right:4px; border-width:3px 3px 0 0;"></span>
+        <span class="qr-corner" style="bottom:4px; left:4px; border-width:0 0 3px 3px;"></span>
+        <span class="qr-corner" style="bottom:4px; right:4px; border-width:0 3px 3px 0;"></span>
+        <svg width="30" height="30" viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v4a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" fill="#3f9d95"/><path d="M6 11a6 6 0 0 0 12 0M12 19v2" stroke="#3f9d95" stroke-width="1.6" fill="none"/></svg>
+      </div>
+      <div class="listen-note">سيُضاف رمز الاستماع (QR) هنا لاحقًا<br>بعد اعتماد تسجيل صوتي موثوق</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-row1">
+      <div class="pill">أنا نجم اليوم</div>
+      <div class="pill" style="display:flex; align-items:center; gap:8px;">
+        لوّن نجمة كلما حفظت وأتعلمت
+        <span class="stars-row">
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 1l2.9 7.2L22 11l-6 5 1.8 8-5.8-4.4L6.2 24 8 16 2 11l7.1-2.8Z" fill="none" stroke="#c9a24b" stroke-width="1.6"/></svg>
+        </span>
+      </div>
+    </div>
+    <div class="footer-row2"><span>﴾</span> مدرسة درة البيان الخاصة <span>﴿</span></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
