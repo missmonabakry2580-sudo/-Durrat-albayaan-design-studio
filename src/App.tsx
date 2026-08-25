@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { Orb } from "./components/orb/Orb";
 import { ORB_STATE_LABELS, type OrbState } from "./components/orb/types";
 import { Splash } from "./components/splash/Splash";
@@ -18,6 +19,8 @@ import {
   sendAgentMessage,
   setAutonomyLevel,
   setKillSwitch,
+  startVoiceCapture,
+  stopVoiceCapture,
 } from "./lib/tauri";
 import "./App.css";
 
@@ -45,6 +48,8 @@ function App() {
   const [agentInput, setAgentInput] = useState("");
   const [agentLog, setAgentLog] = useState<AgentTurn[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
 
   async function refresh() {
     if (!inTauri) return;
@@ -69,6 +74,32 @@ function App() {
 
   useEffect(() => {
     refresh();
+  }, []);
+
+  // Voice events can arrive from either the mic button below or the global
+  // alt+A shortcut (which works even while Amin's window isn't focused) —
+  // both are handled by the same Rust code, so one listener here covers
+  // both triggers. See docs/ARCHITECTURE.md "Voice pipeline": unverified
+  // end to end until the native transcriber helper is built on a real Mac.
+  useEffect(() => {
+    if (!inTauri) return;
+    const unlistenPromises = [
+      listen<string>("voice://partial", (e) => setAgentInput(e.payload)),
+      listen<string>("voice://final", (e) => setAgentInput(e.payload)),
+      listen<string>("voice://error", (e) => {
+        setVoiceError(e.payload);
+        setIsListening(false);
+        setOrbState("warning");
+        setTimeout(() => setOrbState("idle"), 1400);
+      }),
+      listen<string>("voice://state", (e) => {
+        setIsListening(e.payload === "listening");
+        setOrbState(e.payload === "listening" ? "listening" : "idle");
+      }),
+    ];
+    return () => {
+      unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
+    };
   }, []);
 
   async function handleSaveKey() {
@@ -119,6 +150,24 @@ function App() {
   async function handleNewConversation() {
     await clearAgentConversation();
     setAgentLog([]);
+  }
+
+  async function handleMicDown() {
+    setVoiceError(null);
+    try {
+      await startVoiceCapture();
+      setIsListening(true);
+      setOrbState("listening");
+    } catch (e) {
+      setVoiceError(String(e));
+    }
+  }
+
+  async function handleMicUp() {
+    if (!isListening) return;
+    await stopVoiceCapture();
+    setIsListening(false);
+    setOrbState("idle");
   }
 
   return (
@@ -172,6 +221,7 @@ function App() {
             Phase 1 Agent Core — conversation only, no tools yet. Amin remembers this session
             until you start a new conversation or quit the app — nothing is saved to disk yet.
           </p>
+          {voiceError && <p className="banner banner-warning">🎤 {voiceError}</p>}
           {agentLog.length > 0 && (
             <ul className="agent-log">
               {agentLog.map((turn, i) => (
@@ -189,9 +239,20 @@ function App() {
               handleSendToAgent();
             }}
           >
+            <button
+              type="button"
+              className={isListening ? "chip chip-active" : "chip"}
+              onMouseDown={handleMicDown}
+              onMouseUp={handleMicUp}
+              onMouseLeave={handleMicUp}
+              disabled={!inTauri || agentBusy}
+              title="Push to talk (hold) — or hold alt+A anywhere"
+            >
+              🎤
+            </button>
             <input
               type="text"
-              placeholder="اكتبي رسالة لأمين..."
+              placeholder="اكتبي رسالة لأمين... أو استخدمي المايك"
               value={agentInput}
               onChange={(e) => setAgentInput(e.currentTarget.value)}
               disabled={!inTauri || agentBusy}

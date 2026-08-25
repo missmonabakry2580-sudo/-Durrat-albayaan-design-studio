@@ -76,9 +76,15 @@ src-tauri/                 Rust backend
                              list (banking, payments, ...)
   src/audit.rs              append-only audit log writer
   src/agent.rs              Agent Core: the Anthropic API client
+  src/voice.rs              push-to-talk session: spawns/manages the
+                             native transcriber helper (see macos/)
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
-  src/lib.rs                wires plugins, DB, tray, and commands together
+  src/lib.rs                wires plugins, DB, tray, global shortcut, and
+                             commands together
+
+macos/transcriber/          native Speech-framework helper — NOT verified,
+                             see its own README before touching voice.rs
 
 docs/                       this file, SECURITY.md
 .env.local.example          dev-only convenience; see SECURITY.md
@@ -109,28 +115,58 @@ sample API JSON,
 since that's the part most likely to have a subtle bug and the one part of
 this phase fully testable without live credentials or macOS.
 
-### Voice input: deferred by design, not forgotten
+### Voice pipeline: what's real vs. what needs a Mac
 
 The brief asks Amin to "evaluate ElevenLabs vs. OpenAI Realtime" for voice,
 but it also said only the Anthropic key is needed *now* — everything else
 later. Adding a second/third vendor key before that's actually asked for
-would contradict that. So Phase 1's push-to-talk voice path defaults to
-**macOS's on-device Speech framework** (no new API key, no new recurring
-cost, audio stays on-device by default) rather than a cloud STT vendor.
-The ElevenLabs/OpenAI Realtime evaluation is real and still owed — it
-happens when Mona is ready to add a voice-provider key, not assumed here.
+would contradict that. So the voice path defaults to **macOS's on-device
+Speech framework** (no new API key, no new recurring cost, audio stays
+on-device by default) rather than a cloud STT vendor. The ElevenLabs/
+OpenAI Realtime evaluation is real and still owed — it happens when Mona
+is ready to add a voice-provider key, not assumed here.
 
-Two more reasons this repo doesn't yet contain the native audio/STT code:
-Speech framework access from Rust needs an Objective-C/Swift FFI bridge,
-and there is no microphone or macOS in this development sandbox to verify
-either the FFI shim or actual transcription against. Writing that blind
-would trade a real "it works" for a plausible-looking, unverified one —
-worse than being explicit that it's next. Speaker recognition (the voice
-print / presence-greeting feature) has the same constraint plus a real
-model choice to make (an on-device speaker-embedding model, e.g. an
-ECAPA-TDNN-style network run via an embedded ONNX Runtime) — a case of the
-"radical architecture change" the brief says to surface, not decide
-silently, and one best made once there's a Mac to actually validate it on.
+**Built and verified (compiles, runs, unit-tested in this sandbox):**
+
+- `src-tauri/src/voice.rs`: manages one push-to-talk `VoiceSession` —
+  spawns the native transcriber helper as a plain child process (`std`,
+  not async — see the module doc comment for why), streams its stdout
+  lines as `voice://partial` / `voice://final` / `voice://error` events,
+  and sends it a stop signal on release. If the helper binary isn't
+  present, it fails with a clear "not built yet" error rather than doing
+  nothing silently — that path itself is exercised and correct even
+  without a real helper.
+- A global `alt+A` push-to-talk shortcut (`tauri-plugin-global-shortcut`,
+  registered in `lib.rs`), armed even when Amin's window isn't focused —
+  registers cleanly and doesn't crash the app (verified under a virtual
+  X11 display; real macOS key-combo behavior is unverified). The key
+  combo is a placeholder — change it in `lib.rs` if it turns out to
+  collide with something.
+- Frontend: a mic button (hold to talk) plus the same global shortcut
+  both drive `App.tsx`'s voice event listeners, which fill the message
+  box with the transcript for review rather than auto-sending it — since
+  the recognition accuracy is itself unverified, sending unreviewed text
+  straight to the API isn't the right default yet.
+
+**Written but never compiled or run — needs a real Mac:**
+`macos/transcriber/main.swift`, a standalone Speech-framework helper
+(`SFSpeechRecognizer` + `AVAudioEngine`, following Apple's documented
+live-recognition pattern). There is no macOS, no Xcode, and no
+microphone in this development sandbox to compile or exercise it against
+— see `macos/transcriber/README.md` for the build steps and, importantly,
+**a known open risk that needs deciding, not just testing**: a standalone
+CLI helper spawned as a child process may not cleanly inherit
+microphone/speech TCC permission prompts the way code inside the signed
+`.app` bundle does. If that turns out to be true, the fix is moving this
+logic in-process via a Rust↔Swift FFI bridge instead of a separate
+executable, which is a real (if bounded) rewrite, not a tweak.
+
+Speaker recognition (the voice-print / presence-greeting feature) is a
+separate step after the above is proven out, with its own real model
+choice to make (an on-device speaker-embedding model, e.g. an
+ECAPA-TDNN-style network run via an embedded ONNX Runtime) — a case of
+the "radical architecture change" the brief says to surface, not decide
+silently, and one best made once there's a Mac to validate it on.
 
 ## The command surface is the whole contract
 

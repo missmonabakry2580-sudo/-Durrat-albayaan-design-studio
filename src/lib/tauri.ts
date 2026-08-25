@@ -47,3 +47,14 @@ export const sendAgentMessage = (message: string) =>
   invoke<string>("send_agent_message", { message });
 
 export const clearAgentConversation = () => invoke<void>("clear_agent_conversation");
+
+/**
+ * Push-to-talk voice capture. NOT verified end to end yet — the native
+ * transcriber helper these commands drive is written but has never been
+ * compiled or run (no macOS/microphone in this development sandbox). See
+ * docs/ARCHITECTURE.md "Voice pipeline". Until the helper is built and
+ * bundled, `startVoiceCapture` is expected to reject with a clear
+ * "not built yet" error rather than doing nothing silently.
+ */
+export const startVoiceCapture = () => invoke<void>("start_voice_capture");
+export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");

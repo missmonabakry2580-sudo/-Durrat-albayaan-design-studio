@@ -1,8 +1,9 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::db::Db;
 use crate::policy::{self, AutonomyLevel, RiskTier};
-use crate::{agent, audit, secrets};
+use crate::voice::VoiceSession;
+use crate::{agent, audit, secrets, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -242,4 +243,17 @@ pub fn list_audit_log(limit: i64, db: State<Db>) -> Result<Vec<AuditEntry>, Stri
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// Start push-to-talk listening from the UI (a mic button), independent of
+/// the global keyboard shortcut in lib.rs — both call the same
+/// `voice::start_listening`.
+#[tauri::command]
+pub fn start_voice_capture(app: AppHandle, session: State<VoiceSession>) -> Result<(), String> {
+    voice::start_listening(app, session)
+}
+
+#[tauri::command]
+pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
+    voice::stop_listening(session)
 }
