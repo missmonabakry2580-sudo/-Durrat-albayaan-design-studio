@@ -1,0 +1,38 @@
+[package]
+name = "amin"
+version = "0.1.0"
+description = "Amin — personal executive AI agent (desktop, macOS)"
+authors = ["Mona AlSayed Studio"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "amin_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Local state lives entirely on-device. Bundled so no system libsqlite dependency
+# is required, and the frontend never gets raw SQL access — only the typed
+# Tauri commands in src/commands.rs, so invariants like "audit log is append-only"
+# are enforced in Rust, not trusted to the webview.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Secrets live in the OS Keychain, never on disk or in Git.
+keyring = "3"
+# NOTE: no HTTP client dependency yet. Outbound calls (Anthropic API, later
+# Gmail/Calendar) will happen only from this Rust backend once Phase 1 wires
+# the agent core — the webview CSP already forbids the frontend from
+# reaching the network (see tauri.conf.json's connect-src).
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
