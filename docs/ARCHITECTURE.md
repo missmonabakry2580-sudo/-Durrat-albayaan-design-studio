@@ -1,7 +1,11 @@
 # Amin — Architecture (Phase 0)
 
-Amin is a personal Executive AI Agent: a **macOS desktop app**, not a chatbot,
-not a mobile app. Its loop is:
+Amin is a personal Executive AI Agent. Its core — the agent loop, the
+memory, the local database, all policy enforcement — lives in exactly one
+place: the **macOS desktop app**. It is not a chatbot. A later phase adds a
+Mobile Companion (see "Mobile Companion" below), but that is a thin remote
+control into this same core, never a second brain, never published to the
+App Store. Its loop is:
 
 > Observe → Understand → Decide within policy → Execute → Follow up → Report
 
@@ -11,12 +15,15 @@ land.
 
 ## Why desktop-only, why Tauri
 
-- **No mobile.** No Apple App Store, no Google Play, ever. Amin holds
+- **The core is desktop-only, and never on a public store.** No Google Play,
+  ever; no App Store listing for the Mac app or the Mobile Companion,
+  ever — both install personally (see "Mobile Companion" below). Amin holds
   standing access to email, calendar, files, and (later) a browser session —
-  that is not something to ship through a mobile app review process or run
-  on a phone's OS sandboxing model. `src-tauri/src/lib.rs` has no mobile
-  entry point at all; there is no `gen/android` or `gen/ios` in this repo,
-  and there should never be one.
+  that is not something to ship through a public app-store review process.
+  `src-tauri/src/lib.rs` has no mobile entry point at all; there is no
+  `gen/android` or `gen/ios` in *this* repo (the Mobile Companion, once
+  built, is a separate, much smaller client project — see below), and
+  neither app is ever built for general distribution.
 - **Tauri over Electron**: a Rust backend for anything privileged (secrets,
   the local database, outbound network calls, the future browser/file/Gmail
   tools), and a React/TypeScript webview for everything visual. The
@@ -109,6 +116,28 @@ busy. `App.tsx` currently includes a state switcher for visual QA; it comes
 out once real state wiring (voice input, agent execution) lands in later
 phases and drives the orb itself.
 
+### Creator attribution
+
+Added 2026-08-25 per the brief: Amin visibly credits its creator, Mona
+AlSayed — not as an incidental brand name, but as a deliberate signature.
+`src/lib/branding.ts` is the single source of truth for the wording
+(`CREATOR_ATTRIBUTION_AR/EN`, `EXPORT_SIGNATURE_AR/EN`); every surface below
+reads from it rather than inlining its own text:
+
+- **Launch screen** — `src/components/splash/Splash.tsx` shows the orb,
+  the "أمين" title, and the attribution line beneath it for a couple of
+  seconds (or until tapped) before the main app appears.
+- **About panel** — the "حول أمين" section in `App.tsx` states it again,
+  alongside the app name/version. Phase 0 has no real navigation yet, so
+  this lives inline in the single-screen shell; once a proper Settings/
+  navigation surface exists, About becomes its own screen rather than a
+  scroll-down section.
+- **Exports** — no report/document export exists yet (that starts around
+  Phase 3's Morning Brief and the Phase 6 developer/reporting workflows).
+  When one is built, it appends `EXPORT_SIGNATURE_AR`/`EN` from
+  `branding.ts` — recorded here now so the convention isn't reinvented
+  per-feature later.
+
 ## Phase 1 design notes: speaker recognition & presence greeting
 
 Captured here ahead of Phase 1 implementation, from the 2026-08-25 brief
@@ -134,6 +163,38 @@ addendum, so the requirements aren't lost:
 - **Push-to-talk first.** See "Availability model" above — this is the
   Phase 1 default; always-listening is explicitly a later milestone.
 
+## Mobile Companion
+
+Added 2026-08-25, from the brief addendum. iPhone should work as a remote
+control for the same Amin — talk to it, see its status, give it
+instructions — while away from the Mac, not just standing in front of it.
+Two decisions were made explicitly with Mona rather than assumed, because
+both touch rules stated as non-negotiable in docs/SECURITY.md:
+
+- **Connectivity: a private VPN mesh (Tailscale/WireGuard-style), not a
+  cloud relay.** The Mac gets no public inbound port and no third-party
+  server ever sees Amin's data or "brain" state — only Mona's own devices,
+  talking to each other over an encrypted private network interface. This
+  updates, rather than breaks, SECURITY.md §2's "no inbound ports": the
+  rule is now specifically "no *public* inbound port, no exposure to the
+  general internet" — see SECURITY.md §2 for the precise wording. The
+  concrete VPN product (Tailscale vs. a self-hosted WireGuard) is an
+  implementation choice for whichever phase builds this, not decided here.
+- **Distribution: personal install via Mona's own Apple Developer account
+  (sideload/Ad Hoc), never TestFlight or the App Store.** Same reasoning
+  as the Mac app never being listed publicly — this stays a private tool
+  built for one person, not a shipped product.
+- **One brain, not two.** The phone is a thin client: it renders Amin's
+  state and relays her voice/commands to the Mac over the VPN link, and
+  the Mac's SQLite database and audit log remain the single source of
+  truth. The phone does not keep its own copy of tasks, follow-ups, or the
+  audit log that could drift out of sync or leak if the phone is lost —
+  at most a transient, non-sensitive display cache.
+- This is a distinct client codebase from this repo (Tauri targets desktop
+  only — see "Why desktop-only, why Tauri" above), built once Phase 1's
+  Agent Core exists for it to remote-control. Its own architecture notes
+  land in that project when it starts, not retrofitted here.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |
@@ -145,10 +206,11 @@ addendum, so the requirements aren't lost:
 | 4 | Follow-up Engine, Executive Delegate Mode |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |
 | 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |
+| 7 | Mobile Companion (iOS, personal install only) — remote control over a private VPN mesh to the same core; see "Mobile Companion" above |
 
 ## Non-goals (Phase 0, and generally)
 
-- No mobile build, no app store presence.
+- No public app-store presence for either app, ever.
 - No direct database or code coupling to the Durrat Al-Bayaan school
   platform (`durrat-bayaan-connect`) — it is an external system, integrated
   later (Phase 5) only through explicit, narrow tools.

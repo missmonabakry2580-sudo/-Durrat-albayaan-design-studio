@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Orb } from "./components/orb/Orb";
 import { ORB_STATE_LABELS, type OrbState } from "./components/orb/types";
+import { Splash } from "./components/splash/Splash";
+import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import {
   type AppInfo,
   type AuditEntry,
@@ -24,6 +26,7 @@ const AUTONOMY_LEVELS: AutonomyLevel[] = ["observe", "assist", "delegate", "auto
 const inTauri = "__TAURI_INTERNALS__" in window;
 
 function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [orbState, setOrbState] = useState<OrbState>("idle");
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [keySaved, setKeySaved] = useState(false);
@@ -81,108 +84,125 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <h1>أمين — Amin</h1>
-        <p className="app-subtitle">
-          {info ? `${info.name} v${info.version}` : "Phase 0 — Architecture, Security & Design System"}
-        </p>
-      </header>
+    <>
+      {showSplash && <Splash onDone={() => setShowSplash(false)} />}
+      <main className="app-shell">
+        <header className="app-header">
+          <h1>أمين — Amin</h1>
+          <p className="app-subtitle">
+            {info
+              ? `${info.name} v${info.version}`
+              : "Phase 0 — Architecture, Security & Design System"}
+          </p>
+        </header>
 
-      {!inTauri && (
-        <p className="banner banner-warning">
-          Running outside the Tauri shell (plain browser) — backend commands are disabled. Use
-          <code> npm run tauri dev</code> to exercise the Rust side.
-        </p>
-      )}
-      {error && <p className="banner banner-danger">{error}</p>}
+        {!inTauri && (
+          <p className="banner banner-warning">
+            Running outside the Tauri shell (plain browser) — backend commands are disabled. Use
+            <code> npm run tauri dev</code> to exercise the Rust side.
+          </p>
+        )}
+        {error && <p className="banner banner-danger">{error}</p>}
 
-      <section className="panel orb-panel">
-        <Orb state={orbState} />
-        <div className="orb-switcher" role="group" aria-label="Orb state preview">
-          {ORB_STATES.map((s) => (
-            <button
-              key={s}
-              className={s === orbState ? "chip chip-active" : "chip"}
-              onClick={() => setOrbState(s)}
-            >
-              {ORB_STATE_LABELS[s]}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Security &amp; Autonomy</h2>
-
-        <div className="field-row">
-          <span className="field-label">Anthropic API key</span>
-          <span className={keySaved ? "badge badge-success" : "badge"}>
-            {keySaved ? "Configured (Keychain)" : "Not configured"}
-          </span>
-        </div>
-        <div className="field-row">
-          <input
-            type="password"
-            placeholder="sk-ant-..."
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.currentTarget.value)}
-            disabled={!inTauri}
-          />
-          <button onClick={handleSaveKey} disabled={!inTauri || !keyInput.trim()}>
-            Save
-          </button>
-          <button onClick={handleClearKey} disabled={!inTauri || !keySaved}>
-            Clear
-          </button>
-        </div>
-
-        <div className="field-row">
-          <span className="field-label">Autonomy level</span>
-          <div className="segmented">
-            {AUTONOMY_LEVELS.map((level) => (
+        <section className="panel orb-panel">
+          <Orb state={orbState} />
+          <div className="orb-switcher" role="group" aria-label="Orb state preview">
+            {ORB_STATES.map((s) => (
               <button
-                key={level}
-                className={level === autonomy ? "chip chip-active" : "chip"}
-                onClick={() => handleAutonomyChange(level)}
-                disabled={!inTauri}
+                key={s}
+                className={s === orbState ? "chip chip-active" : "chip"}
+                onClick={() => setOrbState(s)}
               >
-                {level}
+                {ORB_STATE_LABELS[s]}
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        <div className="field-row">
-          <span className="field-label">Kill switch</span>
-          <button
-            className={halted ? "chip chip-danger chip-active" : "chip"}
-            onClick={handleKillSwitch}
-            disabled={!inTauri}
-          >
-            {halted ? "HALTED — click to resume" : "Running — click to halt"}
-          </button>
-        </div>
-      </section>
+        <section className="panel">
+          <h2>Security &amp; Autonomy</h2>
 
-      <section className="panel">
-        <h2>Audit log (last 10)</h2>
-        {auditLog.length === 0 ? (
-          <p className="text-muted">No events yet.</p>
-        ) : (
-          <ul className="audit-list">
-            {auditLog.map((entry) => (
-              <li key={entry.id}>
-                <span className="text-muted">{entry.ts}</span>
-                <span className="badge">{entry.risk_tier}</span>
-                <strong>{entry.action}</strong>
-                <span className="text-muted">{entry.decision}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </main>
+          <div className="field-row">
+            <span className="field-label">Anthropic API key</span>
+            <span className={keySaved ? "badge badge-success" : "badge"}>
+              {keySaved ? "Configured (Keychain)" : "Not configured"}
+            </span>
+          </div>
+          <div className="field-row">
+            <input
+              type="password"
+              placeholder="sk-ant-..."
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.currentTarget.value)}
+              disabled={!inTauri}
+            />
+            <button onClick={handleSaveKey} disabled={!inTauri || !keyInput.trim()}>
+              Save
+            </button>
+            <button onClick={handleClearKey} disabled={!inTauri || !keySaved}>
+              Clear
+            </button>
+          </div>
+
+          <div className="field-row">
+            <span className="field-label">Autonomy level</span>
+            <div className="segmented">
+              {AUTONOMY_LEVELS.map((level) => (
+                <button
+                  key={level}
+                  className={level === autonomy ? "chip chip-active" : "chip"}
+                  onClick={() => handleAutonomyChange(level)}
+                  disabled={!inTauri}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="field-row">
+            <span className="field-label">Kill switch</span>
+            <button
+              className={halted ? "chip chip-danger chip-active" : "chip"}
+              onClick={handleKillSwitch}
+              disabled={!inTauri}
+            >
+              {halted ? "HALTED — click to resume" : "Running — click to halt"}
+            </button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <h2>Audit log (last 10)</h2>
+          {auditLog.length === 0 ? (
+            <p className="text-muted">No events yet.</p>
+          ) : (
+            <ul className="audit-list">
+              {auditLog.map((entry) => (
+                <li key={entry.id}>
+                  <span className="text-muted">{entry.ts}</span>
+                  <span className="badge">{entry.risk_tier}</span>
+                  <strong>{entry.action}</strong>
+                  <span className="text-muted">{entry.decision}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="panel about-panel">
+          <h2>حول أمين — About Amin</h2>
+          <p className="text-muted">
+            {info ? `${info.name} v${info.version}` : "Amin"} — Observe → Understand → Decide
+            within policy → Execute → Follow up → Report.
+          </p>
+          <p className="creator-attribution">
+            {CREATOR_ATTRIBUTION_AR}
+            <span className="text-muted"> · {CREATOR_ATTRIBUTION_EN}</span>
+          </p>
+        </section>
+      </main>
+    </>
   );
 }
 

@@ -16,13 +16,24 @@ information read-only (e.g. summarizing a statement the user shared), that
 is a distinct, explicitly-scoped tool decision to be made deliberately, not
 an emergent side effect of a broader "financial" tool.
 
-## 2. No inbound ports
+## 2. No inbound ports (updated 2026-08-25: none *public*)
 
-Amin never listens for inbound network connections. It only makes outbound
-calls, and only from the Rust backend (see Architecture doc: the webview
-CSP's `connect-src 'self'` means the frontend cannot make network requests
-at all). There is no local server, no webhook receiver, no remote-control
-surface.
+Amin never listens on a public inbound port, never runs a public-facing
+server, and is never reachable from the general internet. It otherwise
+only makes outbound calls, and only from the Rust backend (see
+Architecture doc: the webview CSP's `connect-src 'self'` means the
+frontend cannot make network requests at all).
+
+The one addition, for the Mobile Companion (Phase 7, see
+docs/ARCHITECTURE.md "Mobile Companion"): the Mac may accept connections
+from Mona's own iPhone over a **private VPN mesh** (Tailscale/WireGuard-
+style) she controls. That's still not a public inbound port — there's no
+port reachable from the open internet, no third party relaying or seeing
+traffic, and no unauthenticated peer can reach it, only her own enrolled
+devices on her own private encrypted network. Anything short of that
+(a public relay server, a port-forwarded home router, a listener with no
+peer authentication) does not qualify for this exception and needs its
+own explicit sign-off before being built.
 
 ## 3. Secrets live in the OS Keychain, never in Git or in the app's own storage
 
@@ -159,3 +170,26 @@ event's prior time) so a "undo that" follow-up is possible. This is a
 design requirement for tools added from Phase 1 onward, not yet applicable
 to Phase 0's own commands (settings changes are already trivially
 reversible via the same command).
+
+## 15. Mobile Companion: one brain, private link, personal install only
+
+Added 2026-08-25. The Mobile Companion (Phase 7) is a remote control into
+the Mac app's core, not a second Amin. Its contract:
+
+- **Private VPN mesh only** — see §2's update above. No cloud relay, no
+  server holding Amin's data or model conversations, ever.
+- **No second copy of the brain.** The phone doesn't replicate the SQLite
+  database, the audit log, or secrets — it reads/renders state from the
+  Mac live and relays commands to it. There's nothing sensitive on the
+  phone to lose if it's lost or stolen beyond an ordinary display cache,
+  and the audit log stays the one place, on the Mac, that records what
+  Amin actually did.
+- **Personal install only.** Sideloaded via Mona's own Apple Developer
+  account — never TestFlight, never the App Store. Same reasoning as §1's
+  neighbors: this is a private tool for one person, not a shipped product,
+  and it doesn't go through a public review pipeline or a public listing.
+- **Every other rule in this document still applies unchanged.** Autonomy
+  levels, risk tiers, the kill switch, and the excluded-domain list are
+  properties of the one Amin core on the Mac — the phone doesn't get its
+  own copy of them, doesn't relax them, and can't act on anything the Mac
+  core wouldn't already allow.
