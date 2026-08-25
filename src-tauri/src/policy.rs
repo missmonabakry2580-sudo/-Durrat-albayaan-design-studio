@@ -94,3 +94,64 @@ pub fn classify(domain: &str) -> RiskTier {
         RiskTier::Auto
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_each_tier_by_keyword() {
+        assert_eq!(classify("banking_transfer"), RiskTier::Excluded);
+        assert_eq!(classify("send_email"), RiskTier::ConfirmHighRisk);
+        assert_eq!(classify("draft_reminder"), RiskTier::TrustedDelegation);
+        assert_eq!(classify("check_weather"), RiskTier::Auto);
+    }
+
+    #[test]
+    fn classify_is_case_insensitive() {
+        assert_eq!(classify("SEND_EMAIL"), RiskTier::ConfirmHighRisk);
+        assert_eq!(classify("Banking_Login"), RiskTier::Excluded);
+    }
+
+    #[test]
+    fn excluded_wins_even_if_a_high_risk_keyword_also_matches() {
+        // A hypothetical "delete_banking_data" domain must never slip
+        // through as merely "confirm" — Excluded is checked first and
+        // must stay that way as more keywords are added later.
+        assert_eq!(classify("delete_banking_data"), RiskTier::Excluded);
+    }
+
+    #[test]
+    fn autonomy_level_parse_round_trips_with_as_str() {
+        for level in [
+            AutonomyLevel::Observe,
+            AutonomyLevel::Assist,
+            AutonomyLevel::Delegate,
+            AutonomyLevel::Autopilot,
+        ] {
+            assert_eq!(AutonomyLevel::parse(level.as_str()).unwrap(), level);
+        }
+    }
+
+    #[test]
+    fn autonomy_level_parse_rejects_unknown_input() {
+        assert!(AutonomyLevel::parse("god-mode").is_err());
+    }
+
+    #[test]
+    fn risk_tier_as_str_matches_its_serde_wire_format() {
+        // commands::classify_action sends `as_str()` straight to the
+        // frontend; if this ever drifted from the derived Serialize
+        // output, the frontend's RiskTier union type would silently stop
+        // matching what the backend actually sends.
+        for tier in [
+            RiskTier::Auto,
+            RiskTier::TrustedDelegation,
+            RiskTier::ConfirmHighRisk,
+            RiskTier::Excluded,
+        ] {
+            let json = serde_json::to_string(&tier).unwrap();
+            assert_eq!(json, format!("\"{}\"", tier.as_str()));
+        }
+    }
+}

@@ -53,9 +53,15 @@ fn helper_path(app: &AppHandle) -> Result<PathBuf, String> {
 /// auto-repeats while held shouldn't spawn a second helper).
 pub fn start_listening(app: AppHandle, session: tauri::State<'_, VoiceSession>) -> Result<(), String> {
     {
-        let guard = session.0.lock().map_err(|e| e.to_string())?;
-        if guard.is_some() {
-            return Ok(());
+        let mut guard = session.0.lock().map_err(|e| e.to_string())?;
+        if let Some(child) = guard.as_mut() {
+            // `Ok(None)` means it's genuinely still running; anything else
+            // (exited, or we can't tell) clears the stale handle instead of
+            // getting permanently stuck refusing to start a new session.
+            if matches!(child.try_wait(), Ok(None)) {
+                return Ok(());
+            }
+            *guard = None;
         }
     }
 
