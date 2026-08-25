@@ -1,8 +1,8 @@
-# Amin — Security Model (Phase 0)
+# Amin — Security Model
 
-These rules are non-negotiable per the project brief. Phase 0 establishes
+These rules are non-negotiable per the project brief. Phase 0 established
 the mechanisms; every later phase adds tools *on top of* these, never
-around them.
+around them. Dated updates below mark rules revisited after Phase 0.
 
 ## 1. Banking is an excluded class, full stop
 

@@ -11,11 +11,12 @@ No mobile app, no App Store / Google Play — ever. See
 excluded-actions list (banking, full stop), and everything else
 non-negotiable about how Amin is allowed to act.
 
-## Status: Phase 0 — Architecture, Security, Design System
+## Status: Phase 0 done, Phase 1 in progress
 
-This phase ships:
+**Phase 0 — Architecture, Security, Design System:**
 
-- The Tauri + React/TypeScript project shell.
+- The Tauri + React/TypeScript project shell, as a menu-bar app
+  (`src-tauri/src/tray.rs`) rather than a Dock app.
 - A local, on-device SQLite schema (`src-tauri/schema.sql`) with an
   append-only audit log.
 - Secrets in the OS Keychain (`src-tauri/src/secrets.rs`) — never in Git,
@@ -27,11 +28,21 @@ This phase ships:
   (`src/styles/tokens.css`) and the Living AI Core / Orb component
   (`src/components/orb/`) with its full state set (listening, thinking,
   planning, executing, speaking, success, warning, waiting, idle).
+- Creator attribution (`src/lib/branding.ts`) on the launch screen and the
+  in-app About panel.
 
-Later phases (desktop shell polish + voice + Agent Core, browser/files/
-tasks, Gmail/Calendar, follow-ups, the school platform connector, ads/Drive/
-dev workflows) build on top of this — see the roadmap table in
-`docs/ARCHITECTURE.md`.
+**Phase 1 — Agent Core (in progress):**
+
+- `src-tauri/src/agent.rs` calls the Anthropic API (Claude Opus 5) with the
+  Keychain-stored key; the "Talk to Amin" panel in the app exercises it
+  end to end, gated by the kill switch and fully audited.
+- Voice input (push-to-talk, speaker recognition, presence greeting) is
+  designed but not yet built — see docs/ARCHITECTURE.md's "Agent Core"
+  section for why (it needs a real Mac and microphone to build safely).
+
+Later phases (browser/files/tasks, Gmail/Calendar, follow-ups, the school
+platform connector, ads/Drive/dev workflows, Smart Home, Mobile Companion)
+build on top of this — see the roadmap table in `docs/ARCHITECTURE.md`.
 
 ## Development
 

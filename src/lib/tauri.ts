@@ -42,3 +42,6 @@ export const setKillSwitch = (active: boolean) => invoke<void>("set_kill_switch"
 export const classifyAction = (domain: string) => invoke<RiskTier>("classify_action", { domain });
 
 export const listAuditLog = (limit = 20) => invoke<AuditEntry[]>("list_audit_log", { limit });
+
+export const sendAgentMessage = (message: string) =>
+  invoke<string>("send_agent_message", { message });

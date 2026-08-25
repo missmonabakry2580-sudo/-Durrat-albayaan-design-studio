@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::policy::{self, AutonomyLevel, RiskTier};
-use crate::{audit, secrets};
+use crate::{agent, audit, secrets};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -123,6 +123,54 @@ pub fn set_kill_switch(active: bool, db: State<Db>) -> Result<(), String> {
 #[tauri::command]
 pub fn classify_action(domain: String) -> String {
     policy::classify(&domain).as_str().to_string()
+}
+
+/// Send one turn to Amin's Agent Core. Checks the kill switch first, then
+/// calls the Anthropic API with the Keychain-stored key, and always audits
+/// the outcome — success or failure — so the log reflects every real call,
+/// not just the ones that went well.
+#[tauri::command]
+pub async fn send_agent_message(message: String, db: State<'_, Db>) -> Result<String, String> {
+    let halted = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        get_setting(&conn, "kill_switch").as_deref() == Some("on")
+    };
+    if halted {
+        return Err("Amin is halted — turn the kill switch off to resume.".to_string());
+    }
+
+    let api_key = secrets::get_secret(ANTHROPIC_KEY_NAME)
+        .map_err(|_| "No Anthropic API key configured yet — add one above first.".to_string())?;
+
+    let result = agent::send_message(&api_key, &message).await;
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    match &result {
+        Ok(_) => {
+            let _ = audit::record(
+                &conn,
+                "amin",
+                "agent_message",
+                RiskTier::Auto,
+                audit::Decision::Executed,
+                None,
+                None,
+            );
+        }
+        Err(e) => {
+            let _ = audit::record(
+                &conn,
+                "amin",
+                "agent_message",
+                RiskTier::Auto,
+                audit::Decision::Blocked,
+                Some(e),
+                None,
+            );
+        }
+    }
+
+    result
 }
 
 #[derive(serde::Serialize)]

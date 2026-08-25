@@ -18,9 +18,8 @@ pub fn has_secret(key_name: &str) -> bool {
         .is_ok()
 }
 
-/// Read back for outbound calls (e.g. the Anthropic API client, wired up in
-/// Phase 1). Not called yet in Phase 0.
-#[allow(dead_code)]
+/// Read back for outbound calls — e.g. `agent::send_message` reading the
+/// Anthropic key.
 pub fn get_secret(key_name: &str) -> Result<String, String> {
     Entry::new(SERVICE, key_name)
         .map_err(|e| e.to_string())?

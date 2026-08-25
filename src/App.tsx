@@ -14,6 +14,7 @@ import {
   isHalted,
   listAuditLog,
   saveApiKey,
+  sendAgentMessage,
   setAutonomyLevel,
   setKillSwitch,
 } from "./lib/tauri";
@@ -21,6 +22,11 @@ import "./App.css";
 
 const ORB_STATES = Object.keys(ORB_STATE_LABELS) as OrbState[];
 const AUTONOMY_LEVELS: AutonomyLevel[] = ["observe", "assist", "delegate", "autopilot"];
+
+interface AgentTurn {
+  role: "user" | "amin";
+  text: string;
+}
 
 /** True once we're actually running inside the Tauri shell, not a plain browser tab. */
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -35,6 +41,9 @@ function App() {
   const [halted, setHalted] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentLog, setAgentLog] = useState<AgentTurn[]>([]);
+  const [agentBusy, setAgentBusy] = useState(false);
 
   async function refresh() {
     if (!inTauri) return;
@@ -83,6 +92,29 @@ function App() {
     await refresh();
   }
 
+  async function handleSendToAgent() {
+    const text = agentInput.trim();
+    if (!text || agentBusy) return;
+
+    setAgentLog((log) => [...log, { role: "user", text }]);
+    setAgentInput("");
+    setAgentBusy(true);
+    setOrbState("thinking");
+
+    try {
+      const reply = await sendAgentMessage(text);
+      setAgentLog((log) => [...log, { role: "amin", text: reply }]);
+      setOrbState("speaking");
+    } catch (e) {
+      setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
+      setOrbState("warning");
+    } finally {
+      setAgentBusy(false);
+      await refresh();
+      setTimeout(() => setOrbState("idle"), 1400);
+    }
+  }
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -117,6 +149,42 @@ function App() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="panel">
+          <h2>كلمي أمين — Talk to Amin</h2>
+          <p className="text-muted">
+            Phase 1 Agent Core — conversation only, no tools yet. Each message is a fresh turn
+            (no memory between messages until Phase 4).
+          </p>
+          {agentLog.length > 0 && (
+            <ul className="agent-log">
+              {agentLog.map((turn, i) => (
+                <li key={i} className={`agent-turn agent-turn-${turn.role}`}>
+                  <span className="agent-turn-role">{turn.role === "user" ? "أنتِ" : "أمين"}</span>
+                  <span className="agent-turn-text">{turn.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            className="field-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSendToAgent();
+            }}
+          >
+            <input
+              type="text"
+              placeholder="اكتبي رسالة لأمين..."
+              value={agentInput}
+              onChange={(e) => setAgentInput(e.currentTarget.value)}
+              disabled={!inTauri || agentBusy}
+            />
+            <button type="submit" disabled={!inTauri || agentBusy || !agentInput.trim()}>
+              {agentBusy ? "..." : "Send"}
+            </button>
+          </form>
         </section>
 
         <section className="panel">

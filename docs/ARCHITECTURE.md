@@ -1,4 +1,4 @@
-# Amin — Architecture (Phase 0)
+# Amin — Architecture
 
 Amin is a personal Executive AI Agent. Its core — the agent loop, the
 memory, the local database, all policy enforcement — lives in exactly one
@@ -9,9 +9,9 @@ App Store. Its loop is:
 
 > Observe → Understand → Decide within policy → Execute → Follow up → Report
 
-This document is the Phase 0 baseline: the shape of the system, the tech
-choices behind it, and why. It gets extended, not rewritten, as later phases
-land.
+This document started as the Phase 0 baseline and is extended, not
+rewritten, as later phases land — each phase's section says which phase
+added it.
 
 ## Why desktop-only, why Tauri
 
@@ -63,7 +63,8 @@ src/                      React + TypeScript frontend (the webview)
   components/orb/          the Living AI Core (see Design System below)
   lib/tauri.ts             the ONLY place the frontend calls invoke() —
                             typed wrappers around every Rust command
-  App.tsx                  Phase 0 shell: orb preview + security panel
+  App.tsx                  app shell: orb preview, Talk-to-Amin panel,
+                            security panel, audit log, About
 
 src-tauri/                 Rust backend
   schema.sql                the local SQLite schema (settings, audit_log,
@@ -74,6 +75,7 @@ src-tauri/                 Rust backend
   src/policy.rs             risk tiers, autonomy levels, the excluded-domain
                              list (banking, payments, ...)
   src/audit.rs              append-only audit log writer
+  src/agent.rs              Agent Core: the Anthropic API client
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
   src/lib.rs                wires plugins, DB, tray, and commands together
@@ -81,6 +83,48 @@ src-tauri/                 Rust backend
 docs/                       this file, SECURITY.md
 .env.local.example          dev-only convenience; see SECURITY.md
 ```
+
+## Agent Core (Phase 1)
+
+`src-tauri/src/agent.rs` is Amin's first real capability: `send_message()`
+calls the Anthropic Messages API (`claude-opus-5` — see the constant at the
+top of the file if that default ever needs revisiting) with the Keychain-
+stored key, using a system prompt that states the operating loop and, just
+as importantly, states plainly what Amin *cannot* do yet — no tools, no
+email/calendar/browser/files — so it never confabulates having taken an
+action. The `send_agent_message` command in `commands.rs` wraps this with
+the two things that must never be skipped: a kill-switch check before
+calling out, and an audit-log entry after, on both success and failure.
+
+This is deliberately single-turn for now (no conversation history sent back
+each call) — threading history, and eventually tool use, is follow-on work
+once this path is proven out. The response-parsing logic (text extraction,
+refusal handling) has unit tests in `agent.rs` against sample API JSON,
+since that's the part most likely to have a subtle bug and the one part of
+this phase fully testable without live credentials or macOS.
+
+### Voice input: deferred by design, not forgotten
+
+The brief asks Amin to "evaluate ElevenLabs vs. OpenAI Realtime" for voice,
+but it also said only the Anthropic key is needed *now* — everything else
+later. Adding a second/third vendor key before that's actually asked for
+would contradict that. So Phase 1's push-to-talk voice path defaults to
+**macOS's on-device Speech framework** (no new API key, no new recurring
+cost, audio stays on-device by default) rather than a cloud STT vendor.
+The ElevenLabs/OpenAI Realtime evaluation is real and still owed — it
+happens when Mona is ready to add a voice-provider key, not assumed here.
+
+Two more reasons this repo doesn't yet contain the native audio/STT code:
+Speech framework access from Rust needs an Objective-C/Swift FFI bridge,
+and there is no microphone or macOS in this development sandbox to verify
+either the FFI shim or actual transcription against. Writing that blind
+would trade a real "it works" for a plausible-looking, unverified one —
+worse than being explicit that it's next. Speaker recognition (the voice
+print / presence-greeting feature) has the same constraint plus a real
+model choice to make (an on-device speaker-embedding model, e.g. an
+ECAPA-TDNN-style network run via an embedded ONNX Runtime) — a case of the
+"radical architecture change" the brief says to surface, not decide
+silently, and one best made once there's a Mac to actually validate it on.
 
 ## The command surface is the whole contract
 

@@ -29,10 +29,10 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Secrets live in the OS Keychain, never on disk or in Git.
 keyring = "3"
-# NOTE: no HTTP client dependency yet. Outbound calls (Anthropic API, later
-# Gmail/Calendar) will happen only from this Rust backend once Phase 1 wires
-# the agent core — the webview CSP already forbids the frontend from
-# reaching the network (see tauri.conf.json's connect-src).
+# Outbound calls (Anthropic API now; Gmail/Calendar/browser later) happen
+# only from this Rust backend — the webview CSP forbids the frontend from
+# reaching the network at all (see tauri.conf.json's connect-src).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

@@ -157,6 +157,50 @@
   border-color: var(--state-success);
 }
 
+.agent-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.agent-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  max-width: 85%;
+}
+
+.agent-turn-user {
+  align-self: flex-end;
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-subtle);
+}
+
+.agent-turn-amin {
+  align-self: flex-start;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+}
+
+.agent-turn-role {
+  font-size: 0.7rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.agent-turn-text {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
 .audit-list {
   list-style: none;
   margin: 0;

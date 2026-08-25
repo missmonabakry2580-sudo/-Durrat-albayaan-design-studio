@@ -1,3 +1,4 @@
+mod agent;
 mod audit;
 mod commands;
 mod db;
@@ -46,6 +47,7 @@ pub fn run() {
             commands::set_kill_switch,
             commands::classify_action,
             commands::list_audit_log,
+            commands::send_agent_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");
