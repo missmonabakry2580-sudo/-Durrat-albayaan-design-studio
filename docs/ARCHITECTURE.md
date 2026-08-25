@@ -27,6 +27,26 @@ land.
 - **SQLite, on-device, no sync.** `src-tauri/schema.sql` is the whole
   schema. There is no server, no cloud database, no telemetry backend.
 
+## Desktop shell: menu bar, not Dock
+
+Amin is meant to be a standing presence, not an app you open and quit —
+closer to a menu-bar utility than a document window. `src-tauri/src/tray.rs`
+adds the tray icon and its "Show Amin" / "Quit Amin" menu; `lib.rs` sets
+macOS's activation policy to `Accessory` (no Dock icon, no app-switcher
+entry) and intercepts the window's close button to hide rather than quit —
+only "Quit Amin" from the tray actually exits the process. This is the
+Phase 0 shell groundwork; Phase 1 fills it with the actual voice pipeline
+below.
+
+### Availability model: push-to-talk now, wake word later
+
+Phase 1 ships **push-to-talk only** (a shortcut/menu-bar click arms
+listening) — always running in the background, never a fully-quit app, but
+never listening to raw audio until asked to. Continuous listening / wake
+word is a later, separate milestone gated on the voice privacy model in
+docs/SECURITY.md actually holding up in practice — it is not something
+Phase 1 turns on by default.
+
 ## Repo layout
 
 ```
@@ -48,7 +68,8 @@ src-tauri/                 Rust backend
                              list (banking, payments, ...)
   src/audit.rs              append-only audit log writer
   src/commands.rs           every #[tauri::command] the frontend can call
-  src/lib.rs                wires plugins, DB, and commands together
+  src/tray.rs               menu-bar tray icon + Show/Quit menu
+  src/lib.rs                wires plugins, DB, tray, and commands together
 
 docs/                       this file, SECURITY.md
 .env.local.example          dev-only convenience; see SECURITY.md
@@ -88,17 +109,42 @@ busy. `App.tsx` currently includes a state switcher for visual QA; it comes
 out once real state wiring (voice input, agent execution) lands in later
 phases and drives the orb itself.
 
+## Phase 1 design notes: speaker recognition & presence greeting
+
+Captured here ahead of Phase 1 implementation, from the 2026-08-25 brief
+addendum, so the requirements aren't lost:
+
+- **Speaker voice recognition.** Amin enrolls a voice print (a numeric
+  embedding, not a stored recording) for Mona specifically, and matches
+  incoming audio against it locally. It should pick her voice out of a
+  room with other people talking, without needing a wake word aimed at it.
+  Audio that doesn't match is discarded immediately — never stored, never
+  sent anywhere, never analyzed further. See docs/SECURITY.md §13 for the
+  privacy contract this implies; the actual model/library choice (e.g. an
+  on-device speaker-embedding model run via a local ONNX/CoreML runtime)
+  is a Phase 1 decision to make and record here once picked, since it
+  affects app size and licensing — a case of the "radical architecture
+  change" the brief says to surface rather than decide silently.
+- **Presence-triggered greeting.** Recognizing Mona's voice as she arrives
+  (not a fixed wake phrase) triggers a natural greeting, then an
+  arrival-triggered Delta Brief (what changed, what needs a decision) —
+  the same content model as the Morning Brief (Phase 3), just triggered by
+  presence instead of time of day. The very first time Amin notices her
+  present in a session, it says something like "أنا هنا عشانك، منساكيش."
+- **Push-to-talk first.** See "Availability model" above — this is the
+  Phase 1 default; always-listening is explicitly a later milestone.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |
 |---|---|
 | 0 | Architecture, security foundation, design system *(this doc)* |
-| 1 | Desktop shell, voice input, Agent Core (Anthropic API wiring) |
+| 1 | Desktop shell (menu bar), push-to-talk voice, speaker recognition + presence greeting, Agent Core (Anthropic API wiring) |
 | 2 | Browser control, file access, task management |
 | 3 | Gmail, Calendar, Morning Brief |
 | 4 | Follow-up Engine, Executive Delegate Mode |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |
-| 6 | Ads, Drive, developer workflows |
+| 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |
 
 ## Non-goals (Phase 0, and generally)
 

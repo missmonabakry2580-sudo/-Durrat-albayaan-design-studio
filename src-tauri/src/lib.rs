@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod policy;
 mod secrets;
+mod tray;
 
 use tauri::Manager;
 
@@ -16,7 +17,23 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let database = db::init(dir.join("amin.db"))?;
             app.manage(database);
+
+            tray::setup(app.handle())?;
+
+            // Menu-bar presence, not a Dock app: no icon bouncing in the
+            // Dock or app-switcher entry. See docs/ARCHITECTURE.md.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the window hides Amin; it keeps running in the menu
+            // bar. Only the tray's "Quit Amin" item actually exits.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,

@@ -124,7 +124,34 @@ in one system from becoming a foothold in the other, and keeps Amin's
 audit log the single source of truth for what Amin itself did, rather than
 mixing in the school platform's own internal actions.
 
-## 13. Undo / recovery
+## 13. Speaker recognition: voice print, not recordings — and never a household wiretap
+
+Added 2026-08-25, ahead of Phase 1 implementation. Amin recognizes Mona's
+voice specifically, to know when she's the one speaking and to greet her on
+arrival (see docs/ARCHITECTURE.md, Phase 1 design notes). This is
+privacy-sensitive by nature — a live microphone in a home with other
+people in it — so the contract is explicit and non-negotiable:
+
+- **Local processing only.** Voice matching runs entirely on-device. No
+  audio, enrolled or otherwise, is ever sent to a server for this feature.
+- **A voice print, not a recording.** What's persisted is a mathematical
+  embedding derived from enrollment audio, stored like any other secret
+  (Keychain, not the SQLite database in plaintext) — not the raw audio
+  itself. Enrollment audio is processed into the embedding and then
+  discarded.
+- **Non-matching audio is discarded immediately.** Audio that doesn't
+  match Mona's voice print is dropped on the spot — not stored, not
+  transcribed, not analyzed, not logged beyond perhaps a bare
+  "non-owner audio ignored" audit event with no content. Everyone else in
+  the household is protected by this even though the microphone is
+  technically live.
+- **She can always override.** Amin interjecting on recognizing her voice
+  is a convenience, not a claim on her attention — she can dismiss or
+  ignore it freely at any time; nothing about voice recognition increases
+  autonomy or bypasses the confirm/kill-switch rules elsewhere in this
+  document.
+
+## 14. Undo / recovery
 
 Where an action is reversible, the tool that performs it should also record
 what's needed to reverse it (e.g. a draft's previous state, a calendar
