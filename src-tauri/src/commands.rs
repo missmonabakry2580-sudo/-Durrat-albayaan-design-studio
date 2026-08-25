@@ -125,12 +125,17 @@ pub fn classify_action(domain: String) -> String {
     policy::classify(&domain).as_str().to_string()
 }
 
-/// Send one turn to Amin's Agent Core. Checks the kill switch first, then
-/// calls the Anthropic API with the Keychain-stored key, and always audits
-/// the outcome — success or failure — so the log reflects every real call,
-/// not just the ones that went well.
+/// Send one turn to Amin's Agent Core. Checks the kill switch first, appends
+/// the user turn to the session's short-term conversation memory, calls the
+/// Anthropic API with the Keychain-stored key, appends the reply back into
+/// memory on success, and always audits the outcome — success or failure —
+/// so the log reflects every real call, not just the ones that went well.
 #[tauri::command]
-pub async fn send_agent_message(message: String, db: State<'_, Db>) -> Result<String, String> {
+pub async fn send_agent_message(
+    message: String,
+    db: State<'_, Db>,
+    conversation: State<'_, agent::Conversation>,
+) -> Result<String, String> {
     let halted = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         get_setting(&conn, "kill_switch").as_deref() == Some("on")
@@ -142,7 +147,26 @@ pub async fn send_agent_message(message: String, db: State<'_, Db>) -> Result<St
     let api_key = secrets::get_secret(ANTHROPIC_KEY_NAME)
         .map_err(|_| "No Anthropic API key configured yet — add one above first.".to_string())?;
 
-    let result = agent::send_message(&api_key, &message).await;
+    let history = {
+        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.push(agent::ChatMessage {
+            role: "user".to_string(),
+            content: message,
+        });
+        agent::trim_history(&mut turns);
+        turns.clone()
+    };
+
+    let result = agent::send_message(&api_key, &history).await;
+
+    if let Ok(reply) = &result {
+        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.push(agent::ChatMessage {
+            role: "assistant".to_string(),
+            content: reply.clone(),
+        });
+        agent::trim_history(&mut turns);
+    }
 
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     match &result {
@@ -171,6 +195,15 @@ pub async fn send_agent_message(message: String, db: State<'_, Db>) -> Result<St
     }
 
     result
+}
+
+/// Reset the session's short-term conversation memory (a "New conversation"
+/// action). Does not touch the audit log itself — nothing risky happened.
+#[tauri::command]
+pub fn clear_agent_conversation(conversation: State<'_, agent::Conversation>) -> Result<(), String> {
+    let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+    turns.clear();
+    Ok(())
 }
 
 #[derive(serde::Serialize)]

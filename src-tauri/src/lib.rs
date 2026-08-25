@@ -18,6 +18,7 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let database = db::init(dir.join("amin.db"))?;
             app.manage(database);
+            app.manage(agent::Conversation::new());
 
             tray::setup(app.handle())?;
 
@@ -48,6 +49,7 @@ pub fn run() {
             commands::classify_action,
             commands::list_audit_log,
             commands::send_agent_message,
+            commands::clear_agent_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");

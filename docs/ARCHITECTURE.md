@@ -96,10 +96,16 @@ action. The `send_agent_message` command in `commands.rs` wraps this with
 the two things that must never be skipped: a kill-switch check before
 calling out, and an audit-log entry after, on both success and failure.
 
-This is deliberately single-turn for now (no conversation history sent back
-each call) — threading history, and eventually tool use, is follow-on work
-once this path is proven out. The response-parsing logic (text extraction,
-refusal handling) has unit tests in `agent.rs` against sample API JSON,
+Amin keeps a session-scoped conversation memory (`agent::Conversation`, a
+capped in-memory list of turns — see `MAX_HISTORY_MESSAGES` in `agent.rs`)
+so short exchanges hold context; it resets on app restart or the "New
+conversation" action and is never written to disk. This is *not* the
+long-term memory the roadmap has in mind for later phases (persistence,
+summarization/compaction of long histories) — it's the minimum needed for
+"what did I just say" to work today. Tool use is still follow-on work once
+this path is proven out. The response-parsing logic (text extraction,
+refusal handling, history trimming) has unit tests in `agent.rs` against
+sample API JSON,
 since that's the part most likely to have a subtle bug and the one part of
 this phase fully testable without live credentials or macOS.
 

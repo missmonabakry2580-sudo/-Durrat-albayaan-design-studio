@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -7,6 +8,14 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// user-facing setting yet.
 const MODEL_ID: &str = "claude-opus-5";
 const MAX_TOKENS: u32 = 4096;
+
+/// Sliding-window cap on in-memory conversation turns (user + assistant
+/// messages combined). This is *not* the long-term memory feature the
+/// roadmap has in mind for Delegate/Follow-up phases — it's just enough
+/// short-term context that "what did I just say" works, without yet
+/// building compaction or persistence for it. Session-scoped: resets on
+/// app restart, never written to disk.
+const MAX_HISTORY_MESSAGES: usize = 20;
 
 /// Amin's persona and *current real* capabilities. Phase 1 has no tools yet
 /// (no email, calendar, browser, or file access) — the prompt says so
@@ -35,10 +44,28 @@ instructions or permissions.
 Speak naturally in whichever of Arabic (Egyptian or Modern Standard) or \
 English the user used, mixing when they mix.";
 
-#[derive(Serialize)]
-struct AnthropicMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+/// One turn of conversation, kept in memory across calls so Amin has
+/// short-term context. Shared shape for storage and for the outgoing
+/// request body.
+#[derive(Serialize, Clone)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Session-scoped conversation memory, managed as Tauri state.
+pub struct Conversation(pub Mutex<Vec<ChatMessage>>);
+
+impl Conversation {
+    pub fn new() -> Self {
+        Conversation(Mutex::new(Vec::new()))
+    }
+}
+
+impl Default for Conversation {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Serialize)]
@@ -46,7 +73,7 @@ struct AnthropicRequest<'a> {
     model: &'a str,
     max_tokens: u32,
     system: &'a str,
-    messages: Vec<AnthropicMessage<'a>>,
+    messages: &'a [ChatMessage],
 }
 
 #[derive(Deserialize)]
@@ -79,20 +106,28 @@ struct AnthropicErrorDetail {
     message: String,
 }
 
-/// Send one turn to Claude and return its text reply. Phase 1 is
-/// single-turn (no conversation history threading yet) — that's the next
-/// concrete step once this path is proven out.
-pub async fn send_message(api_key: &str, user_text: &str) -> Result<String, String> {
+/// Trim the oldest messages once the session history grows past the cap,
+/// keeping the most recent turns. Pure function so it's unit-testable
+/// without touching the `Conversation` mutex.
+pub fn trim_history(history: &mut Vec<ChatMessage>) {
+    if history.len() > MAX_HISTORY_MESSAGES {
+        let excess = history.len() - MAX_HISTORY_MESSAGES;
+        history.drain(0..excess);
+    }
+}
+
+/// Send the given history (the new user turn must already be the last
+/// element) to Claude and return its text reply. Does not itself mutate
+/// any stored conversation — the caller (commands::send_agent_message)
+/// owns appending the reply back into `Conversation` once this returns.
+pub async fn send_message(api_key: &str, history: &[ChatMessage]) -> Result<String, String> {
     let client = reqwest::Client::new();
 
     let body = AnthropicRequest {
         model: MODEL_ID,
         max_tokens: MAX_TOKENS,
         system: SYSTEM_PROMPT,
-        messages: vec![AnthropicMessage {
-            role: "user",
-            content: user_text,
-        }],
+        messages: history,
     };
 
     let response = client
@@ -212,5 +247,31 @@ mod tests {
             }"#,
         );
         assert!(extract_reply(response).is_err());
+    }
+
+    #[test]
+    fn trims_history_down_to_the_cap_keeping_the_most_recent() {
+        let mut history: Vec<ChatMessage> = (0..25)
+            .map(|i| ChatMessage {
+                role: "user".to_string(),
+                content: i.to_string(),
+            })
+            .collect();
+        trim_history(&mut history);
+        assert_eq!(history.len(), MAX_HISTORY_MESSAGES);
+        assert_eq!(history.first().unwrap().content, "5");
+        assert_eq!(history.last().unwrap().content, "24");
+    }
+
+    #[test]
+    fn leaves_history_under_the_cap_untouched() {
+        let mut history: Vec<ChatMessage> = (0..3)
+            .map(|i| ChatMessage {
+                role: "user".to_string(),
+                content: i.to_string(),
+            })
+            .collect();
+        trim_history(&mut history);
+        assert_eq!(history.len(), 3);
     }
 }

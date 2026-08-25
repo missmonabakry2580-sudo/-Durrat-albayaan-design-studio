@@ -45,3 +45,5 @@ export const listAuditLog = (limit = 20) => invoke<AuditEntry[]>("list_audit_log
 
 export const sendAgentMessage = (message: string) =>
   invoke<string>("send_agent_message", { message });
+
+export const clearAgentConversation = () => invoke<void>("clear_agent_conversation");

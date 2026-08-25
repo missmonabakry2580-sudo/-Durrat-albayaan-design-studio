@@ -8,6 +8,7 @@ import {
   type AuditEntry,
   type AutonomyLevel,
   appInfo,
+  clearAgentConversation,
   clearApiKey,
   getAutonomyLevel,
   hasApiKey,
@@ -115,6 +116,11 @@ function App() {
     }
   }
 
+  async function handleNewConversation() {
+    await clearAgentConversation();
+    setAgentLog([]);
+  }
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -152,10 +158,19 @@ function App() {
         </section>
 
         <section className="panel">
-          <h2>كلمي أمين — Talk to Amin</h2>
+          <div className="panel-header-row">
+            <h2>كلمي أمين — Talk to Amin</h2>
+            <button
+              className="chip"
+              onClick={handleNewConversation}
+              disabled={!inTauri || agentLog.length === 0}
+            >
+              New conversation
+            </button>
+          </div>
           <p className="text-muted">
-            Phase 1 Agent Core — conversation only, no tools yet. Each message is a fresh turn
-            (no memory between messages until Phase 4).
+            Phase 1 Agent Core — conversation only, no tools yet. Amin remembers this session
+            until you start a new conversation or quit the app — nothing is saved to disk yet.
           </p>
           {agentLog.length > 0 && (
             <ul className="agent-log">
