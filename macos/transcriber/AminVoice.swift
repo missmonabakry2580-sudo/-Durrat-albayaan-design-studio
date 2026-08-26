@@ -132,6 +132,19 @@ private final class Transcriber {
             return
         }
 
+        // Touching audioEngine.inputNode/.start() is what triggers the
+        // *separate* microphone permission prompt the first time, and that
+        // call can block the calling thread until the prompt is answered.
+        // Doing this on the main thread froze Amin's whole window (the
+        // spinning-wheel/beachball Mona hit) for as long as that system
+        // dialog was up, since the main thread also drives the webview.
+        // A background queue keeps the app responsive while she decides.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.startEngine(recognizer: recognizer)
+        }
+    }
+
+    private func startEngine(recognizer: SFSpeechRecognizer) {
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         // Prefer on-device recognition when the OS supports it for this
