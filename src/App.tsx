@@ -289,6 +289,18 @@ function App() {
     setAminState("idle");
   }
 
+  /** Tap once to start, tap again to stop — holding a mouse button down
+   * the whole time she's talking isn't a reasonable ask. Recognition also
+   * still ends on its own after a natural pause in speech, so tapping
+   * again is "I'm done early," not the only way to stop. */
+  function handleMicToggle() {
+    if (isListening) {
+      handleMicUp();
+    } else {
+      handleMicDown();
+    }
+  }
+
   async function handleCreateTask() {
     const title = taskInput.trim();
     if (!title) return;
@@ -797,11 +809,13 @@ function App() {
           <button
             type="button"
             className={isListening ? "command-bar-mic command-bar-mic-active" : "command-bar-mic"}
-            onMouseDown={handleMicDown}
-            onMouseUp={handleMicUp}
-            onMouseLeave={handleMicUp}
+            onClick={handleMicToggle}
             disabled={!inTauri || agentBusy}
-            title="اضغطي مع الاستمرار للتحدث — أو استخدمي alt+A من أي مكان"
+            title={
+              isListening
+                ? "دوسي تاني لو خلصتي كلامك — أو استنيه يوقف من نفسه"
+                : "دوسي وابدئي الكلام — أو استخدمي alt+A من أي مكان"
+            }
           >
             🎤
           </button>
