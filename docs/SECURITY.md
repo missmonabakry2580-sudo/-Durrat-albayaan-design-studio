@@ -35,16 +35,52 @@ devices on her own private encrypted network. Anything short of that
 peer authentication) does not qualify for this exception and needs its
 own explicit sign-off before being built.
 
-## 3. Secrets live in the OS Keychain, never in Git or in the app's own storage
+## 3. Secrets: the Anthropic key is local-disk storage for now, not the OS Keychain (2026-08-26)
 
-- `src-tauri/src/secrets.rs` wraps the `keyring` crate to read/write the
-  macOS Keychain. This is the *only* place a secret is read or written.
-- `.env.local` is dev-only convenience (see `.env.local.example`) and is
-  gitignored from the very first commit (`.gitignore` lists `.env`,
-  `.env.local`, `.env.*.local`, and the Vite-default `*.local`). The shipped
-  app never reads secrets from `.env` files.
-- The SQLite database (`schema.sql`) never stores secrets — only settings,
-  audit log entries, tasks, and follow-ups.
+The original design here was strict: `src-tauri/src/secrets.rs` wraps the
+`keyring` crate to read/write the macOS Keychain, and that's the *only*
+place a secret is read or written. That held until testing on Mona's real
+Mac hit a reproducible fault: `secrets::set_secret` reported success every
+single time (logged as `save_api_key`/`confirmed` in the audit table), yet
+`secrets::get_secret` — called moments later, in the same running app
+session — consistently came back `keyring::Error::NoEntry`, whose own
+message is literally *"No matching entry found in secure storage."* This
+was checked as thoroughly as possible without a second real Mac to
+reproduce on: read the `keyring` crate's actual macOS backend source to
+rule out an ambiguous-duplicate-item explanation (its own doc comment
+confirms the legacy `SecKeychain` API it calls always updates a single
+item in place — no ambiguity is possible there), which ruled out the one
+concrete theory available. No root cause was found.
+
+Rather than leave Amin unusable indefinitely on an environment-specific OS
+fault, Mona was asked directly and chose to move the Anthropic API key
+from the Keychain to the local `settings` table (`src-tauri/src/db.rs`'s
+SQLite database) — the same table that already reliably holds
+`autonomy_level` and `kill_switch`. Stated plainly, not glossed over: this
+is a real trade-off, not a neutral change.
+
+- **What this means concretely**: the key sits in plain text inside
+  `~/Library/Application Support/com.monaalsayedstudio.amin/amin.db`,
+  protected only by normal macOS file permissions (readable by Mona's own
+  logged-in user account, like any other app's local data) — not by
+  Keychain's at-rest encryption or its per-app access control.
+- **What did *not* change**: the key still never touches Git, `.env`
+  files, or any network destination other than Anthropic's API itself
+  (see `agent.rs`). `.env.local` is still dev-only convenience (see
+  `.env.local.example`) and still gitignored from the first commit
+  (`.gitignore` lists `.env`, `.env.local`, `.env.*.local`, and the
+  Vite-default `*.local`) — the shipped app never reads secrets from
+  `.env` files either way.
+- **`secrets.rs` is kept, not deleted** — `#[allow(dead_code)]`'d with the
+  full explanation in its own module doc comment. It's still the right
+  approach for any future secret once the Keychain fault is understood;
+  removing working, previously-reviewed code over an unresolved
+  environment issue would be the wrong call.
+- **Revisit this** once there's a way to actually debug the Keychain
+  fault (a second real Mac, or Mona's own patience for another round of
+  diagnostic builds) — this section should be rewritten back to "Keychain,
+  full stop" the moment that's true again, not left as the permanent
+  story.
 
 ## 4. Browser profile is separate
 

@@ -8,7 +8,7 @@ use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, brief, browser, files, followups, notify, secrets, tasks, tools, voice};
+use crate::{agent, audit, brief, browser, files, followups, notify, tasks, tools, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -45,15 +45,34 @@ pub fn app_info() -> AppInfo {
     }
 }
 
+// The Anthropic key was originally stored in the OS Keychain via
+// secrets.rs (see that module for the generic wrapper, still used
+// elsewhere). On at least one real Mac, saving it there reported success
+// every time yet reading it back — moments later, same running session —
+// reliably came back "No matching entry found in secure storage". That's
+// not a permissions prompt or an ambiguous-item issue (checked the
+// keyring crate's own macOS backend source for both); it looks like a
+// genuine environment-specific Keychain fault this app can't work around,
+// and there's no second Mac available to root-cause it further. Mona
+// chose, knowingly, to store it in the local settings table instead (the
+// same table already reliably holding autonomy_level/kill_switch) so Amin
+// is actually usable now, rather than staying blocked on an unresolved
+// OS-level issue. Trade-off, stated plainly: this is local-disk storage
+// with the same protection as any other file only her logged-in macOS
+// account can read — not Keychain's at-rest encryption. See
+// docs/SECURITY.md.
 #[tauri::command]
-pub fn has_api_key() -> bool {
-    secrets::has_secret(ANTHROPIC_KEY_NAME)
+pub fn has_api_key(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, ANTHROPIC_KEY_NAME)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false))
 }
 
 #[tauri::command]
 pub fn save_api_key(key: String, db: State<Db>) -> Result<(), String> {
-    secrets::set_secret(ANTHROPIC_KEY_NAME, &key)?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, ANTHROPIC_KEY_NAME, key.trim())?;
     audit::record(
         &conn,
         "user",
@@ -67,8 +86,9 @@ pub fn save_api_key(key: String, db: State<Db>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn clear_api_key(db: State<Db>) -> Result<(), String> {
-    secrets::clear_secret(ANTHROPIC_KEY_NAME)?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [ANTHROPIC_KEY_NAME])
+        .map_err(|e| e.to_string())?;
     audit::record(
         &conn,
         "user",
@@ -165,15 +185,16 @@ pub async fn send_agent_message(
         return Err("Amin is halted — turn the kill switch off to resume.".to_string());
     }
 
-    // Surfaces the real Keychain error rather than a generic "not
-    // configured" message — Mona has hit a case where save_api_key
-    // genuinely reports success (logged in the audit table) yet the key
-    // still reads back as missing moments later in the same session. A
-    // generic message can't distinguish "never saved" from "saved but the
-    // OS won't hand it back," so the actual error text is the only way to
-    // diagnose that without a real Mac to test on.
-    let api_key = secrets::get_secret(ANTHROPIC_KEY_NAME)
-        .map_err(|e| format!("مفيش مفتاح API متاح للقراءة من الـ Keychain دلوقتي: {e}"))?;
+    // Read from the local settings table, not the OS Keychain — see
+    // has_api_key's doc comment for why (a reproducible Keychain read
+    // failure on Mona's real Mac that a real Keychain error message
+    // confirmed was "No matching entry found in secure storage" despite
+    // save_api_key reporting success every time).
+    let api_key = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        get_setting(&conn, ANTHROPIC_KEY_NAME).filter(|v| !v.trim().is_empty())
+    }
+    .ok_or_else(|| "لسه محتاجة تحطي مفتاح الاتصال بأنثروبيك — من قسم الأمان والاستقلالية.".to_string())?;
 
     let existing_pending = {
         let guard = pending.0.lock().map_err(|e| e.to_string())?;
