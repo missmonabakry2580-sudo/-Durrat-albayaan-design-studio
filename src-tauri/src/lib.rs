@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod policy;
 mod secrets;
+mod tasks;
 mod tray;
 mod voice;
 
@@ -92,6 +93,10 @@ pub fn run() {
             commands::clear_agent_conversation,
             commands::start_voice_capture,
             commands::stop_voice_capture,
+            commands::create_task,
+            commands::quick_capture,
+            commands::list_tasks,
+            commands::set_task_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");

@@ -78,6 +78,7 @@ src-tauri/                 Rust backend
   src/agent.rs              Agent Core: the Anthropic API client
   src/voice.rs              push-to-talk session: spawns/manages the
                              native transcriber helper (see macos/)
+  src/tasks.rs              local task CRUD + Quick Capture
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
   src/lib.rs                wires plugins, DB, tray, global shortcut, and
@@ -281,13 +282,54 @@ both touch rules stated as non-negotiable in docs/SECURITY.md:
   Agent Core exists for it to remote-control. Its own architecture notes
   land in that project when it starts, not retrofitted here.
 
+## Phase 2 design notes: task management shipped; browser/files still ahead
+
+Started 2026-08-26, with Mona commuting and asking for Phase 2 to begin
+without her, and everything needing her Mac/review lined up for when she
+opens it. Given that constraint, this pass deliberately picked the one
+Phase 2 item with no new privileged surface to reason about:
+
+**Built and tested (unit tests + a clean app launch — same bar as every
+other phase so far):**
+
+- `src-tauri/src/tasks.rs`: local task CRUD (create, list with an optional
+  status filter, status transitions) over the `tasks` table that's existed
+  since Phase 0's schema. `create_task`/`quick_capture`/`list_tasks`/
+  `set_task_status` commands wrap it with the same audit-log pattern as
+  every other command — every task action is logged as `RiskTier::Auto`
+  (creating or completing your own task is low-stakes; see `policy.rs` if
+  that classification ever needs revisiting).
+- **Quick Capture** is the same `tasks::create` with `source:
+  "quick_capture"` — no separate code path to keep in sync. The "📌
+  Capture" button next to the Talk-to-Amin input saves whatever text is
+  there as a task *instead of* sending it to the agent, which also means
+  it already works with the push-to-talk voice box (speak → text lands in
+  the input → Capture) even though the voice pipeline itself is still
+  unverified — the text path doesn't care where the words came from.
+
+**Deliberately not started tonight — new privileged surface that needs
+Mona's review before it's built, not just her testing after:**
+
+- **File access.** Reading/writing files on her actual disk is a real
+  expansion of what Amin can touch. Scope needs deciding *with* her, not
+  guessed at 3am: which directory is Amin's workspace, what's read-only
+  vs. write-gated behind `ConfirmHighRisk`, whether it's scoped to one
+  folder or broader. This is exactly the "new service" the brief says to
+  surface, not decide silently.
+- **Browser control.** SECURITY.md §4 already requires a dedicated browser
+  profile, separate from Mona's own — the *how* (which automation
+  approach: a controlled WebView, CDP against a real browser, an
+  Accessibility-API-driven approach) is a real architecture decision with
+  security tradeoffs, and also the kind of thing that's much safer to get
+  right sitting together than to guess overnight.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |
 |---|---|
 | 0 | Architecture, security foundation, design system *(this doc)* |
 | 1 | Desktop shell (menu bar), push-to-talk voice, speaker recognition + presence greeting, Agent Core (Anthropic API wiring) |
-| 2 | Browser control, file access, task management |
+| 2 | Task management + Quick Capture *(shipped)*; browser control, file access *(design decisions pending — see Phase 2 notes above)* |
 | 3 | Gmail, Calendar, Morning Brief |
 | 4 | Follow-up Engine, Executive Delegate Mode |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |

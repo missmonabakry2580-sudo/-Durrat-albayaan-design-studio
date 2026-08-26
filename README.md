@@ -11,7 +11,7 @@ No mobile app, no App Store / Google Play — ever. See
 excluded-actions list (banking, full stop), and everything else
 non-negotiable about how Amin is allowed to act.
 
-## Status: Phase 0 done, Phase 1 in progress
+## Status: Phase 0 done, Phase 1 & 2 in progress
 
 **Phase 0 — Architecture, Security, Design System:**
 
@@ -31,18 +31,32 @@ non-negotiable about how Amin is allowed to act.
 - Creator attribution (`src/lib/branding.ts`) on the launch screen and the
   in-app About panel.
 
-**Phase 1 — Agent Core (in progress):**
+**Phase 1 — Agent Core & voice (in progress):**
 
 - `src-tauri/src/agent.rs` calls the Anthropic API (Claude Opus 5) with the
-  Keychain-stored key; the "Talk to Amin" panel in the app exercises it
-  end to end, gated by the kill switch and fully audited.
-- Voice input (push-to-talk, speaker recognition, presence greeting) is
-  designed but not yet built — see docs/ARCHITECTURE.md's "Agent Core"
-  section for why (it needs a real Mac and microphone to build safely).
+  Keychain-stored key, with session-scoped conversation memory; the "Talk
+  to Amin" panel exercises it end to end, gated by the kill switch and
+  fully audited.
+- Push-to-talk voice: the Rust orchestration and UI (mic button + a global
+  `alt+A` shortcut) are built and tested; the native macOS Speech-
+  framework helper (`macos/transcriber/`) is written but not yet compiled
+  or run — see docs/ARCHITECTURE.md's "Voice pipeline" section for exactly
+  what's verified vs. what needs a real Mac.
+- Speaker recognition and presence-triggered greeting are designed
+  (docs/ARCHITECTURE.md + docs/SECURITY.md §13) but not yet built.
 
-Later phases (browser/files/tasks, Gmail/Calendar, follow-ups, the school
-platform connector, ads/Drive/dev workflows, Smart Home, Mobile Companion)
-build on top of this — see the roadmap table in `docs/ARCHITECTURE.md`.
+**Phase 2 — Task management (in progress):**
+
+- `src-tauri/src/tasks.rs`: local task CRUD and Quick Capture, both fully
+  tested. The "📌 Capture" button next to Talk-to-Amin saves the message
+  box as a task instead of sending it to the agent.
+- Browser control and file access haven't been started — see
+  docs/ARCHITECTURE.md's "Phase 2 design notes" for why those specifically
+  wait for a design conversation rather than an overnight guess.
+
+Later phases (Gmail/Calendar, follow-ups, the school platform connector,
+ads/Drive/dev workflows, Smart Home, Mobile Companion) build on top of
+this — see the roadmap table in `docs/ARCHITECTURE.md`.
 
 ## Development
 

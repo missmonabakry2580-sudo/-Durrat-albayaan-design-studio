@@ -2,8 +2,9 @@ use tauri::{AppHandle, State};
 
 use crate::db::Db;
 use crate::policy::{self, AutonomyLevel, RiskTier};
+use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, secrets, voice};
+use crate::{agent, audit, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -256,4 +257,62 @@ pub fn start_voice_capture(app: AppHandle, session: State<VoiceSession>) -> Resu
 #[tauri::command]
 pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
     voice::stop_listening(session)
+}
+
+/// Create a task manually (from the Tasks panel's own form).
+#[tauri::command]
+pub fn create_task(title: String, db: State<Db>) -> Result<Task, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let task = tasks::create(&conn, &title, "manual")?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "create_task",
+        policy::classify("create_task"),
+        audit::Decision::Executed,
+        Some(&task.title),
+        None,
+    );
+    Ok(task)
+}
+
+/// Quick Capture: one text box, no status/source picking — for jotting
+/// something down fast (typed or, once voice is wired up, spoken) without
+/// interrupting whatever else Mona is doing.
+#[tauri::command]
+pub fn quick_capture(text: String, db: State<Db>) -> Result<Task, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let task = tasks::create(&conn, &text, "quick_capture")?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "quick_capture",
+        policy::classify("quick_capture"),
+        audit::Decision::Executed,
+        Some(&task.title),
+        None,
+    );
+    Ok(task)
+}
+
+#[tauri::command]
+pub fn list_tasks(status: Option<String>, db: State<Db>) -> Result<Vec<Task>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    tasks::list(&conn, status.as_deref())
+}
+
+#[tauri::command]
+pub fn set_task_status(id: String, status: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    tasks::set_status(&conn, &id, &status)?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "set_task_status",
+        policy::classify("set_task_status"),
+        audit::Decision::Executed,
+        Some(&format!("{id} -> {status}")),
+        None,
+    );
+    Ok(())
 }

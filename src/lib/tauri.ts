@@ -58,3 +58,21 @@ export const clearAgentConversation = () => invoke<void>("clear_agent_conversati
  */
 export const startVoiceCapture = () => invoke<void>("start_voice_capture");
 export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");
+
+export type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
+
+export interface Task {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  source: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: string | null;
+}
+
+export const createTask = (title: string) => invoke<Task>("create_task", { title });
+export const quickCapture = (text: string) => invoke<Task>("quick_capture", { text });
+export const listTasks = (status?: TaskStatus) => invoke<Task[]>("list_tasks", { status });
+export const setTaskStatus = (id: string, status: TaskStatus) =>
+  invoke<void>("set_task_status", { id, status });

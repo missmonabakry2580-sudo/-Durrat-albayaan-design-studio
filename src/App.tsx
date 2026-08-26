@@ -8,17 +8,22 @@ import {
   type AppInfo,
   type AuditEntry,
   type AutonomyLevel,
+  type Task,
   appInfo,
   clearAgentConversation,
   clearApiKey,
+  createTask,
   getAutonomyLevel,
   hasApiKey,
   isHalted,
   listAuditLog,
+  listTasks,
+  quickCapture,
   saveApiKey,
   sendAgentMessage,
   setAutonomyLevel,
   setKillSwitch,
+  setTaskStatus,
   startVoiceCapture,
   stopVoiceCapture,
 } from "./lib/tauri";
@@ -50,22 +55,27 @@ function App() {
   const [agentBusy, setAgentBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskInput, setTaskInput] = useState("");
+  const [showDoneTasks, setShowDoneTasks] = useState(false);
 
   async function refresh() {
     if (!inTauri) return;
     try {
-      const [i, hasKey, level, killed, log] = await Promise.all([
+      const [i, hasKey, level, killed, log, taskList] = await Promise.all([
         appInfo(),
         hasApiKey(),
         getAutonomyLevel(),
         isHalted(),
         listAuditLog(10),
+        listTasks(),
       ]);
       setInfo(i);
       setKeySaved(hasKey);
       setAutonomy(level);
       setHalted(killed);
       setAuditLog(log);
+      setTasks(taskList);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -170,6 +180,29 @@ function App() {
     setOrbState("idle");
   }
 
+  async function handleCreateTask() {
+    const title = taskInput.trim();
+    if (!title) return;
+    setTaskInput("");
+    await createTask(title);
+    await refresh();
+  }
+
+  async function handleQuickCapture() {
+    const text = agentInput.trim();
+    if (!text) return;
+    setAgentInput("");
+    await quickCapture(text);
+    await refresh();
+  }
+
+  async function handleToggleTask(task: Task) {
+    await setTaskStatus(task.id, task.status === "done" ? "open" : "done");
+    await refresh();
+  }
+
+  const visibleTasks = showDoneTasks ? tasks : tasks.filter((t) => t.status !== "done");
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -259,6 +292,73 @@ function App() {
             />
             <button type="submit" disabled={!inTauri || agentBusy || !agentInput.trim()}>
               {agentBusy ? "..." : "Send"}
+            </button>
+            <button
+              type="button"
+              className="chip"
+              onClick={handleQuickCapture}
+              disabled={!inTauri || agentBusy || !agentInput.trim()}
+              title="Save this text as a task instead of sending it to Amin"
+            >
+              📌 Capture
+            </button>
+          </form>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header-row">
+            <h2>مهامي — Tasks</h2>
+            <label className="show-done-toggle">
+              <input
+                type="checkbox"
+                checked={showDoneTasks}
+                onChange={(e) => setShowDoneTasks(e.currentTarget.checked)}
+              />
+              Show done
+            </label>
+          </div>
+          <p className="text-muted">
+            Phase 2 — local task list and Quick Capture. Use "📌 Capture" above to turn whatever's
+            in the message box (typed or spoken) into a task instead of sending it to Amin.
+          </p>
+          {visibleTasks.length === 0 ? (
+            <p className="text-muted">No tasks yet.</p>
+          ) : (
+            <ul className="task-list">
+              {visibleTasks.map((task) => (
+                <li key={task.id} className="task-row">
+                  <button
+                    className={task.status === "done" ? "task-check task-check-done" : "task-check"}
+                    onClick={() => handleToggleTask(task)}
+                    disabled={!inTauri}
+                    aria-label={task.status === "done" ? "Mark as open" : "Mark as done"}
+                  >
+                    {task.status === "done" ? "✓" : ""}
+                  </button>
+                  <span className={task.status === "done" ? "task-title task-title-done" : "task-title"}>
+                    {task.title}
+                  </span>
+                  {task.source && <span className="badge">{task.source}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            className="field-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreateTask();
+            }}
+          >
+            <input
+              type="text"
+              placeholder="أضيفي مهمة..."
+              value={taskInput}
+              onChange={(e) => setTaskInput(e.currentTarget.value)}
+              disabled={!inTauri}
+            />
+            <button type="submit" disabled={!inTauri || !taskInput.trim()}>
+              Add
             </button>
           </form>
         </section>
