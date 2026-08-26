@@ -33,6 +33,19 @@ CREATE TABLE IF NOT EXISTS tasks (
     metadata   TEXT
 );
 
+-- Amin's long-term conversation memory — persists across app restarts so
+-- context carries over day to day instead of resetting every launch (the
+-- in-memory `agent::Conversation` cap in agent.rs still bounds what's sent
+-- to the API per turn; commands.rs keeps this table trimmed to a rolling
+-- window too, so it grows, not without limit). Cleared only when Mona
+-- explicitly starts a "New conversation".
+CREATE TABLE IF NOT EXISTS conversation_history (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      TEXT NOT NULL,
+    role    TEXT NOT NULL,
+    content TEXT NOT NULL -- JSON, mirrors agent::ChatMessage.content
+);
+
 CREATE TABLE IF NOT EXISTS follow_ups (
     id               TEXT PRIMARY KEY,
     task_id          TEXT NOT NULL REFERENCES tasks(id),

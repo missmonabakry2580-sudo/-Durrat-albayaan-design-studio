@@ -5,6 +5,7 @@ mod browser;
 mod commands;
 mod confirmation;
 mod db;
+mod elevenlabs;
 mod files;
 mod followups;
 mod notify;
@@ -27,8 +28,15 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let database = db::init(dir.join("amin.db"))?;
+            let history = {
+                let conn = database.0.lock().map_err(|e| e.to_string())?;
+                commands::load_conversation_history(&conn)
+            };
             app.manage(database);
-            app.manage(agent::Conversation::new());
+            // Seeded from disk, not empty — long-term memory across app
+            // restarts, per Mona's request. See agent::Conversation and
+            // commands::load_conversation_history/clear_agent_conversation.
+            app.manage(agent::Conversation::with_history(history));
             app.manage(confirmation::PendingConfirmation::new());
             app.manage(voice::VoiceSession::new());
 
@@ -99,6 +107,9 @@ pub fn run() {
             commands::has_api_key,
             commands::save_api_key,
             commands::clear_api_key,
+            commands::has_elevenlabs_key,
+            commands::save_elevenlabs_key,
+            commands::clear_elevenlabs_key,
             commands::get_autonomy_level,
             commands::set_autonomy_level,
             commands::is_halted,

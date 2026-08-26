@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::brief::DeltaBrief;
 use crate::confirmation::{self, PendingAction, PendingConfirmation};
@@ -8,9 +8,14 @@ use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, brief, browser, files, followups, notify, tasks, tools, voice};
+use crate::{agent, audit, brief, browser, elevenlabs, files, followups, notify, tasks, tools, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
+/// Optional — Amin's voice falls back to the free, local, on-device engine
+/// (macos/transcriber/AminVoice.swift) whenever this isn't set. See
+/// elevenlabs.rs for why this is a distinct, disclosed trade-off (cost,
+/// and the reply text leaving the device) rather than the default.
+const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
 
 fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
     conn.execute(
@@ -29,6 +34,63 @@ fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
         |row| row.get(0),
     )
     .ok()
+}
+
+/// Long-term conversation memory, across app restarts — see
+/// schema.sql's `conversation_history` and agent::Conversation's doc
+/// comment. Called once at startup (lib.rs) to seed the in-memory
+/// conversation; a malformed row is skipped rather than failing the
+/// whole load.
+pub fn load_conversation_history(conn: &rusqlite::Connection) -> Vec<agent::ChatMessage> {
+    let Ok(mut stmt) = conn.prepare("SELECT role, content FROM conversation_history ORDER BY id ASC")
+    else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        let role: String = row.get(0)?;
+        let content: String = row.get(1)?;
+        Ok((role, content))
+    }) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok)
+        .filter_map(|(role, content)| {
+            serde_json::from_str::<serde_json::Value>(&content)
+                .ok()
+                .map(|content| agent::ChatMessage { role, content })
+        })
+        .collect()
+}
+
+/// Persists one conversation turn and keeps the table trimmed to a rolling
+/// window — long-term memory across restarts, not an unbounded transcript.
+/// Best-effort: a failure here shouldn't break the actual conversation
+/// turn, so errors are swallowed rather than propagated.
+fn persist_turn(conn: &rusqlite::Connection, msg: &agent::ChatMessage) {
+    let _ = conn.execute(
+        "INSERT INTO conversation_history (ts, role, content) VALUES (?1, ?2, ?3)",
+        rusqlite::params![
+            chrono::Utc::now().to_rfc3339(),
+            msg.role,
+            serde_json::to_string(&msg.content).unwrap_or_default(),
+        ],
+    );
+    let _ = conn.execute(
+        "DELETE FROM conversation_history WHERE id NOT IN (
+            SELECT id FROM conversation_history ORDER BY id DESC LIMIT 200
+        )",
+        [],
+    );
+}
+
+/// Pushes `msg` onto the in-memory history, persists it, and re-applies
+/// the sliding-window cap — the one place every conversation-mutating
+/// call site should go through, so persistence can never be forgotten at
+/// one of them.
+fn push_turn(conn: &rusqlite::Connection, turns: &mut Vec<agent::ChatMessage>, msg: agent::ChatMessage) {
+    persist_turn(conn, &msg);
+    turns.push(msg);
+    agent::trim_history(turns);
 }
 
 #[derive(serde::Serialize)]
@@ -101,6 +163,45 @@ pub fn clear_api_key(db: State<Db>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn has_elevenlabs_key(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, ELEVENLABS_KEY_NAME)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn save_elevenlabs_key(key: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, ELEVENLABS_KEY_NAME, key.trim())?;
+    audit::record(
+        &conn,
+        "user",
+        "save_elevenlabs_key",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn clear_elevenlabs_key(db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [ELEVENLABS_KEY_NAME])
+        .map_err(|e| e.to_string())?;
+    audit::record(
+        &conn,
+        "user",
+        "clear_elevenlabs_key",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
 pub fn get_autonomy_level(db: State<Db>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let level = get_setting(&conn, "autonomy_level").unwrap_or_else(|| {
@@ -151,6 +252,24 @@ pub fn classify_action(domain: String) -> String {
     policy::classify(&domain).as_str().to_string()
 }
 
+/// A reply from Amin's Agent Core, ready for the frontend. `emotion`, when
+/// present, is the tone Claude tagged its own reply with (see
+/// agent::extract_emotion) — Mona never sees the raw marker, only this
+/// parsed-out field, meant to drive Amin's presence now and a future
+/// hologram/avatar face's expression later.
+#[derive(serde::Serialize)]
+pub struct AgentReply {
+    pub text: String,
+    pub emotion: Option<String>,
+}
+
+impl AgentReply {
+    fn new(text: String) -> Self {
+        let (text, emotion) = agent::extract_emotion(&text);
+        AgentReply { text, emotion }
+    }
+}
+
 /// Send one turn to Amin's Agent Core. This is the one place Mona's
 /// non-negotiable instruction — "any step Amin wants to take waits for my
 /// explicit word before it runs" — is actually enforced at runtime, not
@@ -176,7 +295,7 @@ pub async fn send_agent_message(
     db: State<'_, Db>,
     conversation: State<'_, agent::Conversation>,
     pending: State<'_, PendingConfirmation>,
-) -> Result<String, String> {
+) -> Result<AgentReply, String> {
     let halted = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         get_setting(&conn, "kill_switch").as_deref() == Some("on")
@@ -208,9 +327,9 @@ pub async fn send_agent_message(
     let tool_defs = tools::tool_definitions();
 
     let history = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage::user_text(&message));
-        agent::trim_history(&mut turns);
+        push_turn(&conn, &mut turns, agent::ChatMessage::user_text(&message));
         turns.clone()
     };
 
@@ -246,9 +365,13 @@ pub async fn send_agent_message(
     }
 
     {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage::assistant_content(response.as_assistant_content()));
-        agent::trim_history(&mut turns);
+        push_turn(
+            &conn,
+            &mut turns,
+            agent::ChatMessage::assistant_content(response.as_assistant_content()),
+        );
     }
 
     let claude_text = response.text();
@@ -264,10 +387,11 @@ pub async fn send_agent_message(
             None,
             None,
         );
-        return if claude_text.is_empty() {
+        let reply = AgentReply::new(claude_text);
+        return if reply.text.is_empty() {
             Err("Amin returned an empty response".to_string())
         } else {
-            Ok(claude_text)
+            Ok(reply)
         };
     };
 
@@ -299,14 +423,18 @@ pub async fn send_agent_message(
             );
         }
 
+        let (claude_text, emotion) = agent::extract_emotion(&claude_text);
         let prefix = if claude_text.is_empty() {
             String::new()
         } else {
             format!("{claude_text}\n\n")
         };
-        return Ok(format!(
-            "{prefix}⏸️ {description}\n\nمستني كلمتك يا مُنى — قولي \"موافقة\" أو \"نفذ\" عشان أكمل، أو \"إلغاء\" لو غيرتِ رأيك."
-        ));
+        return Ok(AgentReply {
+            text: format!(
+                "{prefix}⏸️ {description}\n\nمستني كلمتك يا مُنى — قولي \"موافقة\" أو \"نفذ\" عشان أكمل، أو \"إلغاء\" لو غيرتِ رأيك."
+            ),
+            emotion,
+        });
     }
 
     // Auto / TrustedDelegation: safe to run immediately — still logged,
@@ -328,9 +456,9 @@ pub async fn send_agent_message(
     };
 
     {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage::tool_result(&tool_id, &result_text, None));
-        agent::trim_history(&mut turns);
+        push_turn(&conn, &mut turns, agent::ChatMessage::tool_result(&tool_id, &result_text, None));
     }
 
     let fallback = if exec_result.is_ok() {
@@ -338,7 +466,7 @@ pub async fn send_agent_message(
     } else {
         format!("حصل خطأ أثناء: {description}")
     };
-    narrate(&api_key, &conversation, &tool_defs, fallback).await
+    narrate(&api_key, &db, &conversation, &tool_defs, fallback).await
 }
 
 /// Mona's reply to an already-pending ConfirmHighRisk tool call. Reads her
@@ -353,15 +481,15 @@ async fn resolve_pending_action(
     api_key: &str,
     action: PendingAction,
     message: &str,
-) -> Result<String, String> {
+) -> Result<AgentReply, String> {
     let tool_defs = tools::tool_definitions();
     let description = tools::describe(&action.name, &action.input);
     let risk = tools::risk_for(&action.name);
 
     match confirmation::interpret(message) {
-        confirmation::Reply::Unclear => Ok(format!(
+        confirmation::Reply::Unclear => Ok(AgentReply::new(format!(
             "لسه مستني تأكيدك على:\n⏸️ {description}\n\nقولي \"موافقة\" أو \"نفذ\" عشان أكمل، أو \"إلغاء\" لو غيرتِ رأيك."
-        )),
+        ))),
         confirmation::Reply::Deny => {
             {
                 let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
@@ -380,15 +508,19 @@ async fn resolve_pending_action(
                 );
             }
             {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
                 let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-                turns.push(agent::ChatMessage::tool_result(
-                    &action.tool_use_id,
-                    "Mona declined this action. Do not perform it.",
-                    Some(message),
-                ));
-                agent::trim_history(&mut turns);
+                push_turn(
+                    &conn,
+                    &mut turns,
+                    agent::ChatMessage::tool_result(
+                        &action.tool_use_id,
+                        "Mona declined this action. Do not perform it.",
+                        Some(message),
+                    ),
+                );
             }
-            narrate(api_key, conversation, &tool_defs, format!("تمام، اتلغى: {description}")).await
+            narrate(api_key, db, conversation, &tool_defs, format!("تمام، اتلغى: {description}")).await
         }
         confirmation::Reply::Approve => {
             {
@@ -410,20 +542,20 @@ async fn resolve_pending_action(
                 Err(e) => format!("Error: {e}"),
             };
             {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
                 let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-                turns.push(agent::ChatMessage::tool_result(
-                    &action.tool_use_id,
-                    &result_text,
-                    Some(message),
-                ));
-                agent::trim_history(&mut turns);
+                push_turn(
+                    &conn,
+                    &mut turns,
+                    agent::ChatMessage::tool_result(&action.tool_use_id, &result_text, Some(message)),
+                );
             }
             let fallback = if exec_result.is_ok() {
                 format!("تم: {description}")
             } else {
                 format!("حصل خطأ أثناء: {description}")
             };
-            narrate(api_key, conversation, &tool_defs, fallback).await
+            narrate(api_key, db, conversation, &tool_defs, fallback).await
         }
     }
 }
@@ -436,10 +568,11 @@ async fn resolve_pending_action(
 /// of the whole turn.
 async fn narrate(
     api_key: &str,
+    db: &State<'_, Db>,
     conversation: &State<'_, agent::Conversation>,
     tool_defs: &[serde_json::Value],
     fallback_text: String,
-) -> Result<String, String> {
+) -> Result<AgentReply, String> {
     let history = {
         let turns = conversation.0.lock().map_err(|e| e.to_string())?;
         turns.clone()
@@ -447,25 +580,40 @@ async fn narrate(
 
     let response = match agent::send_message(api_key, &history, tool_defs).await {
         Ok(r) => r,
-        Err(_) => return Ok(fallback_text),
+        Err(_) => return Ok(AgentReply::new(fallback_text)),
     };
 
     {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage::assistant_content(response.as_assistant_content()));
-        agent::trim_history(&mut turns);
+        push_turn(
+            &conn,
+            &mut turns,
+            agent::ChatMessage::assistant_content(response.as_assistant_content()),
+        );
     }
 
     let text = response.text();
-    Ok(if text.is_empty() { fallback_text } else { text })
+    Ok(if text.is_empty() {
+        AgentReply::new(fallback_text)
+    } else {
+        AgentReply::new(text)
+    })
 }
 
-/// Reset the session's short-term conversation memory (a "New conversation"
-/// action). Does not touch the audit log itself — nothing risky happened.
+/// Reset Amin's conversation memory — both the in-memory working context
+/// and the long-term `conversation_history` persisted to disk. An
+/// explicit "New conversation" action is the one deliberate way to make
+/// Amin genuinely forget, since otherwise it now remembers across app
+/// restarts by design (see agent::Conversation). Does not touch the audit
+/// log itself — nothing risky happened.
 #[tauri::command]
-pub fn clear_agent_conversation(conversation: State<'_, agent::Conversation>) -> Result<(), String> {
+pub fn clear_agent_conversation(conversation: State<'_, agent::Conversation>, db: State<Db>) -> Result<(), String> {
     let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
     turns.clear();
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM conversation_history", [])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -520,11 +668,41 @@ pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
     voice::stop_listening(session)
 }
 
-/// Speaks Amin's reply aloud (Mona asked for spoken output as a priority,
-/// not just text in the chat log) — see voice::speak.
+/// Speaks Amin's reply aloud. Prefers ElevenLabs (a more expressive,
+/// human-sounding voice Mona explicitly asked for) when she's added her
+/// own ElevenLabs key; otherwise falls back to the free, local, on-device
+/// engine (voice::speak) — never a hard error just because the optional
+/// upgrade isn't configured.
 #[tauri::command]
-pub fn speak_text(app: AppHandle, text: String) -> Result<(), String> {
-    voice::speak(app, &text)
+pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Result<(), String> {
+    let eleven_key = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty())
+    };
+
+    let Some(key) = eleven_key else {
+        return voice::speak(app, &text);
+    };
+
+    let audio = match elevenlabs::synthesize(&key, &text).await {
+        Ok(a) => a,
+        Err(e) => {
+            // ElevenLabs itself failed (bad key, quota, network) — fall
+            // back to the on-device voice rather than staying silent.
+            let _ = app.emit("voice://error", format!("ElevenLabs: {e}"));
+            return voice::speak(app, &text);
+        }
+    };
+
+    let _ = app.emit("voice://speaking-started", "");
+    let app_for_thread = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = elevenlabs::play(&audio) {
+            let _ = app_for_thread.emit("voice://error", e);
+        }
+        let _ = app_for_thread.emit("voice://speaking-finished", "");
+    });
+    Ok(())
 }
 
 #[tauri::command]

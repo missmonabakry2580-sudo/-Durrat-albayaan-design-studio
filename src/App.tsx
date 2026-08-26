@@ -15,6 +15,7 @@ import {
   appInfo,
   clearAgentConversation,
   clearApiKey,
+  clearElevenLabsKey,
   createFollowUp,
   createTask,
   deleteWorkspaceFile,
@@ -22,6 +23,7 @@ import {
   generateDeltaBrief,
   getAutonomyLevel,
   hasApiKey,
+  hasElevenLabsKey,
   isHalted,
   listAuditLog,
   listDueFollowUps,
@@ -31,6 +33,7 @@ import {
   quickCapture,
   readWorkspaceFile,
   saveApiKey,
+  saveElevenLabsKey,
   sendAgentMessage,
   setAutonomyLevel,
   setFollowUpStatus,
@@ -114,6 +117,9 @@ function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [keySaved, setKeySaved] = useState(false);
   const [keyInput, setKeyInput] = useState("");
+  const [elevenLabsKeySaved, setElevenLabsKeySaved] = useState(false);
+  const [elevenLabsKeyInput, setElevenLabsKeyInput] = useState("");
+  const [lastEmotion, setLastEmotion] = useState<string | null>(null);
   const [autonomy, setAutonomy] = useState<AutonomyLevel>("observe");
   const [halted, setHalted] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
@@ -149,18 +155,21 @@ function App() {
     // others — a single Promise.all would let one rejection blank out
     // everything, including the API key badge that has nothing to do with
     // it. Each piece of state updates independently instead.
-    const [i, hasKey, level, killed, log, taskList, files, dueList] = await Promise.allSettled([
-      appInfo(),
-      hasApiKey(),
-      getAutonomyLevel(),
-      isHalted(),
-      listAuditLog(10),
-      listTasks(),
-      listWorkspaceFiles(),
-      listDueFollowUps(),
-    ]);
+    const [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList] =
+      await Promise.allSettled([
+        appInfo(),
+        hasApiKey(),
+        hasElevenLabsKey(),
+        getAutonomyLevel(),
+        isHalted(),
+        listAuditLog(10),
+        listTasks(),
+        listWorkspaceFiles(),
+        listDueFollowUps(),
+      ]);
     if (i.status === "fulfilled") setInfo(i.value);
     if (hasKey.status === "fulfilled") setKeySaved(hasKey.value);
+    if (hasElevenKey.status === "fulfilled") setElevenLabsKeySaved(hasElevenKey.value);
     if (level.status === "fulfilled") setAutonomy(level.value);
     if (killed.status === "fulfilled") setHalted(killed.value);
     if (log.status === "fulfilled") setAuditLog(log.value);
@@ -168,7 +177,7 @@ function App() {
     if (files.status === "fulfilled") setWorkspaceFiles(files.value);
     if (dueList.status === "fulfilled") setDueFollowUps(dueList.value);
 
-    const firstFailure = [i, hasKey, level, killed, log, taskList, files, dueList].find(
+    const firstFailure = [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList].find(
       (r) => r.status === "rejected",
     );
     setError(firstFailure ? String((firstFailure as PromiseRejectedResult).reason) : null);
@@ -217,6 +226,18 @@ function App() {
     await refresh();
   }
 
+  async function handleSaveElevenLabsKey() {
+    if (!elevenLabsKeyInput.trim()) return;
+    await saveElevenLabsKey(elevenLabsKeyInput.trim());
+    setElevenLabsKeyInput("");
+    await refresh();
+  }
+
+  async function handleClearElevenLabsKey() {
+    await clearElevenLabsKey();
+    await refresh();
+  }
+
   async function handleAutonomyChange(level: AutonomyLevel) {
     await setAutonomyLevel(level);
     await refresh();
@@ -253,9 +274,10 @@ function App() {
 
     try {
       const reply = await sendAgentMessage(text);
-      setAgentLog((log) => [...log, { role: "amin", text: reply }]);
+      setLastEmotion(reply.emotion);
+      setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
-      speak(reply);
+      speak(reply.text);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
@@ -401,9 +423,10 @@ function App() {
     setAminState("thinking");
     try {
       const reply = await sendAgentMessage(prompt);
-      setAgentLog((log) => [...log, { role: "amin", text: reply }]);
+      setLastEmotion(reply.emotion);
+      setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
-      speak(reply);
+      speak(reply.text);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
@@ -421,7 +444,7 @@ function App() {
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
       <main className="amin-world">
         <div className="amin-world-presence">
-          <AminPresence state={aminState} />
+          <AminPresence state={aminState} emotion={lastEmotion} />
         </div>
         <div className="amin-world-ambient" aria-hidden="true" />
 
@@ -755,6 +778,36 @@ function App() {
                       حفظ
                     </button>
                     <button onClick={handleClearKey} disabled={!inTauri || !keySaved}>
+                      مسح
+                    </button>
+                  </div>
+
+                  <div className="field-row">
+                    <span className="field-label">صوت أمين البشري (ElevenLabs)</span>
+                    <span className={elevenLabsKeySaved ? "badge badge-success" : "badge"}>
+                      {elevenLabsKeySaved ? "متحط" : "مش متحط"}
+                    </span>
+                  </div>
+                  <p className="text-muted">
+                    اختياري ومدفوع — لو حطيتي المفتاح، هيتكلم أمين بصوت أشبه بالإنسان بدل الصوت
+                    الافتراضي المجاني. النص اللي بيقوله بيروح لسيرفرات ElevenLabs عشان تتحول لصوت.
+                    من غيره، هيفضل يتكلم بالصوت المحلي زي ما هو دلوقتي.
+                  </p>
+                  <div className="field-row">
+                    <input
+                      type="password"
+                      placeholder="ElevenLabs API key"
+                      value={elevenLabsKeyInput}
+                      onChange={(e) => setElevenLabsKeyInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                    <button
+                      onClick={handleSaveElevenLabsKey}
+                      disabled={!inTauri || !elevenLabsKeyInput.trim()}
+                    >
+                      حفظ
+                    </button>
+                    <button onClick={handleClearElevenLabsKey} disabled={!inTauri || !elevenLabsKeySaved}>
                       مسح
                     </button>
                   </div>

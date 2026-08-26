@@ -26,11 +26,26 @@ export interface AuditEntry {
   evidence: string | null;
 }
 
+/** A reply from Amin's Agent Core. `emotion` — the tone Claude tagged its
+ * own reply with — is groundwork for a future hologram/avatar face; not
+ * shown anywhere yet. */
+export interface AgentReply {
+  text: string;
+  emotion: string | null;
+}
+
 export const appInfo = () => invoke<AppInfo>("app_info");
 
 export const hasApiKey = () => invoke<boolean>("has_api_key");
 export const saveApiKey = (key: string) => invoke<void>("save_api_key", { key });
 export const clearApiKey = () => invoke<void>("clear_api_key");
+
+/** Optional — a more expressive, human-sounding voice (ElevenLabs) Mona
+ * can add on top of the free, local, on-device voice. Costs money per use
+ * and sends reply text to ElevenLabs' API, unlike the on-device default. */
+export const hasElevenLabsKey = () => invoke<boolean>("has_elevenlabs_key");
+export const saveElevenLabsKey = (key: string) => invoke<void>("save_elevenlabs_key", { key });
+export const clearElevenLabsKey = () => invoke<void>("clear_elevenlabs_key");
 
 export const getAutonomyLevel = () => invoke<AutonomyLevel>("get_autonomy_level");
 export const setAutonomyLevel = (level: AutonomyLevel) =>
@@ -44,7 +59,7 @@ export const classifyAction = (domain: string) => invoke<RiskTier>("classify_act
 export const listAuditLog = (limit = 20) => invoke<AuditEntry[]>("list_audit_log", { limit });
 
 export const sendAgentMessage = (message: string) =>
-  invoke<string>("send_agent_message", { message });
+  invoke<AgentReply>("send_agent_message", { message });
 
 export const clearAgentConversation = () => invoke<void>("clear_agent_conversation");
 

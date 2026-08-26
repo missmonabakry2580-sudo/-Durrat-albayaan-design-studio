@@ -5,6 +5,10 @@ import "./AminPresence.css";
 interface AminPresenceProps {
   state: AminState;
   className?: string;
+  /** The tone Claude tagged its own reply with (see agent::extract_emotion).
+   * Carried as data-emotion for a future hologram/avatar face to react to;
+   * no visual behavior hooks into it yet. */
+  emotion?: string | null;
 }
 
 const WAVE_BARS = Array.from({ length: 14 }, (_, i) => i);
@@ -19,11 +23,12 @@ const WAVE_BARS = Array.from({ length: 14 }, (_, i) => i);
  * sitting inside a hard-edged card, so it reads as part of the app rather
  * than a picture pinned on top of it.
  */
-export function AminPresence({ state, className }: AminPresenceProps) {
+export function AminPresence({ state, className, emotion }: AminPresenceProps) {
   return (
     <div
       className={["amin-presence", className].filter(Boolean).join(" ")}
       data-state={state}
+      data-emotion={emotion ?? undefined}
       role="img"
       aria-label={`أمين ${AMIN_STATE_LABELS[state]}`}
     >
