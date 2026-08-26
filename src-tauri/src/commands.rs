@@ -520,6 +520,18 @@ pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
     voice::stop_listening(session)
 }
 
+/// Speaks Amin's reply aloud (Mona asked for spoken output as a priority,
+/// not just text in the chat log) — see voice::speak.
+#[tauri::command]
+pub fn speak_text(app: AppHandle, text: String) -> Result<(), String> {
+    voice::speak(app, &text)
+}
+
+#[tauri::command]
+pub fn stop_speaking() -> Result<(), String> {
+    voice::stop_speaking()
+}
+
 /// Create a task manually (from the Tasks panel's own form).
 #[tauri::command]
 pub fn create_task(title: String, db: State<Db>) -> Result<Task, String> {

@@ -147,6 +147,13 @@ is ready to add a voice-provider key, not assumed here.
   present or fails to load, it fails with a clear error rather than doing
   nothing silently — that path itself is exercised and correct even
   without a real engine.
+- The same engine also speaks Amin's replies aloud (`speak_text`/
+  `amin_voice_speak`, macOS's on-device `AVSpeechSynthesizer`, `ar-SA`
+  voice) — Mona asked for spoken output as a priority, not just text in
+  the chat log. `voice://speaking-started` / `voice://speaking-finished`
+  let the frontend track real speaking state instead of guessing a
+  duration. Same single-locale caveat as recognition: a reply with
+  English words mixed in will be read with an Arabic accent.
 - A global `alt+A` push-to-talk shortcut (`tauri-plugin-global-shortcut`,
   registered in `lib.rs`), armed even when Amin's window isn't focused —
   registers cleanly and doesn't crash the app (verified under a virtual

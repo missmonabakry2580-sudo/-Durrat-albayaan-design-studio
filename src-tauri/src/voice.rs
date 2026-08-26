@@ -23,10 +23,13 @@ impl Default for VoiceSession {
 }
 
 /// `kind` as passed by `AminVoice.swift`'s C callback: 0 = partial
-/// transcript, 1 = final transcript, anything else = error.
+/// transcript, 1 = final transcript, 2 = error (recognition side); 3 =
+/// speech started, 4 = speech finished (speak side).
 type VoiceCallback = unsafe extern "C" fn(c_int, *const c_char);
 type StartFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
 type StopFn = unsafe extern "C" fn();
+type SpeakFn = unsafe extern "C" fn(*const c_char, VoiceCallback) -> c_int;
+type StopSpeakingFn = unsafe extern "C" fn();
 
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
@@ -88,6 +91,8 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
     let _ = match kind {
         0 => app.emit("voice://partial", text),
         1 => app.emit("voice://final", text),
+        3 => app.emit("voice://speaking-started", text),
+        4 => app.emit("voice://speaking-finished", text),
         _ => app.emit("voice://error", text),
     };
 }
@@ -136,5 +141,40 @@ pub fn stop_listening(session: tauri::State<'_, VoiceSession>) -> Result<(), Str
     }
 
     *listening = false;
+    Ok(())
+}
+
+/// Speaks `text` aloud through the same in-process voice engine (macOS's
+/// on-device AVSpeechSynthesizer — see AminVoice.swift). Fires
+/// `voice://speaking-started` / `voice://speaking-finished` so the
+/// frontend can track Amin's real speaking state instead of guessing a
+/// fixed duration.
+pub fn speak(app: AppHandle, text: &str) -> Result<(), String> {
+    let _ = APP_HANDLE.set(app.clone());
+    let lib = engine(&app)?;
+    let c_text = std::ffi::CString::new(text).map_err(|e| e.to_string())?;
+
+    let rc = unsafe {
+        let speak: Symbol<SpeakFn> = lib
+            .get(b"amin_voice_speak\0")
+            .map_err(|e| format!("voice engine is missing amin_voice_speak: {e}"))?;
+        speak(c_text.as_ptr(), on_voice_event)
+    };
+    if rc != 0 {
+        return Err(format!("the voice engine failed to speak (code {rc})"));
+    }
+    Ok(())
+}
+
+/// Stops any in-progress speech immediately. A no-op if nothing is
+/// speaking or the engine was never loaded.
+pub fn stop_speaking() -> Result<(), String> {
+    if let Some(lib) = LIBRARY.get() {
+        unsafe {
+            if let Ok(stop) = lib.get::<StopSpeakingFn>(b"amin_voice_stop_speaking\0") {
+                stop();
+            }
+        }
+    }
     Ok(())
 }

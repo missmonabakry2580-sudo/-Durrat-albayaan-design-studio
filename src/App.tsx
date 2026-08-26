@@ -36,6 +36,7 @@ import {
   setFollowUpStatus,
   setKillSwitch,
   setTaskStatus,
+  speakText,
   startVoiceCapture,
   stopVoiceCapture,
   writeWorkspaceFile,
@@ -197,6 +198,7 @@ function App() {
         setIsListening(e.payload === "listening");
         setAminState(e.payload === "listening" ? "listening" : "idle");
       }),
+      listen("voice://speaking-finished", () => setAminState("idle")),
     ];
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
@@ -225,6 +227,21 @@ function App() {
     await refresh();
   }
 
+  /** Speaks Amin's reply aloud. `voice://speaking-finished` (listened to
+   * above) resets aminState to idle when the real speech ends; the timeout
+   * here is only a safety net for when speaking never actually starts
+   * (engine missing, TTS failure) so Amin doesn't stay stuck mid-state. */
+  function speak(text: string) {
+    if (!inTauri) return;
+    speakText(text).catch((e) => {
+      setVoiceError(`تعذّر نطق الرد: ${String(e)}`);
+      setAminState("idle");
+    });
+    setTimeout(() => {
+      setAminState((s) => (s === "speaking" ? "idle" : s));
+    }, 25000);
+  }
+
   async function handleSendToAgent() {
     const text = agentInput.trim();
     if (!text || agentBusy) return;
@@ -238,13 +255,14 @@ function App() {
       const reply = await sendAgentMessage(text);
       setAgentLog((log) => [...log, { role: "amin", text: reply }]);
       setAminState("speaking");
+      speak(reply);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
+      setTimeout(() => setAminState("idle"), 1400);
     } finally {
       setAgentBusy(false);
       await refresh();
-      setTimeout(() => setAminState("idle"), 1400);
     }
   }
 
@@ -373,13 +391,14 @@ function App() {
       const reply = await sendAgentMessage(prompt);
       setAgentLog((log) => [...log, { role: "amin", text: reply }]);
       setAminState("speaking");
+      speak(reply);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
+      setTimeout(() => setAminState("idle"), 1400);
     } finally {
       setBriefBusy(false);
       await refresh();
-      setTimeout(() => setAminState("idle"), 1400);
     }
   }
 

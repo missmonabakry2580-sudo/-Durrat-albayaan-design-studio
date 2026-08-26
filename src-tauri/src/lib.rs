@@ -109,6 +109,8 @@ pub fn run() {
             commands::clear_agent_conversation,
             commands::start_voice_capture,
             commands::stop_voice_capture,
+            commands::speak_text,
+            commands::stop_speaking,
             commands::create_task,
             commands::quick_capture,
             commands::list_tasks,

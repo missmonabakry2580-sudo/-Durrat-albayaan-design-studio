@@ -25,12 +25,16 @@
 //
 // C ABI, called from src-tauri/src/voice.rs via dlsym (there is no header —
 // the two sides agree on this signature by convention, matched by hand):
-//   amin_voice_start(callback) -> Int32   (0 = started, or already running)
+//   amin_voice_start(callback) -> Int32     (0 = started, or already running)
 //   amin_voice_stop()
+//   amin_voice_speak(text, callback) -> Int32
+//   amin_voice_stop_speaking()
 // `callback` is `@convention(c) (Int32, UnsafePointer<CChar>?) -> Void`:
-// kind 0 = partial transcript, 1 = final transcript, 2 = error; the string
-// is a NUL-terminated UTF-8 C string valid only for the duration of the
-// call — the Rust side must copy it before returning.
+// kind 0 = partial transcript, 1 = final transcript, 2 = error (recognition
+// side); kind 3 = speech started, 4 = speech finished (speak side, text is
+// always null). The string is a NUL-terminated UTF-8 C string valid only
+// for the duration of the call — the Rust side must copy it before
+// returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -69,6 +73,54 @@ public func amin_voice_start(_ callback: @escaping AminVoiceCallback) -> Int32 {
 @_cdecl("amin_voice_stop")
 public func amin_voice_stop() {
     activeTranscriber?.stop()
+}
+
+/// Text-to-speech for Amin's own replies (Mona asked for spoken output as
+/// a priority, not just text in the chat log). Uses macOS's built-in
+/// AVSpeechSynthesizer — on-device, no new API key or vendor, matching the
+/// same "voice stays local" choice already made for speech recognition.
+/// `text` must be a NUL-terminated UTF-8 C string. The callback receives
+/// kind 3 when speech starts and kind 4 when it ends (text is always null
+/// for these) — src-tauri/src/voice.rs maps those to
+/// voice://speaking-started / voice://speaking-finished so the frontend
+/// can track Amin's actual speaking state instead of guessing a duration.
+private let speechSynthesizer = AVSpeechSynthesizer()
+private var speechDelegate: SpeechDelegate?
+
+@_cdecl("amin_voice_speak")
+public func amin_voice_speak(_ text: UnsafePointer<CChar>, _ callback: @escaping AminVoiceCallback) -> Int32 {
+    let utterance = AVSpeechUtterance(string: String(cString: text))
+    // ar-SA: a broadly-understood Modern Standard Arabic voice. Amin's
+    // replies are Arabic-first, so this covers the large majority of what
+    // it says — English words mixed into a reply will still be read with
+    // an Arabic accent, the same kind of single-locale limitation already
+    // disclosed for speech *recognition* above, not silently pretended away.
+    utterance.voice = AVSpeechSynthesisVoice(language: "ar-SA") ?? AVSpeechSynthesisVoice(language: "en-US")
+    let delegate = SpeechDelegate(callback: callback)
+    speechDelegate = delegate
+    speechSynthesizer.delegate = delegate
+    speechSynthesizer.speak(utterance)
+    return 0
+}
+
+@_cdecl("amin_voice_stop_speaking")
+public func amin_voice_stop_speaking() {
+    speechSynthesizer.stopSpeaking(at: .immediate)
+}
+
+private final class SpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    private let callback: AminVoiceCallback
+    init(callback: @escaping AminVoiceCallback) { self.callback = callback }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        callback(3, nil)
+    }
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        callback(4, nil)
+    }
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        callback(4, nil)
+    }
 }
 
 private final class Transcriber {

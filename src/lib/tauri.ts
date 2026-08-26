@@ -59,6 +59,11 @@ export const clearAgentConversation = () => invoke<void>("clear_agent_conversati
 export const startVoiceCapture = () => invoke<void>("start_voice_capture");
 export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");
 
+/** Speaks text aloud through the same on-device voice engine (macOS's
+ * AVSpeechSynthesizer) — see docs/ARCHITECTURE.md "Voice pipeline". */
+export const speakText = (text: string) => invoke<void>("speak_text", { text });
+export const stopSpeaking = () => invoke<void>("stop_speaking");
+
 export type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
 
 export interface Task {

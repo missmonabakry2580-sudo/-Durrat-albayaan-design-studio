@@ -3,10 +3,13 @@ use std::sync::Mutex;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Default model for Amin's Agent Core. Change this constant if a
-/// different cost/latency tradeoff is ever wanted — it isn't wired to a
-/// user-facing setting yet.
-const MODEL_ID: &str = "claude-opus-5";
+/// Default model for Amin's Agent Core. Switched from claude-opus-5 to
+/// claude-sonnet-5 after Mona flagged real reply latency once she started
+/// using chat/voice for real — Sonnet is meaningfully faster for a
+/// conversational assistant while staying highly capable; Opus remains an
+/// option if a task ever needs its deeper reasoning more than speed. Not
+/// wired to a user-facing setting yet.
+const MODEL_ID: &str = "claude-sonnet-5";
 const MAX_TOKENS: u32 = 4096;
 
 /// Sliding-window cap on in-memory conversation turns (user + assistant
