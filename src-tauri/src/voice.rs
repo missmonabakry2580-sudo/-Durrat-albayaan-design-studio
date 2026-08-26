@@ -66,6 +66,19 @@ type SetHandsFreeMutedFn = unsafe extern "C" fn(c_int);
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
 static LIBRARY: OnceLock<Library> = OnceLock::new();
+/// PID of the `afplay` process currently playing an ElevenLabs reply, if
+/// any — set by `elevenlabs::play`, read by `stop_speaking` below. The
+/// ElevenLabs path doesn't go through the native engine at all (playback
+/// is a plain child process, not AVSpeechSynthesizer), so without this
+/// `stop_speaking` would only ever reach the on-device voice and silently
+/// do nothing while an ElevenLabs reply is playing.
+static AFPLAY_PID: Mutex<Option<u32>> = Mutex::new(None);
+
+pub fn set_afplay_pid(pid: Option<u32>) {
+    if let Ok(mut guard) = AFPLAY_PID.lock() {
+        *guard = pid;
+    }
+}
 /// Set on the first `start_listening` call so the plain C callback below
 /// (which, being `extern "C"`, cannot capture any Rust state) has a way to
 /// reach the app and emit events. Amin only ever runs one app instance, so
@@ -213,8 +226,8 @@ pub fn speak(app: AppHandle, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Stops any in-progress speech immediately. A no-op if nothing is
-/// speaking or the engine was never loaded.
+/// Stops any in-progress speech immediately — whichever voice is actually
+/// speaking, on-device or ElevenLabs. A no-op if nothing is speaking.
 pub fn stop_speaking() -> Result<(), String> {
     if let Some(lib) = LIBRARY.get() {
         unsafe {
@@ -222,6 +235,10 @@ pub fn stop_speaking() -> Result<(), String> {
                 stop();
             }
         }
+    }
+    let pid = AFPLAY_PID.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
     }
     Ok(())
 }

@@ -44,6 +44,7 @@ import {
   setTaskStatus,
   speakText,
   startVoiceCapture,
+  stopSpeaking,
   stopVoiceCapture,
   writeWorkspaceFile,
 } from "./lib/tauri";
@@ -339,11 +340,22 @@ function App() {
     if (!inTauri) return;
     speakText(text).catch((e) => {
       setVoiceError(`تعذّر نطق الرد: ${String(e)}`);
-      setAminState("idle");
+      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
     });
     setTimeout(() => {
-      setAminState((s) => (s === "speaking" ? "idle" : s));
+      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
     }, 25000);
+  }
+
+  /** Interrupts Amin mid-reply — there was no way to do this at all before;
+   * only the "wait it out" option existed. */
+  async function handleStopSpeaking() {
+    try {
+      await stopSpeaking();
+    } catch (e) {
+      setVoiceError(String(e));
+    }
+    setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
   }
 
   /** `overrideText` lets hands-free mode send a just-heard command straight
@@ -1010,6 +1022,16 @@ function App() {
           >
             🎤
           </button>
+          {aminState === "speaking" && (
+            <button
+              type="button"
+              className="command-bar-mic"
+              onClick={handleStopSpeaking}
+              title="اسكتي أمين دلوقتي"
+            >
+              🔇
+            </button>
+          )}
           <input
             type="text"
             className="command-bar-input"

@@ -8,6 +8,7 @@
 //! own ElevenLabs API key (see commands.rs's has/save/clear_elevenlabs_key);
 //! falls back to the free, local, on-device engine when it isn't set.
 
+use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 
 const ELEVENLABS_TTS_URL: &str = "https://api.elevenlabs.io/v1/text-to-speech";
@@ -54,22 +55,32 @@ pub async fn synthesize(api_key: &str, text: &str) -> Result<Vec<u8>, String> {
 /// could take over from. Blocks until playback finishes; callers run this
 /// on a background thread so the calling command can return immediately,
 /// the same pattern already used for the on-device engine.
+///
+/// Registers its process id with `voice::set_afplay_pid` so
+/// `commands::stop_speaking` can interrupt it — without this, "stop
+/// speaking" would only ever reach the on-device engine and silently do
+/// nothing while an ElevenLabs reply was playing.
 pub fn play(audio: &[u8]) -> Result<(), String> {
     let mut path = std::env::temp_dir();
     path.push(format!("amin-speech-{}.mp3", uuid::Uuid::new_v4()));
     std::fs::write(&path, audio).map_err(|e| format!("couldn't write speech audio: {e}"))?;
 
-    let result = Command::new("afplay")
-        .arg(&path)
-        .status()
-        .map_err(|e| format!("couldn't run afplay: {e}"))
-        .and_then(|status| {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(format!("afplay exited with status {status}"))
+    let result = match Command::new("afplay").arg(&path).spawn() {
+        Ok(mut child) => {
+            crate::voice::set_afplay_pid(Some(child.id()));
+            let status = child.wait();
+            crate::voice::set_afplay_pid(None);
+            match status {
+                Ok(s) if s.success() => Ok(()),
+                // Killed by stop_speaking (SIGTERM) — an expected
+                // interruption, not a real playback failure.
+                Ok(s) if s.signal().is_some() => Ok(()),
+                Ok(s) => Err(format!("afplay exited with status {s}")),
+                Err(e) => Err(format!("afplay wait failed: {e}")),
             }
-        });
+        }
+        Err(e) => Err(format!("couldn't run afplay: {e}")),
+    };
 
     let _ = std::fs::remove_file(&path);
     result
