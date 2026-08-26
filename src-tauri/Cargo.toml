@@ -52,6 +52,15 @@ libloading = "0.8"
 # build without her leaving the app. See docs/ARCHITECTURE.md.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# ElevenLabs' streaming text-to-speech (wss://.../stream-input) — see
+# elevenlabs.rs's synthesize_streaming and docs/ARCHITECTURE.md's
+# "Realtime voice" section for why this replaces the old one-shot REST
+# call: audio starts arriving as ElevenLabs generates it instead of
+# waiting for the whole file, with no server of our own to host (unlike
+# ElevenLabs' full Conversational AI / Speech Engine products).
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3.34"
+base64 = "0.23.1"
 
 [dev-dependencies]
 # tauri::test::mock_app — used by tools.rs's unit tests, which need a real

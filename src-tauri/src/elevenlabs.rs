@@ -8,10 +8,18 @@
 //! own ElevenLabs API key (see commands.rs's has/save/clear_elevenlabs_key);
 //! falls back to the free, local, on-device engine when it isn't set.
 
+use base64::Engine;
+use futures_util::{SinkExt, StreamExt};
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
+use tokio_tungstenite::tungstenite::Message;
 
 const ELEVENLABS_TTS_URL: &str = "https://api.elevenlabs.io/v1/text-to-speech";
+/// The plain streaming TTS WebSocket — not ElevenAgents/Speech Engine,
+/// which both require hosting a public server of our own (see
+/// docs/ARCHITECTURE.md's "Realtime voice" section for why that's ruled
+/// out). Just an `xi-api-key`, same as the REST call above.
+const ELEVENLABS_WS_URL: &str = "wss://api.elevenlabs.io/v1/text-to-speech";
 /// "Rachel" — one of ElevenLabs' premade voices, available on every
 /// account without any extra setup. Not chosen for Arabic specifically;
 /// swap it once Mona picks a voice she prefers from her own ElevenLabs
@@ -94,6 +102,92 @@ pub async fn synthesize(
         .map_err(|e| format!("couldn't read ElevenLabs audio: {e}"))
 }
 
+/// The first WebSocket message per ElevenLabs' stream-input protocol:
+/// establishes voice settings and generation config for the whole
+/// utterance. `text` must be non-empty per their docs even though no real
+/// text goes here yet — a single space is the documented convention.
+fn init_message(api_key: &str, emotion: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "text": " ",
+        "voice_settings": voice_settings_for_emotion(emotion),
+        "generation_config": { "chunk_length_schedule": [120, 160, 250, 290] },
+        "xi-api-key": api_key,
+    })
+}
+
+/// A chunk of the actual text to speak. `try_trigger_generation: true`
+/// tells ElevenLabs not to wait for more text before it starts
+/// synthesizing — the whole point of using this endpoint at all when
+/// (today) the full reply is already known upfront rather than arriving
+/// token-by-token from Claude.
+fn text_message(text: &str) -> serde_json::Value {
+    serde_json::json!({ "text": format!("{text} "), "try_trigger_generation": true })
+}
+
+/// Sending empty text is how this protocol says "no more input coming" —
+/// ElevenLabs then finishes generating whatever's left and closes with
+/// `isFinal: true`.
+fn close_message() -> serde_json::Value {
+    serde_json::json!({ "text": "" })
+}
+
+/// Streaming counterpart to `synthesize`: opens ElevenLabs' plain
+/// stream-input WebSocket (no agent, no server of ours to host — see
+/// `ELEVENLABS_WS_URL`'s doc comment) and returns the fully assembled
+/// audio once ElevenLabs signals `isFinal`. Audio chunks start arriving
+/// as ElevenLabs generates them rather than only after the entire file is
+/// ready, which is the real point even before Claude's own replies are
+/// streamed token-by-token: this function still has to wait for the last
+/// chunk before returning today (see docs/ARCHITECTURE.md's "Realtime
+/// voice" section — incremental *playback* while chunks arrive, and
+/// barge-in, are the next slice, not yet built), but every future step
+/// (streaming Claude's tokens in as `text_message`s, playing chunks as
+/// `play` receives them) builds on this same connection instead of
+/// starting over.
+pub async fn synthesize_streaming(
+    api_key: &str,
+    text: &str,
+    voice_id: Option<&str>,
+    emotion: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
+    let url = format!("{ELEVENLABS_WS_URL}/{voice_id}/stream-input?model_id={MODEL_ID}");
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+        .await
+        .map_err(|e| format!("couldn't open ElevenLabs streaming connection: {e}"))?;
+    let (mut write, mut read) = ws_stream.split();
+
+    for msg in [init_message(api_key, emotion), text_message(text), close_message()] {
+        write
+            .send(Message::Text(msg.to_string().into()))
+            .await
+            .map_err(|e| format!("couldn't send to ElevenLabs stream: {e}"))?;
+    }
+
+    let mut audio = Vec::new();
+    while let Some(msg) = read.next().await {
+        let msg = msg.map_err(|e| format!("ElevenLabs stream error: {e}"))?;
+        let Message::Text(payload) = msg else { continue };
+        let parsed: serde_json::Value = serde_json::from_str(payload.as_str())
+            .map_err(|e| format!("couldn't parse ElevenLabs stream message: {e}"))?;
+        if let Some(chunk) = parsed.get("audio").and_then(|v| v.as_str()) {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(chunk)
+                .map_err(|e| format!("couldn't decode ElevenLabs audio chunk: {e}"))?;
+            audio.extend_from_slice(&bytes);
+        }
+        if parsed.get("isFinal").and_then(|v| v.as_bool()) == Some(true) {
+            break;
+        }
+    }
+
+    if audio.is_empty() {
+        return Err("ElevenLabs streaming returned no audio".to_string());
+    }
+    Ok(audio)
+}
+
 /// Plays MP3 bytes through the system's default output via macOS's
 /// built-in `afplay` CLI — ElevenLabs hands back raw audio bytes rather
 /// than something the native voice engine's AVSpeechSynthesizer path
@@ -134,6 +228,26 @@ pub fn play(audio: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn init_message_carries_the_api_key_and_voice_settings_not_text() {
+        let msg = init_message("secret-key", Some("calm"));
+        assert_eq!(msg["xi-api-key"], "secret-key");
+        assert_eq!(msg["text"], " ");
+        assert_eq!(msg["voice_settings"], voice_settings_for_emotion(Some("calm")));
+    }
+
+    #[test]
+    fn text_message_asks_elevenlabs_to_start_generating() {
+        let msg = text_message("أهلاً يا منى");
+        assert_eq!(msg["text"], "أهلاً يا منى ");
+        assert_eq!(msg["try_trigger_generation"], true);
+    }
+
+    #[test]
+    fn close_message_is_empty_text() {
+        assert_eq!(close_message()["text"], "");
+    }
 
     #[test]
     fn excited_is_more_expressive_than_serious() {

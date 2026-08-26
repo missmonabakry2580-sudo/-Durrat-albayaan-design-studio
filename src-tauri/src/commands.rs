@@ -749,13 +749,31 @@ pub async fn speak_text(
         return voice::speak(app, &text);
     };
 
-    let audio = match elevenlabs::synthesize(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
+    // The streaming WebSocket (audio arrives as ElevenLabs generates it,
+    // rather than only after the whole file renders — see
+    // docs/ARCHITECTURE.md's "Realtime voice" section) is what Amin should
+    // use going forward, but it's new and network-shaped differently than
+    // the plain REST call (a dropped/blocked WebSocket connection is a
+    // different failure mode than an HTTP request failing). Falling back
+    // to the REST endpoint before giving up on ElevenLabs entirely avoids
+    // a regression: something that worked over plain HTTPS shouldn't stop
+    // working just because the WebSocket path had a bad day.
+    let audio = match elevenlabs::synthesize_streaming(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
         Ok(a) => a,
-        Err(e) => {
-            // ElevenLabs itself failed (bad key, quota, network) — fall
-            // back to the on-device voice rather than staying silent.
-            let _ = app.emit("voice://error", format!("ElevenLabs: {e}"));
-            return voice::speak(app, &text);
+        Err(streaming_err) => {
+            match elevenlabs::synthesize(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
+                Ok(a) => a,
+                Err(e) => {
+                    // Both ElevenLabs paths failed (bad key, quota,
+                    // network) — fall back to the on-device voice rather
+                    // than staying silent.
+                    let _ = app.emit(
+                        "voice://error",
+                        format!("ElevenLabs: {e} (streaming also failed: {streaming_err})"),
+                    );
+                    return voice::speak(app, &text);
+                }
+            }
         }
     };
 

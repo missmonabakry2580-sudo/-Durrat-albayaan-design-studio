@@ -353,6 +353,62 @@ update button" if that's not expected. Settings also has an explicit
 Mona can confirm that for herself on demand instead of just trusting a
 silent background check.
 
+## Realtime voice: the architecture decision, and why it isn't ElevenAgents
+
+Mona's real ask isn't "Amin can speak" — it's a natural back-and-forth
+voice conversation: no send button, automatic turn detection, and
+barge-in (she can interrupt Amin mid-sentence by talking). The current
+pipeline (push-to-talk or hands-free → full text reply → full audio file
+generated, then played) cannot do any of that; it's fundamentally
+request/response, not a live conversation.
+
+ElevenLabs sells exactly this as a product — "ElevenAgents"
+(Conversational AI) — and it's the obvious first thing to reach for.
+**Deliberately not using it**, for a concrete reason found by reading
+their own docs, not a guess: both ElevenAgents' Custom LLM bridge and the
+lower-level Speech Engine product require ElevenLabs' cloud to reach a
+server *you host and keep running* — Custom LLM is an outbound HTTP/SSE
+call to a publicly reachable OpenAI-compatible endpoint, Speech Engine
+needs its Server SDK attached to a server of yours that receives
+transcripts and returns your LLM's reply. Amin has been a 100% local,
+no-hosted-backend desktop app by design this entire project (see "Why
+desktop-only, why Tauri" above); adopting either product means standing
+up and paying for a permanent public server, with its own security
+surface, just for voice — a real, recurring cost and risk, not a
+config flag.
+
+**What's used instead** — ElevenLabs' plain streaming TTS WebSocket,
+`wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input`,
+which needs only the `xi-api-key` header Mona already has: no agent to
+configure, no server to host. This becomes the target replacement for
+`elevenlabs::synthesize`'s current request → wait for the whole MP3 →
+play flow: Claude's reply streams into this socket as it's generated and
+audio plays back incrementally, cutting time-to-first-sound instead of
+waiting for the full reply. Claude via the Anthropic API stays exactly
+where it already is — no bridge, no second server, no change to who the
+"brain" is.
+
+Turn detection and barge-in (interrupting Amin mid-reply by speaking) get
+built directly into the existing local pipeline — the mic tap in
+AminVoice.swift's `HandsFreeListener` already runs continuously; the plan
+is to keep watching it for genuine new speech while a reply is playing
+and, on real speech onset, stop playback and open a fresh recognition
+session immediately, rather than requiring the manual "stop speaking"
+button. **Not yet implemented as of this doc update.**
+
+**What has actually landed** (`elevenlabs::synthesize_streaming`, unit
+tested, wired into `commands::speak_text` as the first thing tried before
+the old REST call as a fallback): the WebSocket connection itself — every
+ElevenLabs reply now goes out over `stream-input` and its audio chunks
+are decoded as they arrive. **What has not landed yet**: this function
+still waits for the last chunk (`isFinal`) before returning, so Mona
+does not yet hear audio start before the whole reply is ready, and
+nothing about turn detection or barge-in exists yet. Concretely: the
+network path changed and is tested; the actual "starts talking before
+it's done thinking" and "she can interrupt it" experience she asked for
+is still ahead. Do not read "streaming WebSocket added" as "realtime
+conversation works" — they are not the same claim.
+
 ## The command surface is the whole contract
 
 The frontend never gets raw SQL access and never talks to the network
