@@ -134,7 +134,10 @@
 
 .status-pill {
   position: fixed;
-  top: var(--space-4);
+  /* Clears macOS's overlaid traffic-light buttons, which always sit at
+     the physical top-left of the window regardless of RTL — see
+     tauri.conf.json's titleBarStyle: Overlay. */
+  top: 44px;
   inset-inline-end: var(--space-4);
   z-index: 3;
   display: flex;
