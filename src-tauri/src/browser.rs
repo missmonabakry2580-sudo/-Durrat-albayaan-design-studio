@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 /// A single reused browser window, isolated from Mona's personal browser
 /// entirely — its own data directory under the app's own data folder, so
@@ -25,7 +25,7 @@ fn parse_allowed_url(url: &str) -> Result<tauri::Url, String> {
     Ok(parsed)
 }
 
-pub fn open_url(app: &AppHandle, url: &str) -> Result<(), String> {
+pub fn open_url<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
     let parsed = parse_allowed_url(url)?;
 
     if let Some(window) = app.get_webview_window(BROWSER_WINDOW_LABEL) {

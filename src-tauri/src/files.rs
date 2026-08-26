@@ -1,17 +1,20 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
-/// Amin's file access is confined to one dedicated workspace folder —
-/// `~/Documents/Amin` — never the rest of the filesystem. This is the
-/// conservative default flagged in docs/ARCHITECTURE.md's Phase 2 notes;
-/// change `WORKSPACE_DIR_NAME` (and tell Mona) if a different location or
-/// scope is wanted later. Every function here re-derives the workspace
-/// root and re-validates containment — there is no code path that accepts
-/// an arbitrary absolute path from the caller.
-const WORKSPACE_DIR_NAME: &str = "Amin";
-
+/// Amin's file access root. Originally this was one dedicated folder
+/// (`~/Documents/Amin`); Mona explicitly asked to broaden that to "كل
+/// الملفات" (all files) on 2026-08-26. Read pragmatically — not as the
+/// literal filesystem root, which would expose OS/system files no legitimate
+/// task ever needs — this is her whole home directory. Every function here
+/// still re-derives this root and re-validates containment against it; there
+/// is no code path that accepts an arbitrary absolute path from the caller.
+/// See docs/SECURITY.md for why, given this much broader surface,
+/// `tools::risk_for` now gates *every* file tool (including plain reads and
+/// listing, not just writes/deletes) behind Mona's explicit confirmation —
+/// a file's contents leaving her machine in a tool_result, to a third-party
+/// API, is itself a "step" her own instruction says must wait for her word.
 #[derive(Serialize)]
 pub struct WorkspaceEntry {
     pub name: String,
@@ -19,14 +22,10 @@ pub struct WorkspaceEntry {
     pub size_bytes: u64,
 }
 
-fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let documents = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("couldn't resolve the Documents folder: {e}"))?;
-    let root = documents.join(WORKSPACE_DIR_NAME);
-    fs::create_dir_all(&root).map_err(|e| format!("couldn't create the Amin workspace folder: {e}"))?;
-    Ok(root)
+fn workspace_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .home_dir()
+        .map_err(|e| format!("couldn't resolve the home folder: {e}"))
 }
 
 /// Resolves `relative` against the workspace root and rejects anything
@@ -38,13 +37,12 @@ fn resolve_within_workspace(root: &Path, relative: &str) -> Result<PathBuf, Stri
         return Err("a file path is required".to_string());
     }
 
-    // The file may not exist yet (e.g. a new write) — canonicalize what
-    // does exist (the root, which create_dir_all above guarantees exists)
-    // and manually resolve the rest, rather than requiring the whole path
-    // to already be on disk.
+    // The file may not exist yet (e.g. a new write) — canonicalize the root
+    // (the home directory, which always exists) and manually resolve the
+    // rest, rather than requiring the whole path to already be on disk.
     let canonical_root = root
         .canonicalize()
-        .map_err(|e| format!("couldn't resolve the Amin workspace folder: {e}"))?;
+        .map_err(|e| format!("couldn't resolve your home folder: {e}"))?;
 
     let mut resolved = canonical_root.clone();
     for component in Path::new(relative).components() {
@@ -54,7 +52,7 @@ fn resolve_within_workspace(root: &Path, relative: &str) -> Result<PathBuf, Stri
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(format!(
-                    "'{relative}' isn't inside the Amin workspace folder"
+                    "'{relative}' isn't inside your home folder"
                 ));
             }
         }
@@ -66,22 +64,20 @@ fn resolve_within_workspace(root: &Path, relative: &str) -> Result<PathBuf, Stri
     if let Ok(existing) = resolved.canonicalize() {
         if !existing.starts_with(&canonical_root) {
             return Err(format!(
-                "'{relative}' isn't inside the Amin workspace folder"
+                "'{relative}' isn't inside your home folder"
             ));
         }
         return Ok(existing);
     }
 
     if !resolved.starts_with(&canonical_root) {
-        return Err(format!(
-            "'{relative}' isn't inside the Amin workspace folder"
-        ));
+        return Err(format!("'{relative}' isn't inside your home folder"));
     }
 
     Ok(resolved)
 }
 
-pub fn list(app: &AppHandle) -> Result<Vec<WorkspaceEntry>, String> {
+pub fn list<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<WorkspaceEntry>, String> {
     let root = workspace_root(app)?;
     let mut entries = Vec::new();
     for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
@@ -97,13 +93,13 @@ pub fn list(app: &AppHandle) -> Result<Vec<WorkspaceEntry>, String> {
     Ok(entries)
 }
 
-pub fn read(app: &AppHandle, relative: &str) -> Result<String, String> {
+pub fn read<R: Runtime>(app: &AppHandle<R>, relative: &str) -> Result<String, String> {
     let root = workspace_root(app)?;
     let path = resolve_within_workspace(&root, relative)?;
     fs::read_to_string(&path).map_err(|e| format!("couldn't read '{relative}': {e}"))
 }
 
-pub fn write(app: &AppHandle, relative: &str, contents: &str) -> Result<(), String> {
+pub fn write<R: Runtime>(app: &AppHandle<R>, relative: &str, contents: &str) -> Result<(), String> {
     let root = workspace_root(app)?;
     // The target may not exist yet, so resolve containment against its
     // parent directory (which must already be inside the workspace) and
@@ -123,7 +119,7 @@ pub fn write(app: &AppHandle, relative: &str, contents: &str) -> Result<(), Stri
     fs::write(&path, contents).map_err(|e| format!("couldn't write '{relative}': {e}"))
 }
 
-pub fn delete(app: &AppHandle, relative: &str) -> Result<(), String> {
+pub fn delete<R: Runtime>(app: &AppHandle<R>, relative: &str) -> Result<(), String> {
     let root = workspace_root(app)?;
     let path = resolve_within_workspace(&root, relative)?;
     fs::remove_file(&path).map_err(|e| format!("couldn't delete '{relative}': {e}"))

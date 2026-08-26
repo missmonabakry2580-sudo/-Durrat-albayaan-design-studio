@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 /// The one real delivery channel for the Follow-up Engine that needs no
@@ -6,6 +6,6 @@ use tauri_plugin_notification::NotificationExt;
 /// a missing notification permission or an unsupported environment (no
 /// notification daemon, as in a headless Linux sandbox) should degrade to
 /// "nothing shown", not crash Amin.
-pub fn send(app: &AppHandle, title: &str, body: &str) {
+pub fn send<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
     let _ = app.notification().builder().title(title).body(body).show();
 }

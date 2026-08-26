@@ -1,13 +1,14 @@
 use tauri::{AppHandle, State};
 
 use crate::brief::DeltaBrief;
+use crate::confirmation::{self, PendingAction, PendingConfirmation};
 use crate::db::Db;
 use crate::files::WorkspaceEntry;
 use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, brief, browser, files, followups, notify, secrets, tasks, voice};
+use crate::{agent, audit, brief, browser, files, followups, notify, secrets, tasks, tools, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -130,16 +131,31 @@ pub fn classify_action(domain: String) -> String {
     policy::classify(&domain).as_str().to_string()
 }
 
-/// Send one turn to Amin's Agent Core. Checks the kill switch first, appends
-/// the user turn to the session's short-term conversation memory, calls the
-/// Anthropic API with the Keychain-stored key, appends the reply back into
-/// memory on success, and always audits the outcome — success or failure —
-/// so the log reflects every real call, not just the ones that went well.
+/// Send one turn to Amin's Agent Core. This is the one place Mona's
+/// non-negotiable instruction — "any step Amin wants to take waits for my
+/// explicit word before it runs" — is actually enforced at runtime, not
+/// just described in the system prompt:
+///
+/// 1. If a ConfirmHighRisk tool call is already pending from the previous
+///    turn, this message IS Mona's answer to it — `resolve_pending_action`
+///    reads it as approve/deny/unclear and never starts a new turn until
+///    that's settled.
+/// 2. Otherwise, Claude gets the real tool registry (`tools.rs`). If it
+///    calls a tool classified Auto/TrustedDelegation, that tool runs right
+///    away (logged either way), then Claude gets one follow-up call to
+///    narrate the result in plain language. If it calls a ConfirmHighRisk
+///    tool, nothing runs yet — the call is stored as pending and this
+///    returns a confirmation request instead.
+///
+/// Every branch audits its outcome, including "proposed and waiting" —
+/// see `audit::Decision::Proposed`.
 #[tauri::command]
 pub async fn send_agent_message(
     message: String,
+    app: AppHandle,
     db: State<'_, Db>,
     conversation: State<'_, agent::Conversation>,
+    pending: State<'_, PendingConfirmation>,
 ) -> Result<String, String> {
     let halted = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -152,54 +168,268 @@ pub async fn send_agent_message(
     let api_key = secrets::get_secret(ANTHROPIC_KEY_NAME)
         .map_err(|_| "No Anthropic API key configured yet — add one above first.".to_string())?;
 
+    let existing_pending = {
+        let guard = pending.0.lock().map_err(|e| e.to_string())?;
+        guard.clone()
+    };
+
+    if let Some(action) = existing_pending {
+        return resolve_pending_action(&app, &db, &conversation, &pending, &api_key, action, &message).await;
+    }
+
+    let tool_defs = tools::tool_definitions();
+
     let history = {
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage {
-            role: "user".to_string(),
-            content: message,
-        });
+        turns.push(agent::ChatMessage::user_text(&message));
         agent::trim_history(&mut turns);
         turns.clone()
     };
 
-    let result = agent::send_message(&api_key, &history).await;
-
-    if let Ok(reply) = &result {
-        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.push(agent::ChatMessage {
-            role: "assistant".to_string(),
-            content: reply.clone(),
-        });
-        agent::trim_history(&mut turns);
-    }
-
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    match &result {
-        Ok(_) => {
-            let _ = audit::record(
-                &conn,
-                "amin",
-                "agent_message",
-                RiskTier::Auto,
-                audit::Decision::Executed,
-                None,
-                None,
-            );
-        }
+    let response = match agent::send_message(&api_key, &history, &tool_defs).await {
+        Ok(r) => r,
         Err(e) => {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
             let _ = audit::record(
                 &conn,
                 "amin",
                 "agent_message",
                 RiskTier::Auto,
                 audit::Decision::Blocked,
-                Some(e),
+                Some(&e),
+                None,
+            );
+            return Err(e);
+        }
+    };
+
+    if let Some(refusal) = response.refusal_error() {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let _ = audit::record(
+            &conn,
+            "amin",
+            "agent_message",
+            RiskTier::Auto,
+            audit::Decision::Blocked,
+            Some(&refusal),
+            None,
+        );
+        return Err(refusal);
+    }
+
+    {
+        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.push(agent::ChatMessage::assistant_content(response.as_assistant_content()));
+        agent::trim_history(&mut turns);
+    }
+
+    let claude_text = response.text();
+
+    let Some((tool_id, tool_name, tool_input)) = response.first_tool_use() else {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let _ = audit::record(
+            &conn,
+            "amin",
+            "agent_message",
+            RiskTier::Auto,
+            audit::Decision::Executed,
+            None,
+            None,
+        );
+        return if claude_text.is_empty() {
+            Err("Amin returned an empty response".to_string())
+        } else {
+            Ok(claude_text)
+        };
+    };
+
+    let tool_id = tool_id.to_string();
+    let tool_name = tool_name.to_string();
+    let tool_input = tool_input.clone();
+    let risk = tools::risk_for(&tool_name);
+    let description = tools::describe(&tool_name, &tool_input);
+
+    if risk == RiskTier::ConfirmHighRisk {
+        {
+            let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
+            *guard = Some(PendingAction {
+                tool_use_id: tool_id,
+                name: tool_name.clone(),
+                input: tool_input,
+            });
+        }
+        {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let _ = audit::record(
+                &conn,
+                "amin",
+                &tool_name,
+                risk,
+                audit::Decision::Proposed,
+                Some(&description),
                 None,
             );
         }
+
+        let prefix = if claude_text.is_empty() {
+            String::new()
+        } else {
+            format!("{claude_text}\n\n")
+        };
+        return Ok(format!(
+            "{prefix}⏸️ {description}\n\nمستني كلمتك يا مُنى — قولي \"موافقة\" أو \"نفذ\" عشان أكمل، أو \"إلغاء\" لو غيرتِ رأيك."
+        ));
     }
 
-    result
+    // Auto / TrustedDelegation: safe to run immediately — still logged,
+    // and still narrated back rather than executed silently.
+    let exec_result = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let result = tools::execute(&app, &conn, &tool_name, &tool_input);
+        let (details, decision) = match &result {
+            Ok(_) => (description.clone(), audit::Decision::Executed),
+            Err(e) => (format!("{description} — خطأ: {e}"), audit::Decision::Blocked),
+        };
+        let _ = audit::record(&conn, "amin", &tool_name, risk, decision, Some(&details), None);
+        result
+    };
+
+    let result_text = match &exec_result {
+        Ok(v) => v.to_string(),
+        Err(e) => format!("Error: {e}"),
+    };
+
+    {
+        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.push(agent::ChatMessage::tool_result(&tool_id, &result_text, None));
+        agent::trim_history(&mut turns);
+    }
+
+    let fallback = if exec_result.is_ok() {
+        format!("تم: {description}")
+    } else {
+        format!("حصل خطأ أثناء: {description}")
+    };
+    narrate(&api_key, &conversation, &tool_defs, fallback).await
+}
+
+/// Mona's reply to an already-pending ConfirmHighRisk tool call. Reads her
+/// message with `confirmation::interpret` rather than assuming any
+/// non-empty reply means yes — an unclear message re-states what's pending
+/// and waits again instead of guessing.
+async fn resolve_pending_action(
+    app: &AppHandle,
+    db: &State<'_, Db>,
+    conversation: &State<'_, agent::Conversation>,
+    pending: &State<'_, PendingConfirmation>,
+    api_key: &str,
+    action: PendingAction,
+    message: &str,
+) -> Result<String, String> {
+    let tool_defs = tools::tool_definitions();
+    let description = tools::describe(&action.name, &action.input);
+    let risk = tools::risk_for(&action.name);
+
+    match confirmation::interpret(message) {
+        confirmation::Reply::Unclear => Ok(format!(
+            "لسه مستني تأكيدك على:\n⏸️ {description}\n\nقولي \"موافقة\" أو \"نفذ\" عشان أكمل، أو \"إلغاء\" لو غيرتِ رأيك."
+        )),
+        confirmation::Reply::Deny => {
+            {
+                let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
+                *guard = None;
+            }
+            {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                let _ = audit::record(
+                    &conn,
+                    "user",
+                    &action.name,
+                    risk,
+                    audit::Decision::Declined,
+                    Some(&description),
+                    None,
+                );
+            }
+            {
+                let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+                turns.push(agent::ChatMessage::tool_result(
+                    &action.tool_use_id,
+                    "Mona declined this action. Do not perform it.",
+                    Some(message),
+                ));
+                agent::trim_history(&mut turns);
+            }
+            narrate(api_key, conversation, &tool_defs, format!("تمام، اتلغى: {description}")).await
+        }
+        confirmation::Reply::Approve => {
+            {
+                let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
+                *guard = None;
+            }
+            let exec_result = {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                let result = tools::execute(app, &conn, &action.name, &action.input);
+                let (details, decision) = match &result {
+                    Ok(_) => (description.clone(), audit::Decision::Executed),
+                    Err(e) => (format!("{description} — خطأ: {e}"), audit::Decision::Blocked),
+                };
+                let _ = audit::record(&conn, "user", &action.name, risk, decision, Some(&details), None);
+                result
+            };
+            let result_text = match &exec_result {
+                Ok(v) => v.to_string(),
+                Err(e) => format!("Error: {e}"),
+            };
+            {
+                let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+                turns.push(agent::ChatMessage::tool_result(
+                    &action.tool_use_id,
+                    &result_text,
+                    Some(message),
+                ));
+                agent::trim_history(&mut turns);
+            }
+            let fallback = if exec_result.is_ok() {
+                format!("تم: {description}")
+            } else {
+                format!("حصل خطأ أثناء: {description}")
+            };
+            narrate(api_key, conversation, &tool_defs, fallback).await
+        }
+    }
+}
+
+/// One follow-up call to Claude after a tool has run (or been declined), so
+/// Mona gets a natural sentence about the outcome instead of raw tool JSON.
+/// `fallback_text` covers the (rare) case this follow-up call itself fails
+/// or comes back empty — the action already ran and is already audited by
+/// this point, so a narration hiccup is reported gently, not as a failure
+/// of the whole turn.
+async fn narrate(
+    api_key: &str,
+    conversation: &State<'_, agent::Conversation>,
+    tool_defs: &[serde_json::Value],
+    fallback_text: String,
+) -> Result<String, String> {
+    let history = {
+        let turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.clone()
+    };
+
+    let response = match agent::send_message(api_key, &history, tool_defs).await {
+        Ok(r) => r,
+        Err(_) => return Ok(fallback_text),
+    };
+
+    {
+        let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
+        turns.push(agent::ChatMessage::assistant_content(response.as_assistant_content()));
+        agent::trim_history(&mut turns);
+    }
+
+    let text = response.text();
+    Ok(if text.is_empty() { fallback_text } else { text })
 }
 
 /// Reset the session's short-term conversation memory (a "New conversation"
@@ -399,7 +629,7 @@ pub fn open_browser_url(app: AppHandle, url: String, db: State<Db>) -> Result<()
     result
 }
 
-fn task_title(conn: &rusqlite::Connection, task_id: &str) -> String {
+pub(crate) fn task_title(conn: &rusqlite::Connection, task_id: &str) -> String {
     conn.query_row(
         "SELECT title FROM tasks WHERE id = ?1",
         rusqlite::params![task_id],

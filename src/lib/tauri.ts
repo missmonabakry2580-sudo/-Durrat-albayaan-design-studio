@@ -108,8 +108,13 @@ export interface WorkspaceEntry {
 }
 
 /**
- * All confined to one dedicated folder (~/Documents/Amin) — see
- * src-tauri/src/files.rs. Nothing here can reach any other path.
+ * Scoped to Mona's home folder (broadened from the original single
+ * dedicated folder at her explicit request) — see src-tauri/src/files.rs.
+ * Nothing here can escape that folder (path traversal / symlink escapes
+ * are rejected), but within it every one of these — including a plain
+ * list or read — is ConfirmHighRisk: the backend will not run it until
+ * she's replied with an explicit confirmation word to Amin. See
+ * src-tauri/src/tools.rs's `risk_for` and docs/SECURITY.md.
  */
 export const listWorkspaceFiles = () => invoke<WorkspaceEntry[]>("list_workspace_files");
 export const readWorkspaceFile = (path: string) =>

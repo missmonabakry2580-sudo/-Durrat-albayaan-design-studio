@@ -42,3 +42,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
+[dev-dependencies]
+# tauri::test::mock_app — used by tools.rs's unit tests, which need a real
+# AppHandle to exercise file/browser tool dispatch end to end.
+tauri = { version = "2", features = ["test"] }
+

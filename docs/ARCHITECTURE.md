@@ -324,10 +324,14 @@ conservative default that's meant to be *reacted to*, not treated as the
 final word — the point of surfacing them was to get a real proposal in
 front of her quickly, not to avoid building them.
 
-- **File access** — `src-tauri/src/files.rs`. Scoped to one dedicated
-  folder, `~/Documents/Amin`, never anything else on the Mac. See its own
-  section above (right after "Repo layout") for the containment design and
-  its tests, including a real symlink-escape attempt.
+- **File access** — `src-tauri/src/files.rs`. Originally scoped to one
+  dedicated folder, `~/Documents/Amin`; broadened the same morning to
+  Mona's whole home directory at her own explicit request — see "Tool use
+  and the confirmation gate" below for why, and for how that broader scope
+  is now gated. See the "Repo layout" section above for the containment
+  design and its tests, including a real symlink-escape attempt — that
+  containment logic itself didn't change, only the root it's checked
+  against.
 - **Browser control** — `src-tauri/src/browser.rs`, chosen as the
   lowest-risk real slice of "browser control": a single reused
   `WebviewWindow`, isolated via Tauri's own `data_directory` builder
@@ -383,6 +387,100 @@ still genuinely absent — that needs Phase 3's Gmail connector, which
 needs Mona's own Google OAuth credentials to exist at all. "Sent" in the
 `follow_ups` table's status column means "Amin surfaced it" (in the UI
 and, now, as a notification) — not "emailed."
+
+## Tool use and the confirmation gate (2026-08-26 morning)
+
+Mona's own words, verbatim, are the spec for this section: she's fine with
+Amin reaching "كل الملفات" (all files) and "كل المتصفحات الآمنة" (all safe
+browsers) — but "أي خطوة قبل ان ينفذها ينتظر مني اقوله كلمة... موافقة نفذ"
+("any step, before [Amin] executes it, waits for me to say a word —
+approval, execute"). She framed this around cybersecurity being her single
+highest priority and wanting Amin more disciplined about it than a human
+employee would be toward their employer. Until this pass, that instruction
+wasn't actually enforced anywhere — every file/browser action so far was a
+manual UI button *she* clicked, so "waits for her" was true by accident,
+not by design. This pass makes it real for the one place it wasn't yet:
+Amin's own agentic tool use through the Anthropic API.
+
+**What changed, end to end:**
+
+- **`src-tauri/src/agent.rs`** — reworked for real tool use. `ChatMessage`
+  now carries a `serde_json::Value` (not a plain string), because an
+  assistant turn that calls a tool, and the user turn that reports a
+  tool's result back, both need the richer Anthropic content-block shape.
+  `AnthropicResponse` gained `first_tool_use()`, `as_assistant_content()`,
+  and `text()` so the caller can inspect a turn without re-deriving it,
+  and `send_message` now takes the live tool registry and returns the raw
+  response rather than pre-extracted text — command orchestration owns
+  deciding what happens next, not the API wrapper.
+- **`src-tauri/src/tools.rs`** (new) — the actual tool registry: JSON
+  schemas Claude sees (`tool_definitions`), the risk tier that decides
+  whether a call runs immediately or waits (`risk_for`), a human-readable
+  Arabic description for the confirmation prompt (`describe`), and the
+  dispatcher that calls into `tasks`/`files`/`browser`/`followups`
+  (`execute`). Risk tiers are assigned explicitly here per tool, not
+  inferred from `policy::classify`'s generic keyword match — a
+  `write_workspace_file` tool call needs a considered, reviewed tier, not
+  whatever a keyword happens to match. An unrecognized tool name defaults
+  to `ConfirmHighRisk` rather than `Auto`.
+- **`src-tauri/src/confirmation.rs`** (new) — `PendingConfirmation`, the
+  Tauri-managed state holding at most one proposed `ConfirmHighRisk` tool
+  call at a time (a new one overwrites whatever was pending, rather than
+  queuing), and `interpret()`, a word-boundary matcher for Mona's reply
+  (Arabic "موافقة"/"نفذ"/"تمام" etc. and English "yes"/"confirm"/"go
+  ahead" for approval; "لا"/"إلغاء"/"no"/"cancel" for denial) that
+  deliberately returns `Unclear` rather than guessing when her message is
+  ambiguous or contains both signals — see its own unit tests for why
+  substring matching alone isn't safe here (e.g. "لا" appearing inside an
+  unrelated longer word).
+- **`src-tauri/src/commands.rs`**'s `send_agent_message` — the
+  orchestration. On every call: if a `ConfirmHighRisk` action is already
+  pending, this message *is* Mona's answer to it (`resolve_pending_action`
+  handles approve/deny/unclear and never starts a new turn until that's
+  settled). Otherwise, Claude gets the real tool registry; an
+  `Auto`/`TrustedDelegation` tool call executes immediately (audited
+  either way) followed by one more call to Claude so it can narrate the
+  outcome in plain language instead of Mona seeing raw tool JSON; a
+  `ConfirmHighRisk` call is stored as pending and the reply asks her
+  directly for "موافقة" / "نفذ" / "إلغاء" instead of running anything.
+- **`src-tauri/src/audit.rs`** gained `Decision::Proposed` — the audit log
+  now has a real entry for "Amin asked to do this and is waiting," not
+  just for outcomes after the fact. Approving later logs `Executed` (or
+  `Blocked` if the tool itself errors); denying logs `Declined`.
+- **File-access scope, broadened and re-gated together.**
+  `files.rs::workspace_root` now resolves Mona's home directory instead of
+  `~/Documents/Amin` — a pragmatic reading of "all files," not the literal
+  filesystem root, which would expose OS/system files no real task needs.
+  Given that much broader surface, `tools::risk_for` makes **every** file
+  tool `ConfirmHighRisk`, including `list_workspace_files` and
+  `read_workspace_file` — not only writes and deletes. The reasoning: a
+  file read is no longer confined to a small folder Mona put things in
+  specifically for Amin; it can reach anything on her machine, and its
+  content then leaves the machine entirely, inside a `tool_result` sent to
+  a third-party API (Anthropic's). That is exactly the kind of "step" her
+  instruction says must wait for her word, not just the destructive ones.
+  Task and follow-up tools stay `Auto`/`TrustedDelegation` — they're local
+  SQLite bookkeeping in Amin's own database; nothing leaves the machine
+  and nothing outside that database is touched, so a lighter tier still
+  fits the "loyal employee doesn't need permission for their own notes"
+  framing.
+- **Browser isolation — clarified, not changed.** Mona asked whether an
+  isolated Amin-only browser window still lets Amin "do everything" (any
+  site, any login) or whether isolation itself is a restriction. It isn't:
+  `browser.rs`'s isolated `WebviewWindow` (its own `data_directory`, never
+  Mona's real browser profile) has the full capability of a normal browser
+  window — any URL, any site interaction a webview supports — the only
+  difference is separate cookies/session storage from her personal
+  browser, which stays completely untouched. `open_browser_url` was
+  already `ConfirmHighRisk` before this pass and still is.
+
+**What's still unverified:** everything here is covered by unit tests (49
+passing, including `tools.rs`'s dispatcher exercised end to end with a
+mocked Tauri `AppHandle`) and a clean `cargo check`/`clippy`/`tsc`/`vite
+build`, but the actual back-and-forth — Claude proposing a real tool call,
+Mona typing "موافقة" back, Amin executing and narrating — has not been
+run against the live Anthropic API or on a real Mac. That's the natural
+next thing to try together once she's at the keyboard.
 
 ## Roadmap (for orientation — each phase gets its own design notes)
 

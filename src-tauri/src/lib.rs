@@ -3,6 +3,7 @@ mod audit;
 mod brief;
 mod browser;
 mod commands;
+mod confirmation;
 mod db;
 mod files;
 mod followups;
@@ -10,6 +11,7 @@ mod notify;
 mod policy;
 mod secrets;
 mod tasks;
+mod tools;
 mod tray;
 mod voice;
 
@@ -27,6 +29,7 @@ pub fn run() {
             let database = db::init(dir.join("amin.db"))?;
             app.manage(database);
             app.manage(agent::Conversation::new());
+            app.manage(confirmation::PendingConfirmation::new());
             app.manage(voice::VoiceSession::new());
 
             tray::setup(app.handle())?;

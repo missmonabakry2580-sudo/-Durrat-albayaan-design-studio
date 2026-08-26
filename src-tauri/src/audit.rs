@@ -4,15 +4,16 @@ use uuid::Uuid;
 
 use crate::policy::RiskTier;
 
-// Declined/Blocked aren't produced yet in Phase 0 — they land once the
-// Follow-up Engine and CONFIRM_HIGH_RISK prompts exist in later phases.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum Decision {
     Executed,
     Confirmed,
     Declined,
     Blocked,
+    /// Amin has asked to take a ConfirmHighRisk action and is now waiting
+    /// on Mona's explicit word ("موافقة" / "نفذ" / an explicit "no") before
+    /// it runs. See commands::send_agent_message and confirmation.rs.
+    Proposed,
 }
 
 impl Decision {
@@ -22,6 +23,7 @@ impl Decision {
             Decision::Confirmed => "confirmed",
             Decision::Declined => "declined",
             Decision::Blocked => "blocked",
+            Decision::Proposed => "proposed",
         }
     }
 }

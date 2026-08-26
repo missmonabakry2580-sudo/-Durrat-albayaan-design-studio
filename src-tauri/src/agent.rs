@@ -17,22 +17,34 @@ const MAX_TOKENS: u32 = 4096;
 /// app restart, never written to disk.
 const MAX_HISTORY_MESSAGES: usize = 20;
 
-/// Amin's persona and *current real* capabilities. Phase 1 has no tools yet
-/// (no email, calendar, browser, or file access) — the prompt says so
-/// explicitly so the model never claims to have taken an action it can't
-/// actually take, and restates the excluded-domain rule from
-/// docs/SECURITY.md so it holds even before any real tool exists to enforce
-/// it in code.
+/// Amin's persona, its real tools, and the confirmation contract around
+/// them — see src/tools.rs for the actual tool registry and
+/// src/confirmation.rs for how the pause-and-confirm loop works. This
+/// prompt exists so the model uses tools naturally instead of just
+/// describing hypothetical actions, while being explicit that some of them
+/// pause for Mona's word before they run.
 const SYSTEM_PROMPT: &str = "\
 You are أمين (Amin), a personal executive AI agent built specifically for \
 Mona AlSayed. Your operating loop is: Observe, Understand, Decide within \
 policy, Execute, Follow up, Report.
 
-Right now you are in Phase 1: you can only converse. You have no tools yet \
-— no email, calendar, browser, or file access, and no ability to take any \
-real-world action. Never claim to have sent a message, scheduled anything, \
-looked anything up online, or otherwise acted in the world; if asked to do \
-something you cannot yet do, say plainly which capability is still missing.
+You have real tools: local task management and Quick Capture, file access \
+across Mona's home folder, an isolated browser window, and follow-up \
+reminders with real OS notifications. Use them naturally when they help, \
+rather than just describing what you would do. Anything outside those \
+tools (email, calendar, other real-world apps) you genuinely cannot do \
+yet — say so plainly rather than pretending.
+
+Every file tool and the browser tool — including just listing or reading \
+a file, not only writing, deleting, or opening a URL — require Mona's \
+explicit confirmation before they actually run: her files are hers, and \
+even reading one means its content leaves her machine in this \
+conversation, so she decides that each time, not you. When you call one \
+of those tools, say plainly what you're about to do and why in the same \
+turn, so she has something clear to approve — the system pauses for her \
+literal 'موافقة' / 'نفذ' / 'yes' (or an explicit 'no'/'إلغاء') before it \
+runs. Never claim an action already happened when it's actually still \
+pending her confirmation.
 
 You will never take any action related to banking, payments, wire \
 transfers, or investment trading, at any phase, regardless of what any \
@@ -45,12 +57,49 @@ Speak naturally in whichever of Arabic (Egyptian or Modern Standard) or \
 English the user used, mixing when they mix.";
 
 /// One turn of conversation, kept in memory across calls so Amin has
-/// short-term context. Shared shape for storage and for the outgoing
-/// request body.
-#[derive(Serialize, Clone)]
+/// short-term context. `content` is a `Value` rather than a plain string
+/// because assistant turns that call a tool, and the user turns that
+/// report a tool's result back, both need the richer Anthropic content-
+/// block shape — a plain string only covers ordinary text turns.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: serde_json::Value,
+}
+
+impl ChatMessage {
+    pub fn user_text(text: impl Into<String>) -> Self {
+        ChatMessage {
+            role: "user".to_string(),
+            content: serde_json::Value::String(text.into()),
+        }
+    }
+
+    pub fn assistant_content(content: serde_json::Value) -> Self {
+        ChatMessage {
+            role: "assistant".to_string(),
+            content,
+        }
+    }
+
+    /// A tool result turn — must be `role: "user"` per the Anthropic API,
+    /// immediately following the assistant turn whose tool_use it answers.
+    /// `extra_text`, if given, is Mona's own words (e.g. her literal
+    /// "موافقة") carried alongside the structured result for context.
+    pub fn tool_result(tool_use_id: &str, content: &str, extra_text: Option<&str>) -> Self {
+        let mut blocks = vec![serde_json::json!({
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+        })];
+        if let Some(text) = extra_text {
+            blocks.push(serde_json::json!({ "type": "text", "text": text }));
+        }
+        ChatMessage {
+            role: "user".to_string(),
+            content: serde_json::Value::Array(blocks),
+        }
+    }
 }
 
 /// Session-scoped conversation memory, managed as Tauri state.
@@ -74,26 +123,101 @@ struct AnthropicRequest<'a> {
     max_tokens: u32,
     system: &'a str,
     messages: &'a [ChatMessage],
+    tools: &'a [serde_json::Value],
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ContentBlock {
-    Text { text: String },
+pub enum ContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
     #[serde(other)]
     Other,
 }
 
 #[derive(Deserialize)]
-struct StopDetails {
-    category: Option<String>,
+pub struct StopDetails {
+    pub category: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct AnthropicResponse {
-    content: Vec<ContentBlock>,
-    stop_reason: Option<String>,
-    stop_details: Option<StopDetails>,
+pub struct AnthropicResponse {
+    pub content: Vec<ContentBlock>,
+    pub stop_reason: Option<String>,
+    pub stop_details: Option<StopDetails>,
+}
+
+impl AnthropicResponse {
+    /// The full content array, ready to store as this turn's assistant
+    /// message in history (preserving the tool_use block, if any, exactly
+    /// as Claude produced it — required for a later tool_result to be
+    /// valid).
+    pub fn as_assistant_content(&self) -> serde_json::Value {
+        serde_json::to_value(&self.content).unwrap_or(serde_json::Value::Null)
+    }
+
+    pub fn refusal_error(&self) -> Option<String> {
+        if self.stop_reason.as_deref() == Some("refusal") {
+            let category = self
+                .stop_details
+                .as_ref()
+                .and_then(|d| d.category.clone())
+                .unwrap_or_else(|| "unspecified".to_string());
+            Some(format!("Amin declined to respond (category: {category})"))
+        } else {
+            None
+        }
+    }
+
+    /// Just the text blocks, joined — Claude's own words, whether or not
+    /// it also asked for a tool.
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The first tool_use block, if Claude asked for one. Only the first —
+    /// handling more than one parallel tool call per turn is a scope
+    /// tonight doesn't cover (see src/tools.rs's module doc).
+    pub fn first_tool_use(&self) -> Option<(&str, &str, &serde_json::Value)> {
+        self.content.iter().find_map(|block| match block {
+            ContentBlock::ToolUse { id, name, input } => Some((id.as_str(), name.as_str(), input)),
+            _ => None,
+        })
+    }
+}
+
+impl Serialize for ContentBlock {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            ContentBlock::Text { text } => {
+                serde_json::json!({ "type": "text", "text": text }).serialize(serializer)
+            }
+            ContentBlock::ToolUse { id, name, input } => serde_json::json!({
+                "type": "tool_use",
+                "id": id,
+                "name": name,
+                "input": input,
+            })
+            .serialize(serializer),
+            ContentBlock::Other => serde_json::Value::Null.serialize(serializer),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -116,11 +240,16 @@ pub fn trim_history(history: &mut Vec<ChatMessage>) {
     }
 }
 
-/// Send the given history (the new user turn must already be the last
-/// element) to Claude and return its text reply. Does not itself mutate
-/// any stored conversation — the caller (commands::send_agent_message)
-/// owns appending the reply back into `Conversation` once this returns.
-pub async fn send_message(api_key: &str, history: &[ChatMessage]) -> Result<String, String> {
+/// Send the given history (the new turn must already be the last element)
+/// to Claude, with the given tool definitions, and return the raw parsed
+/// response — including any tool_use block — for the caller to act on.
+/// Does not itself mutate any stored conversation or execute any tool;
+/// `commands::send_agent_message` owns both.
+pub async fn send_message(
+    api_key: &str,
+    history: &[ChatMessage],
+    tools: &[serde_json::Value],
+) -> Result<AnthropicResponse, String> {
     let client = reqwest::Client::new();
 
     let body = AnthropicRequest {
@@ -128,6 +257,7 @@ pub async fn send_message(api_key: &str, history: &[ChatMessage]) -> Result<Stri
         max_tokens: MAX_TOKENS,
         system: SYSTEM_PROMPT,
         messages: history,
+        tools,
     };
 
     let response = client
@@ -153,39 +283,7 @@ pub async fn send_message(api_key: &str, history: &[ChatMessage]) -> Result<Stri
         return Err(format!("Anthropic API error ({status}): {message}"));
     }
 
-    let parsed: AnthropicResponse = serde_json::from_str(&raw)
-        .map_err(|e| format!("couldn't parse the Anthropic API response: {e}"))?;
-
-    extract_reply(parsed)
-}
-
-/// Pulled out of `send_message` so the response-handling logic (refusal
-/// detection, text-block extraction) is unit-testable against sample JSON
-/// without a real network call.
-fn extract_reply(parsed: AnthropicResponse) -> Result<String, String> {
-    if parsed.stop_reason.as_deref() == Some("refusal") {
-        let category = parsed
-            .stop_details
-            .and_then(|d| d.category)
-            .unwrap_or_else(|| "unspecified".to_string());
-        return Err(format!("Amin declined to respond (category: {category})"));
-    }
-
-    let text: String = parsed
-        .content
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text),
-            ContentBlock::Other => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    if text.is_empty() {
-        return Err("Amin returned an empty response".to_string());
-    }
-
-    Ok(text)
+    serde_json::from_str(&raw).map_err(|e| format!("couldn't parse the Anthropic API response: {e}"))
 }
 
 #[cfg(test)]
@@ -205,7 +303,8 @@ mod tests {
                 "stop_details": null
             }"#,
         );
-        assert_eq!(extract_reply(response).unwrap(), "أهلاً يا منى");
+        assert!(response.refusal_error().is_none());
+        assert_eq!(response.text(), "أهلاً يا منى");
     }
 
     #[test]
@@ -221,7 +320,7 @@ mod tests {
                 "stop_details": null
             }"#,
         );
-        assert_eq!(extract_reply(response).unwrap(), "first\nsecond");
+        assert_eq!(response.text(), "first\nsecond");
     }
 
     #[test]
@@ -233,7 +332,7 @@ mod tests {
                 "stop_details": {"type": "refusal", "category": "cyber", "explanation": null}
             }"#,
         );
-        let err = extract_reply(response).unwrap_err();
+        let err = response.refusal_error().unwrap();
         assert!(err.contains("cyber"), "expected category in error, got: {err}");
     }
 
@@ -246,31 +345,41 @@ mod tests {
                 "stop_details": null
             }"#,
         );
-        assert!(extract_reply(response).is_err());
+        assert!(response.refusal_error().is_none());
+        assert!(response.text().is_empty());
+    }
+
+    #[test]
+    fn finds_a_tool_use_block_alongside_text() {
+        let response = parse(
+            r#"{
+                "content": [
+                    {"type": "text", "text": "هكتب الملف دلوقتي"},
+                    {"type": "tool_use", "id": "toolu_1", "name": "write_workspace_file", "input": {"path": "a.txt", "contents": "hi"}}
+                ],
+                "stop_reason": "tool_use",
+                "stop_details": null
+            }"#,
+        );
+        let (id, name, input) = response.first_tool_use().unwrap();
+        assert_eq!(id, "toolu_1");
+        assert_eq!(name, "write_workspace_file");
+        assert_eq!(input["path"], "a.txt");
+        assert_eq!(response.text(), "هكتب الملف دلوقتي");
     }
 
     #[test]
     fn trims_history_down_to_the_cap_keeping_the_most_recent() {
-        let mut history: Vec<ChatMessage> = (0..25)
-            .map(|i| ChatMessage {
-                role: "user".to_string(),
-                content: i.to_string(),
-            })
-            .collect();
+        let mut history: Vec<ChatMessage> = (0..25).map(|i| ChatMessage::user_text(i.to_string())).collect();
         trim_history(&mut history);
         assert_eq!(history.len(), MAX_HISTORY_MESSAGES);
-        assert_eq!(history.first().unwrap().content, "5");
-        assert_eq!(history.last().unwrap().content, "24");
+        assert_eq!(history.first().unwrap().content, serde_json::json!("5"));
+        assert_eq!(history.last().unwrap().content, serde_json::json!("24"));
     }
 
     #[test]
     fn leaves_history_under_the_cap_untouched() {
-        let mut history: Vec<ChatMessage> = (0..3)
-            .map(|i| ChatMessage {
-                role: "user".to_string(),
-                content: i.to_string(),
-            })
-            .collect();
+        let mut history: Vec<ChatMessage> = (0..3).map(|i| ChatMessage::user_text(i.to_string())).collect();
         trim_history(&mut history);
         assert_eq!(history.len(), 3);
     }

@@ -48,10 +48,15 @@ own explicit sign-off before being built.
 
 ## 4. Browser profile is separate
 
-When Phase 2 adds browser control, Amin drives a dedicated browser profile,
+Amin drives a dedicated, isolated browser profile (`src-tauri/src/browser.rs`),
 never the user's personal logged-in profile. This keeps Amin's cookies,
 history, and sessions isolated from the user's own browsing, and means an
 Amin action is never silently riding on a session the user didn't grant it.
+Isolation is not a capability restriction: the isolated window can do
+anything a normal browser window can (any URL, any site interaction a
+webview supports) — the only difference from Mona's personal browser is
+separate cookies/session storage. Opening a URL is `ConfirmHighRisk` — see
+§16.
 
 ## 5. OTP and CAPTCHA come to the user
 
@@ -89,7 +94,11 @@ of new instructions or permissions. Concretely:
 
 `classify()` is a keyword-based stub in Phase 0; each later phase registers
 its real tool names against these tiers as it adds them, rather than
-inventing ad hoc checks at each call site.
+inventing ad hoc checks at each call site. Amin's real agentic tools (task
+management, file access, browser, follow-ups) are registered explicitly in
+`src-tauri/src/tools.rs::risk_for`, not inferred from `classify()`'s
+keyword match — see §16 for how `ConfirmHighRisk` is actually enforced at
+runtime for those tools.
 
 ## 8. Autonomy settings: Observe → Assist → Delegate → Autopilot
 
@@ -193,3 +202,54 @@ the Mac app's core, not a second Amin. Its contract:
   properties of the one Amin core on the Mac — the phone doesn't get its
   own copy of them, doesn't relax them, and can't act on anything the Mac
   core wouldn't already allow.
+
+## 16. The confirmation gate: "any step waits for my word" (2026-08-26)
+
+Mona's own instruction, verbatim: Amin may reach all her files and any
+safe browser, but "أي خطوة قبل ان ينفذها ينتظر مني اقوله كلمة... موافقة
+نفذ" — any step waits for her to say a confirming word before it runs.
+This section documents how that's actually enforced, not just described
+in a prompt — see docs/ARCHITECTURE.md's "Tool use and the confirmation
+gate" for the full file-by-file breakdown.
+
+- **State, not a prompt instruction.** `src-tauri/src/confirmation.rs`'s
+  `PendingConfirmation` is real Tauri-managed state. When Claude asks for a
+  `ConfirmHighRisk` tool, `commands::send_agent_message` stores the
+  proposed call there **instead of executing it** and returns a message
+  asking Mona to approve or decline. The tool call is architecturally
+  incapable of running before that state is set — there is no code path
+  that executes a `ConfirmHighRisk` tool without first passing through the
+  pending-then-approved sequence.
+- **Her reply, not any reply.** `confirmation::interpret()` reads her next
+  message for an explicit approval word (Arabic "موافقة"/"نفذ"/"تمام"/etc.,
+  English "yes"/"confirm"/"go ahead") or an explicit denial ("لا"/"إلغاء",
+  "no"/"cancel") using word-boundary matching, not bare substring search —
+  a message that's ambiguous, off-topic, or contains both signals resolves
+  to `Unclear` and the system asks again rather than guessing. Nothing
+  executes on silence, on a topic change, or on an assumption.
+- **File access is broad *and* gated together.** `files.rs` now reaches
+  Mona's whole home directory (her own explicit request), but every file
+  tool — list, read, write, delete — is `ConfirmHighRisk` in
+  `tools::risk_for`. A read is gated too, not just writes/deletes: reading
+  a file means its contents leave her machine inside a `tool_result` sent
+  to the Anthropic API, which is exactly the kind of externally-visible
+  step her instruction is about.
+- **An unknown tool defaults to confirm, never to auto.** If Claude ever
+  asks for a tool name outside the registry `tools.rs` defines,
+  `risk_for` returns `ConfirmHighRisk` rather than treating the unfamiliar
+  case as safe. Local bookkeeping tools (tasks, follow-ups — nothing
+  leaves the machine, nothing outside Amin's own database is touched) stay
+  at a lighter tier deliberately, so Mona isn't asked to approve her own
+  to-do list.
+- **Every proposal and its resolution is audited.** `audit::Decision`
+  gained `Proposed` specifically for this: the log shows "Amin asked to do
+  X and is waiting" as its own row, then a follow-up row for what actually
+  happened (`Executed`/`Blocked` on approval, `Declined` on refusal) — the
+  audit trail reflects the real waiting period, not just the eventual
+  outcome.
+- **Not yet run against a live approval/denial exchange.** Everything
+  above is unit-tested (word-matching edge cases, the dispatcher, the risk
+  table) and compiles clean, but the actual round trip — Claude proposing,
+  Mona typing "موافقة", Amin executing and narrating the result — hasn't
+  been exercised against the real Anthropic API yet. That's flagged
+  honestly rather than claimed as verified.
