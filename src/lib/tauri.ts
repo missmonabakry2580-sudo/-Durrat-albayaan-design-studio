@@ -47,6 +47,13 @@ export const hasElevenLabsKey = () => invoke<boolean>("has_elevenlabs_key");
 export const saveElevenLabsKey = (key: string) => invoke<void>("save_elevenlabs_key", { key });
 export const clearElevenLabsKey = () => invoke<void>("clear_elevenlabs_key");
 
+/** Which ElevenLabs voice speaks Amin's replies — empty means the default
+ * (Rachel, English), which mangles Arabic. Pick a voice from Mona's own
+ * ElevenLabs library (elevenlabs.io → Voices) and paste its Voice ID here. */
+export const getElevenLabsVoiceId = () => invoke<string>("get_elevenlabs_voice_id");
+export const saveElevenLabsVoiceId = (voiceId: string) =>
+  invoke<void>("save_elevenlabs_voice_id", { voiceId });
+
 export const getAutonomyLevel = () => invoke<AutonomyLevel>("get_autonomy_level");
 export const setAutonomyLevel = (level: AutonomyLevel) =>
   invoke<void>("set_autonomy_level", { level });

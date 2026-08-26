@@ -16,6 +16,11 @@ const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 /// elevenlabs.rs for why this is a distinct, disclosed trade-off (cost,
 /// and the reply text leaving the device) rather than the default.
 const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
+/// Which ElevenLabs voice to speak replies with — see
+/// elevenlabs::synthesize's doc comment for why the hardcoded default
+/// (Rachel, English) mangles Arabic and needs to be Mona's own choice
+/// from her ElevenLabs voice library, not guessed by this app.
+const ELEVENLABS_VOICE_ID_KEY: &str = "elevenlabs_voice_id";
 
 /// Hands-free mode settings — see voice::start_hands_free and
 /// AminVoice.swift's `HandsFreeListener`. Off by default: it means the
@@ -209,6 +214,18 @@ pub fn clear_elevenlabs_key(db: State<Db>) -> Result<(), String> {
         None,
         None,
     )
+}
+
+#[tauri::command]
+pub fn get_elevenlabs_voice_id(db: State<Db>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, ELEVENLABS_VOICE_ID_KEY).unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_elevenlabs_voice_id(voice_id: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, ELEVENLABS_VOICE_ID_KEY, voice_id.trim())
 }
 
 #[tauri::command]
@@ -703,16 +720,19 @@ pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Resu
     // the spoken copy is cleaned; the chat log keeps the original text.
     let text = agent::strip_markdown_for_speech(&text);
 
-    let eleven_key = {
+    let (eleven_key, voice_id) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty())
+        (
+            get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
+            get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
+        )
     };
 
     let Some(key) = eleven_key else {
         return voice::speak(app, &text);
     };
 
-    let audio = match elevenlabs::synthesize(&key, &text).await {
+    let audio = match elevenlabs::synthesize(&key, &text, voice_id.as_deref()).await {
         Ok(a) => a,
         Err(e) => {
             // ElevenLabs itself failed (bad key, quota, network) — fall

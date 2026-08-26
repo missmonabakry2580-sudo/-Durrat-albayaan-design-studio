@@ -21,11 +21,19 @@ const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
 const MODEL_ID: &str = "eleven_multilingual_v2";
 
 /// Calls ElevenLabs' TTS API and returns the raw MP3 bytes. Does not play
-/// them — see `play`.
-pub async fn synthesize(api_key: &str, text: &str) -> Result<Vec<u8>, String> {
+/// them — see `play`. `voice_id` overrides the default (Rachel, English)
+/// with one Mona picked from her own ElevenLabs voice library — see
+/// commands::get_elevenlabs_voice_id/save_elevenlabs_voice_id. Rachel
+/// reading Arabic through the multilingual model is exactly the mangled,
+/// mispronounced speech Mona reported even after the markdown/emoji
+/// cleanup in agent::strip_markdown_for_speech: that cleanup fixed
+/// reading literal punctuation aloud, not the underlying voice being the
+/// wrong language for the text.
+pub async fn synthesize(api_key: &str, text: &str, voice_id: Option<&str>) -> Result<Vec<u8>, String> {
+    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{ELEVENLABS_TTS_URL}/{DEFAULT_VOICE_ID}"))
+        .post(format!("{ELEVENLABS_TTS_URL}/{voice_id}"))
         .header("xi-api-key", api_key)
         .header("content-type", "application/json")
         .json(&serde_json::json!({

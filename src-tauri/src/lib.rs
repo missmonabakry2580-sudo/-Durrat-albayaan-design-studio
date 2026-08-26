@@ -124,6 +124,8 @@ pub fn run() {
             commands::has_elevenlabs_key,
             commands::save_elevenlabs_key,
             commands::clear_elevenlabs_key,
+            commands::get_elevenlabs_voice_id,
+            commands::save_elevenlabs_voice_id,
             commands::get_autonomy_level,
             commands::set_autonomy_level,
             commands::is_halted,

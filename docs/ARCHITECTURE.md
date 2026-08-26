@@ -346,6 +346,15 @@ publishes every build with `prerelease: true` (see the release notes'
 own "نسخة تجريبية" wording); pointed at `/latest/`, the updater would
 never find anything.
 
+The banner only appears when a newer build actually exists — on the
+newest build itself there is nothing to offer, which reads as "there's no
+update button" if that's not expected. Settings also has an explicit
+"تحقّقي من التحديثات الآن" button (`handleCheckForUpdate` in `App.tsx`) so
+Mona can confirm that for herself on demand instead of just trusting a
+silent background check.
+
+## The command surface is the whole contract
+
 The frontend never gets raw SQL access and never talks to the network
 directly. It calls the typed functions in `src/lib/tauri.ts`, which invoke
 named Rust commands in `src-tauri/src/commands.rs`. This is deliberate: it

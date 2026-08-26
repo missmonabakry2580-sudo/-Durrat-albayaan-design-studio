@@ -24,6 +24,7 @@ import {
   escalateFollowUp,
   generateDeltaBrief,
   getAutonomyLevel,
+  getElevenLabsVoiceId,
   getHandsFreeSettings,
   hasApiKey,
   hasElevenLabsKey,
@@ -37,6 +38,7 @@ import {
   readWorkspaceFile,
   saveApiKey,
   saveElevenLabsKey,
+  saveElevenLabsVoiceId,
   saveHandsFreePhrases,
   sendAgentMessage,
   setAutonomyLevel,
@@ -125,6 +127,7 @@ function App() {
   const [keyInput, setKeyInput] = useState("");
   const [elevenLabsKeySaved, setElevenLabsKeySaved] = useState(false);
   const [elevenLabsKeyInput, setElevenLabsKeyInput] = useState("");
+  const [elevenLabsVoiceIdInput, setElevenLabsVoiceIdInput] = useState("");
   const [lastEmotion, setLastEmotion] = useState<string | null>(null);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
   const [handsFreeBusy, setHandsFreeBusy] = useState(false);
@@ -167,6 +170,8 @@ function App() {
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
+  const [upToDateMessage, setUpToDateMessage] = useState(false);
 
   function togglePanel(key: PanelKey) {
     setActivePanel((current) => (current === key ? null : key));
@@ -220,6 +225,7 @@ function App() {
         setWakePhraseInput(s.wake_phrase);
         setClosePhraseInput(s.close_phrase);
       });
+      getElevenLabsVoiceId().then(setElevenLabsVoiceIdInput);
       // Silent on failure (e.g. offline, or the update endpoint has
       // nothing newer) — this is a background convenience check, not
       // something that should ever interrupt Mona with an error banner
@@ -229,6 +235,21 @@ function App() {
         .catch(() => {});
     }
   }, []);
+
+  async function handleCheckForUpdate() {
+    setUpdateCheckBusy(true);
+    setUpdateError(null);
+    setUpToDateMessage(false);
+    try {
+      const update = await checkForUpdate();
+      setAvailableUpdate(update);
+      if (!update) setUpToDateMessage(true);
+    } catch (e) {
+      setUpdateError(String(e));
+    } finally {
+      setUpdateCheckBusy(false);
+    }
+  }
 
   async function handleInstallUpdate() {
     if (!availableUpdate) return;
@@ -316,6 +337,10 @@ function App() {
   async function handleClearElevenLabsKey() {
     await clearElevenLabsKey();
     await refresh();
+  }
+
+  async function handleSaveElevenLabsVoiceId() {
+    await saveElevenLabsVoiceId(elevenLabsVoiceIdInput.trim());
   }
 
   async function handleToggleHandsFree() {
@@ -948,6 +973,28 @@ function App() {
                       مسح
                     </button>
                   </div>
+                  {elevenLabsKeySaved && (
+                    <>
+                      <p className="text-muted">
+                        مهم: من غير ما تحطي هنا صوت عربي حقيقي من مكتبتك في ElevenLabs، هيتكلم
+                        بصوت إنجليزي افتراضي حتى وهو بيقول كلام عربي — وده سبب النطق المكسور اللي
+                        سمعتيه. روحي elevenlabs.io ← Voices، اختاري صوت عربي، وانسخي الـ Voice ID
+                        بتاعه هنا.
+                      </p>
+                      <div className="field-row">
+                        <input
+                          type="text"
+                          placeholder="ElevenLabs Voice ID"
+                          value={elevenLabsVoiceIdInput}
+                          onChange={(e) => setElevenLabsVoiceIdInput(e.currentTarget.value)}
+                          disabled={!inTauri}
+                        />
+                        <button onClick={handleSaveElevenLabsVoiceId} disabled={!inTauri}>
+                          حفظ
+                        </button>
+                      </div>
+                    </>
+                  )}
 
                   <div className="field-row">
                     <span className="field-label">الاستماع الحر (بدون لمس أي زرار)</span>
@@ -1024,9 +1071,17 @@ function App() {
                     </button>
                   </div>
 
-                  <p className="text-muted settings-about">
-                    {info ? `أمين — الإصدار ${info.version}` : "أمين"}
-                  </p>
+                  <div className="field-row">
+                    <span className="text-muted settings-about">
+                      {info ? `أمين — الإصدار ${info.version}` : "أمين"}
+                    </span>
+                    <button onClick={handleCheckForUpdate} disabled={!inTauri || updateCheckBusy}>
+                      {updateCheckBusy ? "جاري التحقق…" : "تحقّقي من التحديثات الآن"}
+                    </button>
+                  </div>
+                  {upToDateMessage && (
+                    <p className="text-muted">هذه أحدث نسخة متاحة — مفيش تحديث جديد دلوقتي.</p>
+                  )}
                   <p className="creator-attribution">
                     {CREATOR_ATTRIBUTION_AR}
                     <span className="text-muted"> · {CREATOR_ATTRIBUTION_EN}</span>
