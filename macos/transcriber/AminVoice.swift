@@ -158,15 +158,40 @@ public func amin_voice_set_hands_free_muted(_ muted: Int32) {
 private let speechSynthesizer = AVSpeechSynthesizer()
 private var speechDelegate: SpeechDelegate?
 
+/// `AVSpeechSynthesisVoice(language: "ar-SA")` returns whatever Apple
+/// designates as *the* default voice for that language — on a Mac that
+/// has never had a better Arabic voice downloaded, that's the low-quality
+/// "Compact" one bundled with the OS, not the noticeably more natural
+/// "Enhanced"/"Premium" voices Apple offers as a free (no account, no key)
+/// download via System Settings → Accessibility → Spoken Content. Mona
+/// found the Compact voice's speech "بشعة" (ugly) — this picks the best
+/// quality tier actually installed among Arabic voices instead of
+/// blindly taking Apple's default, so downloading a better voice there
+/// (still entirely free, still on-device) actually gets used the moment
+/// it's installed, no app change needed.
+private func bestArabicVoice() -> AVSpeechSynthesisVoice? {
+    let arabicVoices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("ar") }
+    func rank(_ voice: AVSpeechSynthesisVoice) -> Int {
+        switch voice.quality {
+        case .premium: return 2
+        case .enhanced: return 1
+        case .default: return 0
+        @unknown default: return 0
+        }
+    }
+    return arabicVoices.max(by: { rank($0) < rank($1) })
+}
+
 @_cdecl("amin_voice_speak")
 public func amin_voice_speak(_ text: UnsafePointer<CChar>, _ callback: @escaping AminVoiceCallback) -> Int32 {
     let utterance = AVSpeechUtterance(string: String(cString: text))
-    // ar-SA: a broadly-understood Modern Standard Arabic voice. Amin's
-    // replies are Arabic-first, so this covers the large majority of what
-    // it says — English words mixed into a reply will still be read with
-    // an Arabic accent, the same kind of single-locale limitation already
-    // disclosed for speech *recognition* above, not silently pretended away.
-    utterance.voice = AVSpeechSynthesisVoice(language: "ar-SA") ?? AVSpeechSynthesisVoice(language: "en-US")
+    // English words mixed into an Arabic reply will still be read with an
+    // Arabic accent regardless of voice quality tier — the same single-
+    // locale limitation already disclosed for speech *recognition* above,
+    // not silently pretended away.
+    utterance.voice = bestArabicVoice()
+        ?? AVSpeechSynthesisVoice(language: "ar-SA")
+        ?? AVSpeechSynthesisVoice(language: "en-US")
     let delegate = SpeechDelegate(callback: callback)
     speechDelegate = delegate
     speechSynthesizer.delegate = delegate

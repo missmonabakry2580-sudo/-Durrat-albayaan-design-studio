@@ -102,3 +102,11 @@ above is confirmed working:
   recognition if on-device isn't available for `ar-EG` on this OS
   version. Worth confirming which one actually ran (Apple doesn't make
   this obvious at the API level) before calling the privacy story done.
+- **Speech quality depends on what's actually installed.** Mona found the
+  default voice's speech "بشعة" (ugly) — `bestArabicVoice()` in
+  `AminVoice.swift` picks the highest-quality Arabic voice already on the
+  Mac, but a fresh install only ever has the low-quality "Compact" voice.
+  A meaningfully better result needs downloading a free "Enhanced" or
+  "Premium" Arabic voice from System Settings → Accessibility → Spoken
+  Content → System Voice — no API key, no cost, just a larger one-time
+  download Amin can't trigger on its own.
