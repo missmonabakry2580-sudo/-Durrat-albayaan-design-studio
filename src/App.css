@@ -89,7 +89,12 @@
 
 .side-rail {
   position: fixed;
-  inset-inline-start: var(--space-4);
+  /* Physical left, not the RTL reading-order "start" (physical right) —
+     Amin's identity artwork has its name lockup ("أمين"/"Amin") sitting
+     right where a start-anchored rail would float, at almost exactly the
+     same vertical-center band. Placed over the character illustration on
+     the left instead, where overlap reads as depth, not a cut-off word. */
+  inset-inline-end: var(--space-4);
   top: 50%;
   transform: translateY(-50%);
   z-index: 3;

@@ -48,7 +48,14 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 42%;
+  /* 68% horizontal (not 50%) has no effect at all in the app's normal
+     landscape window shape — a square image in a wider-than-tall box only
+     ever crops top/bottom, never left/right, so this only matters if the
+     window is ever resized taller than it is wide. In that case it biases
+     the crop to protect the name lockup on the artwork's right side
+     ("أمين"/"Amin") rather than splitting the loss evenly with the
+     character's face on the left. */
+  object-position: 68% 42%;
   /* The artwork is glowing detail on a near-black field. Screen-blending
      it onto the app's own navy/blue background — instead of laying it
      down as an opaque rectangle — makes that black dissolve into
