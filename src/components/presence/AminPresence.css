@@ -20,13 +20,14 @@
 
 .amin-presence-glow {
   position: absolute;
-  inset: -22%;
+  inset: -45%;
   background: radial-gradient(
     circle at 38% 42%,
-    color-mix(in srgb, var(--presence-hue) 50%, transparent),
-    transparent 65%
+    color-mix(in srgb, var(--presence-hue) 65%, transparent),
+    color-mix(in srgb, var(--presence-hue) 25%, transparent) 45%,
+    transparent 72%
   );
-  filter: blur(34px);
+  filter: blur(50px);
   animation: amin-presence-glow-breathe 4.2s var(--ease-standard) infinite;
 }
 
@@ -47,11 +48,17 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  /* Fades the artwork's own square edges into the page instead of a hard
-     card boundary — its corners are already near-black, close to the
-     app's own background, so this blend reads as seamless. */
-  mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 85%, transparent 100%);
-  -webkit-mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 85%, transparent 100%);
+  /* The artwork is glowing detail on a near-black field. Screen-blending
+     it onto the app's own navy/blue background — instead of laying it
+     down as an opaque rectangle — makes that black dissolve into
+     whatever is behind it, so the glow itself reads as fused into the
+     interface rather than a photo sitting on top of it. */
+  mix-blend-mode: screen;
+  /* A gentle rim feather on top of the blend, so even the artwork's own
+     non-black detail right at the frame's edge dissolves rather than
+     ending in a visible straight line. */
+  mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 88%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 88%, transparent 100%);
   animation: amin-presence-portrait-pulse 4s var(--ease-standard) infinite;
 }
 

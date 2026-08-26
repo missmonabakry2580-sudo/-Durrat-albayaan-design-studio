@@ -19,9 +19,9 @@
   inset: 0;
   pointer-events: none;
   background: radial-gradient(
-      ellipse 60% 50% at 50% 28%,
-      color-mix(in srgb, var(--accent-blue) 14%, transparent),
-      transparent 70%
+      ellipse 70% 60% at 50% 26%,
+      color-mix(in srgb, var(--accent-blue) 22%, transparent),
+      transparent 72%
     ),
     radial-gradient(ellipse 80% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 6%, transparent), transparent 70%);
 }
