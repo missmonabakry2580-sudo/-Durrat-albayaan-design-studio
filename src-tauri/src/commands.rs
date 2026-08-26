@@ -1181,3 +1181,28 @@ pub fn generate_delta_brief(db: State<Db>) -> Result<DeltaBrief, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     brief::generate(&conn)
 }
+
+#[derive(serde::Serialize)]
+pub struct PendingActionSummary {
+    pub tool_name: String,
+    pub description: String,
+    pub proposed_at: String,
+    pub expired: bool,
+}
+
+/// Developer/Diagnostics Mode's read into `PendingConfirmation` — the same
+/// state `send_agent_message`/`resolve_pending_action` act on, exposed
+/// read-only so a diagnostics screen can show Mona (or a developer) exactly
+/// what Amin is currently waiting on approval for, if anything, without
+/// having to reconstruct it from the audit log by hand. Never mutates the
+/// pending slot — only `resolve_pending_action` does that.
+#[tauri::command]
+pub fn get_pending_action(pending: State<PendingConfirmation>) -> Result<Option<PendingActionSummary>, String> {
+    let guard = pending.0.lock().map_err(|e| e.to_string())?;
+    Ok(guard.as_ref().map(|action| PendingActionSummary {
+        tool_name: action.name.clone(),
+        description: tools::describe(&action.name, &action.input),
+        proposed_at: action.proposed_at.to_rfc3339(),
+        expired: confirmation::is_expired(action, chrono::Utc::now()),
+    }))
+}

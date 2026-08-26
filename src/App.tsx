@@ -12,6 +12,7 @@ import {
   type AutonomyLevel,
   type DeltaBrief,
   type FollowUp,
+  type PendingActionSummary,
   type Task,
   type WorkspaceEntry,
   appInfo,
@@ -26,6 +27,7 @@ import {
   getAutonomyLevel,
   getElevenLabsVoiceId,
   getHandsFreeSettings,
+  getPendingAction,
   hasApiKey,
   hasElevenLabsKey,
   isHalted,
@@ -166,6 +168,8 @@ function App() {
   const [dueFollowUps, setDueFollowUps] = useState<FollowUp[]>([]);
   const [deltaBrief, setDeltaBrief] = useState<DeltaBrief | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingActionSummary | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -184,7 +188,7 @@ function App() {
     // others — a single Promise.all would let one rejection blank out
     // everything, including the API key badge that has nothing to do with
     // it. Each piece of state updates independently instead.
-    const [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList] =
+    const [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList, pending] =
       await Promise.allSettled([
         appInfo(),
         hasApiKey(),
@@ -195,6 +199,7 @@ function App() {
         listTasks(),
         listWorkspaceFiles(),
         listDueFollowUps(),
+        getPendingAction(),
       ]);
     if (i.status === "fulfilled") setInfo(i.value);
     if (hasKey.status === "fulfilled") setKeySaved(hasKey.value);
@@ -205,8 +210,9 @@ function App() {
     if (taskList.status === "fulfilled") setTasks(taskList.value);
     if (files.status === "fulfilled") setWorkspaceFiles(files.value);
     if (dueList.status === "fulfilled") setDueFollowUps(dueList.value);
+    if (pending.status === "fulfilled") setPendingAction(pending.value);
 
-    const firstFailure = [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList].find(
+    const firstFailure = [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList, pending].find(
       (r) => r.status === "rejected",
     );
     setError(firstFailure ? String((firstFailure as PromiseRejectedResult).reason) : null);
@@ -432,6 +438,22 @@ function App() {
     } finally {
       setAgentBusy(false);
       await refresh();
+    }
+  }
+
+  /**
+   * The [تنفيذ]/[إلغاء] buttons on the pending-approval card send exactly
+   * the same words `confirmation::interpret` already recognizes from typed
+   * or spoken replies — this is a shortcut to that same real approval
+   * path (send_agent_message → resolve_pending_action), not a separate
+   * bypass of it.
+   */
+  async function handleApprovalDecision(word: "موافقة" | "إلغاء") {
+    setApprovalBusy(true);
+    try {
+      await handleSendToAgent(word);
+    } finally {
+      setApprovalBusy(false);
     }
   }
 
@@ -1089,6 +1111,35 @@ function App() {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {pendingAction && (
+          <div className={pendingAction.expired ? "approval-card approval-card-expired" : "approval-card"}>
+            <div className="approval-card-body">
+              <span className="field-label">
+                {pendingAction.expired ? "انتهت صلاحية هذا الطلب" : "أمين مستني موافقتك"}
+              </span>
+              <p>الإجراء: {pendingAction.description}</p>
+            </div>
+            {!pendingAction.expired && (
+              <div className="approval-card-actions">
+                <button
+                  className="chip"
+                  onClick={() => handleApprovalDecision("موافقة")}
+                  disabled={!inTauri || approvalBusy}
+                >
+                  تنفيذ
+                </button>
+                <button
+                  className="chip chip-danger"
+                  onClick={() => handleApprovalDecision("إلغاء")}
+                  disabled={!inTauri || approvalBusy}
+                >
+                  إلغاء
+                </button>
+              </div>
+            )}
           </div>
         )}
 

@@ -208,3 +208,19 @@ export interface DeltaBrief {
  * Calendar). See src-tauri/src/brief.rs.
  */
 export const generateDeltaBrief = () => invoke<DeltaBrief>("generate_delta_brief");
+
+export interface PendingActionSummary {
+  tool_name: string;
+  description: string;
+  proposed_at: string;
+  expired: boolean;
+}
+
+/**
+ * Mona's Permission Model, LEVEL 2: whatever Amin is currently waiting on
+ * her explicit word for, if anything — a read-only look at the same
+ * ConfirmHighRisk proposal `sendAgentMessage`'s reply already describes in
+ * chat, kept visible even if she's scrolled away from that message. See
+ * src-tauri/src/confirmation.rs's PendingAction and its 10-minute expiry.
+ */
+export const getPendingAction = () => invoke<PendingActionSummary | null>("get_pending_action");

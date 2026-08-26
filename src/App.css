@@ -327,6 +327,53 @@
   cursor: not-allowed;
 }
 
+/* --- Approval card: Mona's Permission Model, LEVEL 2 -------------------- */
+/* Stays visible above the command bar for as long as a ConfirmHighRisk
+   action is pending, regardless of which side panel is open or how far
+   she's scrolled the conversation — see confirmation.rs's PendingAction. */
+
+.approval-card {
+  position: relative;
+  z-index: 2;
+  width: min(680px, 92vw);
+  margin: 0 auto var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: rgba(224, 165, 60, 0.12);
+  border: 1px solid rgba(224, 165, 60, 0.35);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.approval-card-expired {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-subtle);
+}
+
+.approval-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.approval-card-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  overflow-wrap: break-word;
+}
+
+.approval-card-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
 /* --- Shared bits reused inside the work area ---------------------------- */
 
 .chip {

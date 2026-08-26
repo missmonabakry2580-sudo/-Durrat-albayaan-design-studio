@@ -192,6 +192,7 @@ pub fn run() {
             commands::escalate_follow_up,
             commands::set_follow_up_status,
             commands::generate_delta_brief,
+            commands::get_pending_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");
