@@ -1,29 +1,79 @@
-.app-shell {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-12);
+/*
+  Amin's world: the app itself is Amin's environment, not a stack of cards
+  with a picture of Amin pinned to the top. One presence stays visible at
+  all times; the other functions are thin overlays that appear on demand
+  and never take over the whole screen.
+*/
+
+.amin-world {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  background: var(--bg-app);
 }
 
-.app-header {
+.amin-world-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+      ellipse 60% 50% at 50% 28%,
+      color-mix(in srgb, var(--accent-blue) 14%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(ellipse 80% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 6%, transparent), transparent 70%);
+}
+
+.amin-world-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) calc(var(--space-12) + 64px);
+  overflow-y: auto;
   text-align: center;
 }
 
-.app-header h1 {
-  font-size: 2rem;
-  color: var(--accent);
-  letter-spacing: 0.02em;
+.amin-world-presence {
+  width: clamp(200px, 30vw, 340px);
+  aspect-ratio: 300 / 340;
 }
 
-.app-subtitle {
-  margin: var(--space-2) 0 0;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
+.amin-world-title {
+  margin: 0;
+  font-size: 1.3rem;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+
+.amin-world-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+}
+
+.amin-world-log-wrap {
+  width: min(560px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.amin-world-log-clear {
+  align-self: center;
 }
 
 .banner {
+  max-width: min(560px, 92vw);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   font-size: 0.85rem;
@@ -41,19 +91,129 @@
   color: #f0a993;
 }
 
-.panel {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+/* --- Side rail: the only navigation in the app -------------------------- */
+
+.side-rail {
+  position: fixed;
+  inset-inline-start: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.side-rail-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+  display: grid;
+  place-items: center;
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.side-rail-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.side-rail-btn-active {
+  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
+  color: var(--text-primary);
+}
+
+/* --- Status pill: the only permanent trace of security/autonomy -------- */
+
+.status-pill {
+  position: fixed;
+  top: var(--space-4);
+  inset-inline-end: var(--space-4);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot-ok {
+  background: var(--state-success);
+  box-shadow: 0 0 8px var(--state-success);
+}
+
+.status-dot-danger {
+  background: var(--state-danger);
+  box-shadow: 0 0 8px var(--state-danger);
+}
+
+/* --- Work area: the one place a function expands into, on demand ------- */
+
+.work-area {
+  position: fixed;
+  inset-inline-end: var(--space-4);
+  top: var(--space-16, 72px);
+  bottom: calc(var(--space-12) + 56px);
+  z-index: 4;
+  width: min(400px, 88vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
-  padding: var(--space-6);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.work-area-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.work-area-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.work-area-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.panel h2 {
-  font-size: 1.05rem;
-  color: var(--text-primary);
 }
 
 .panel-header-row {
@@ -63,24 +223,84 @@
   gap: var(--space-3);
 }
 
-.panel-header-row h2 {
-  margin: 0;
-}
+/* --- Command bar: the single most important interaction ---------------- */
 
-.orb-panel {
-  align-items: center;
-  background: radial-gradient(ellipse at center, var(--navy-800) 0%, var(--navy-950) 78%);
-  border-color: var(--border-strong);
-  padding: var(--space-8) var(--space-6);
-  box-shadow: inset 0 0 0 1px rgba(217, 184, 74, 0.06), 0 20px 60px rgba(0, 0, 0, 0.35);
-}
-
-.orb-switcher {
+.command-bar {
+  position: relative;
+  z-index: 2;
+  width: min(680px, 92vw);
+  margin: 0 auto var(--space-6);
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
-  justify-content: center;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: 0 0 0 1px rgba(143, 216, 255, 0.04), 0 12px 40px rgba(0, 0, 0, 0.4);
 }
+
+.command-bar-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  padding: var(--space-2) 0;
+}
+
+.command-bar-input:focus {
+  outline: none;
+}
+
+.command-bar-input::placeholder {
+  color: var(--text-muted);
+}
+
+.command-bar-mic,
+.command-bar-action,
+.command-bar-send {
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  border-radius: var(--radius-full);
+}
+
+.command-bar-mic,
+.command-bar-action {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+}
+
+.command-bar-mic-active {
+  background: color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-blue) 60%, transparent);
+}
+
+.command-bar-send {
+  padding: var(--space-2) var(--space-5);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--navy-900);
+  font-weight: 600;
+}
+
+.command-bar-send:disabled,
+.command-bar-mic:disabled,
+.command-bar-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Shared bits reused inside the work area ---------------------------- */
 
 .chip {
   background: var(--bg-surface-raised);
@@ -137,7 +357,7 @@
 
 .field-row input {
   flex: 1;
-  min-width: 200px;
+  min-width: 160px;
   background: var(--bg-app);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -160,12 +380,13 @@
 
 .segmented {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
 .badge {
-  background: var(--bg-surface-raised);
-  border: 1px solid var(--border-subtle);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   color: var(--text-secondary);
   border-radius: var(--radius-full);
   padding: 2px var(--space-3);
@@ -187,10 +408,11 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 260px;
+  max-height: min(34vh, 320px);
   overflow-y: auto;
 }
 
@@ -201,17 +423,18 @@
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   max-width: 85%;
+  text-align: start;
 }
 
 .agent-turn-user {
   align-self: flex-end;
-  background: var(--bg-surface-raised);
-  border: 1px solid var(--border-subtle);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
 }
 
 .agent-turn-amin {
   align-self: flex-start;
-  background: var(--bg-app);
+  background: rgba(5, 7, 15, 0.4);
   border: 1px solid var(--border-subtle);
 }
 
@@ -243,14 +466,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 260px;
-  overflow-y: auto;
 }
 
 .task-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex-wrap: wrap;
 }
 
 .task-check {
@@ -276,6 +498,7 @@
   flex: 1;
   font-size: 0.9rem;
   color: var(--text-primary);
+  text-align: start;
 }
 
 .task-title-done {
@@ -284,7 +507,7 @@
 }
 
 .file-preview {
-  background: var(--bg-app);
+  background: rgba(5, 7, 15, 0.4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-3);
@@ -301,6 +524,7 @@
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+  text-align: start;
 }
 
 .note-textarea {
@@ -322,8 +546,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 220px;
-  overflow-y: auto;
 }
 
 .audit-list li {
@@ -332,22 +554,25 @@
   align-items: baseline;
   font-size: 0.8rem;
   flex-wrap: wrap;
+  text-align: start;
 }
 
 .text-muted {
   color: var(--text-muted);
   font-size: 0.8rem;
+  text-align: start;
 }
 
-.about-panel {
+.settings-about {
+  margin-top: var(--space-2);
   text-align: center;
-  gap: var(--space-2);
 }
 
 .creator-attribution {
   margin: 0;
   color: var(--accent);
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   letter-spacing: 0.01em;
+  text-align: center;
 }

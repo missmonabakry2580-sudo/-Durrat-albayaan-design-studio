@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Orb } from "../orb/Orb";
+import { AminPresence } from "../presence/AminPresence";
 import { CREATOR_ATTRIBUTION_AR } from "../../lib/branding";
 import "./Splash.css";
 
@@ -31,7 +31,9 @@ export function Splash({ onDone, duration = 1800 }: SplashProps) {
       tabIndex={0}
       aria-label="أمين — اضغطي للمتابعة"
     >
-      <Orb state="idle" />
+      <div className="splash-presence">
+        <AminPresence state="idle" />
+      </div>
       <h1 className="splash-title">أمين</h1>
       <p className="splash-attribution">{CREATOR_ATTRIBUTION_AR}</p>
     </div>

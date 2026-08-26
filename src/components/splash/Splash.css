@@ -18,6 +18,11 @@
   pointer-events: none;
 }
 
+.splash-presence {
+  width: clamp(180px, 40vw, 300px);
+  aspect-ratio: 300 / 340;
+}
+
 .splash-title {
   margin-top: var(--space-2);
   font-size: 2.4rem;

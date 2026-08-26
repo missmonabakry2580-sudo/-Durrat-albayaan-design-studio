@@ -77,6 +77,19 @@ fn resolve_within_workspace(root: &Path, relative: &str) -> Result<PathBuf, Stri
     Ok(resolved)
 }
 
+/// Hidden/system entries that are real and readable but never a legitimate
+/// Amin-workspace file — noise Mona should never have to look at. This is
+/// a *display* filter only: it does not touch `resolve_within_workspace`,
+/// so none of these become any less reachable if a task genuinely needs
+/// one by exact name; it only keeps them out of the plain listing.
+const HIDDEN_ENTRY_PREFIXES: &[&str] = &[".", "$RECYCLE.BIN"];
+const HIDDEN_ENTRY_NAMES: &[&str] = &["System Volume Information", "lost+found"];
+
+fn is_hidden_from_listing(name: &str) -> bool {
+    HIDDEN_ENTRY_PREFIXES.iter().any(|p| name.starts_with(p))
+        || HIDDEN_ENTRY_NAMES.contains(&name)
+}
+
 pub fn list<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<WorkspaceEntry>, String> {
     let root = workspace_root(app)?;
     let mut entries = Vec::new();
@@ -87,11 +100,15 @@ pub fn list<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<WorkspaceEntry>, Strin
         // Documents-folder scope never had to deal with. Skip what can't
         // be read rather than erroring the entire call.
         let Ok(entry) = entry else { continue };
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_hidden_from_listing(&name) {
+            continue;
+        }
         let Ok(metadata) = entry.metadata().or_else(|_| entry.path().symlink_metadata()) else {
             continue;
         };
         entries.push(WorkspaceEntry {
-            name: entry.file_name().to_string_lossy().to_string(),
+            name,
             is_dir: metadata.is_dir(),
             size_bytes: metadata.len(),
         });

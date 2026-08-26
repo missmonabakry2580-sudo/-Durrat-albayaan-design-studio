@@ -1,0 +1,301 @@
+/*
+  Amin's presence: a faceted head-and-shoulders silhouette made entirely of
+  a neural network of connection points. --presence-hue is the one variable
+  that carries state — set on .amin-presence[data-state], read by the core,
+  the blue network, and the rays that bleed off the silhouette into the
+  rest of the screen. Gold nodes/links are a fixed warm accent and never
+  follow the hue, matching the rest of the app's "gold used sparingly" rule.
+*/
+
+.amin-presence {
+  --presence-hue: var(--accent-blue);
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.amin-presence-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* --- Silhouette --------------------------------------------------------- */
+
+.amin-presence-head,
+.amin-presence-shoulders {
+  fill: color-mix(in srgb, var(--navy-800) 55%, transparent);
+  stroke: color-mix(in srgb, var(--presence-hue) 35%, transparent);
+  stroke-width: 1.2;
+  transition: stroke var(--duration-standard) var(--ease-standard);
+}
+
+.amin-presence-shoulders {
+  fill: color-mix(in srgb, var(--navy-900) 60%, transparent);
+  opacity: 0.9;
+}
+
+/* --- Network: links, nodes, core ---------------------------------------- */
+
+.amin-presence-link {
+  stroke: color-mix(in srgb, var(--presence-hue) 55%, transparent);
+  stroke-width: 0.8;
+  stroke-dasharray: 3 5;
+  opacity: 0.5;
+  animation: amin-presence-link-flow 5s linear infinite;
+}
+
+.amin-presence-link-peer {
+  opacity: 0.35;
+}
+
+@keyframes amin-presence-link-flow {
+  to {
+    stroke-dashoffset: -80;
+  }
+}
+
+.amin-presence-node {
+  fill: color-mix(in srgb, var(--presence-hue) 80%, white 10%);
+  animation: amin-presence-node-twinkle 3.4s var(--ease-standard) infinite;
+}
+
+.amin-presence-node-gold {
+  fill: color-mix(in srgb, var(--accent) 85%, white 8%);
+}
+
+@keyframes amin-presence-node-twinkle {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.amin-presence-node,
+.amin-presence-node-gold {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.amin-presence-core-halo {
+  fill: color-mix(in srgb, var(--presence-hue) 45%, transparent);
+  filter: blur(10px);
+  animation: amin-presence-halo-breathe 4.2s var(--ease-standard) infinite;
+}
+
+.amin-presence-core {
+  fill: color-mix(in srgb, var(--ivory-100) 25%, var(--presence-hue) 75%);
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--presence-hue) 65%, transparent));
+  animation: amin-presence-core-pulse 3s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes amin-presence-core-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+.amin-presence-core,
+.amin-presence-core-halo {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+/* --- Rays: the light that leaves the silhouette and fades into the rest
+   of the screen, rather than stopping at a hard frame edge. ------------- */
+
+.amin-presence-ray-stop-start {
+  stop-color: var(--presence-hue);
+  stop-opacity: 0.5;
+}
+
+.amin-presence-ray-stop-end {
+  stop-color: var(--presence-hue);
+  stop-opacity: 0;
+}
+
+.amin-presence-ray {
+  stroke-width: 1;
+  stroke-dasharray: 2 6;
+  animation: amin-presence-link-flow 7s linear infinite;
+}
+
+/* Fallback for engines without color-mix(): plain rgba, close enough. */
+@supports not (color: color-mix(in srgb, red, blue)) {
+  .amin-presence-head,
+  .amin-presence-shoulders {
+    fill: rgba(18, 27, 58, 0.55);
+    stroke: rgba(79, 179, 232, 0.35);
+  }
+  .amin-presence-link {
+    stroke: rgba(79, 179, 232, 0.55);
+  }
+  .amin-presence-node {
+    fill: rgba(79, 179, 232, 0.85);
+  }
+  .amin-presence-node-gold {
+    fill: rgba(217, 184, 74, 0.85);
+  }
+  .amin-presence-core {
+    fill: rgba(79, 179, 232, 0.9);
+  }
+}
+
+/* --- Voice waveform, at the throat -------------------------------------- */
+
+.amin-presence-wave {
+  position: absolute;
+  bottom: 14%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 18px;
+}
+
+.amin-presence-wave-bar {
+  width: 2.5px;
+  height: 20%;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--presence-hue) 75%, transparent);
+  animation: amin-presence-wave-idle 3.6s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-wave-idle {
+  0%,
+  100% {
+    height: 15%;
+  }
+  50% {
+    height: 30%;
+  }
+}
+
+@keyframes amin-presence-wave-active {
+  0%,
+  100% {
+    height: 20%;
+  }
+  50% {
+    height: 100%;
+  }
+}
+
+/* --- States: everything keys off [data-state] on the root -------------- */
+
+.amin-presence[data-state="idle"] .amin-presence-link {
+  opacity: 0.3;
+  animation-duration: 8s;
+}
+.amin-presence[data-state="idle"] .amin-presence-core {
+  animation-duration: 5s;
+}
+.amin-presence[data-state="idle"] .amin-presence-node {
+  animation-duration: 4.5s;
+}
+
+.amin-presence[data-state="listening"] .amin-presence-core {
+  animation-duration: 1.3s;
+}
+.amin-presence[data-state="listening"] .amin-presence-link {
+  animation-duration: 2s;
+  opacity: 0.7;
+}
+.amin-presence[data-state="listening"] .amin-presence-wave-bar {
+  animation-name: amin-presence-wave-active;
+  animation-duration: 0.7s;
+}
+
+.amin-presence[data-state="thinking"] .amin-presence-node {
+  animation-duration: 0.9s;
+}
+.amin-presence[data-state="thinking"] .amin-presence-link {
+  animation-duration: 1.4s;
+}
+.amin-presence[data-state="thinking"] .amin-presence-core {
+  animation-duration: 1.6s;
+}
+
+.amin-presence[data-state="planning"] .amin-presence-link {
+  animation-duration: 3s;
+  opacity: 0.75;
+}
+.amin-presence[data-state="planning"] .amin-presence-core {
+  animation-duration: 3.2s;
+}
+
+.amin-presence[data-state="executing"] {
+  --presence-hue: var(--accent);
+}
+.amin-presence[data-state="executing"] .amin-presence-node {
+  animation-duration: 0.6s;
+}
+.amin-presence[data-state="executing"] .amin-presence-link {
+  animation-duration: 0.9s;
+}
+.amin-presence[data-state="executing"] .amin-presence-core {
+  animation-duration: 0.9s;
+}
+
+.amin-presence[data-state="speaking"] .amin-presence-core {
+  animation-duration: 0.8s;
+}
+.amin-presence[data-state="speaking"] .amin-presence-wave-bar {
+  animation-name: amin-presence-wave-active;
+  animation-duration: 0.5s;
+}
+
+.amin-presence[data-state="success"] {
+  --presence-hue: var(--state-success);
+}
+.amin-presence[data-state="success"] .amin-presence-core {
+  animation-duration: 2.2s;
+}
+
+.amin-presence[data-state="warning"] {
+  --presence-hue: var(--state-warning);
+}
+.amin-presence[data-state="warning"] .amin-presence-core {
+  animation-duration: 0.9s;
+}
+.amin-presence[data-state="warning"] .amin-presence-link {
+  animation-duration: 0.8s;
+  opacity: 0.8;
+}
+
+.amin-presence[data-state="waiting"] {
+  --presence-hue: var(--state-warning);
+}
+.amin-presence[data-state="waiting"] .amin-presence-core {
+  animation-duration: 5.5s;
+}
+.amin-presence[data-state="waiting"] .amin-presence-link {
+  animation-duration: 6s;
+  opacity: 0.35;
+}

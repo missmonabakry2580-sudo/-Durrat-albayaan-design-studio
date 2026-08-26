@@ -13,10 +13,18 @@
   --navy-800: #121b3a;
   --navy-700: #1b2750;
 
-  /* Soft Gold — the one accent color; used sparingly */
+  /* Soft Gold — the one warm accent color; used sparingly */
   --gold-300: #e8cd7a;
   --gold-400: #d9b84a;
   --gold-500: #c9a227;
+
+  /* Electric Blue — Amin's own signal color: the neural network, thinking
+     states, connecting lines. Used with the same restraint as gold. */
+  --blue-300: #8fd8ff;
+  --blue-400: #4fb3e8;
+  --blue-500: #2b8fc9;
+  --accent-blue: var(--blue-400);
+  --accent-blue-strong: var(--blue-500);
 
   /* Ivory — primary text on navy */
   --ivory-100: #f7f3e9;
@@ -44,6 +52,13 @@
   --accent-strong: var(--gold-500);
   --border-subtle: rgba(217, 184, 74, 0.18);
   --border-strong: rgba(217, 184, 74, 0.4);
+
+  /* Glass — the only "panel" surface left in the design system, for the
+     work-area that opens on demand. Light and transparent by design, never
+     an opaque card. */
+  --glass-bg: rgba(10, 17, 40, 0.6);
+  --glass-border: rgba(143, 216, 255, 0.16);
+  --glass-blur: 18px;
 
   /* Type — system stacks only. No web fonts, no network fetch: the app
      stays fully offline-capable and the CSP never needs a font-src
