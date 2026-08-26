@@ -84,6 +84,8 @@ src-tauri/                 Rust backend
                              window
   src/followups.rs          local Follow-up Engine (creation, escalation,
                              due-listing — no delivery channel yet)
+  src/brief.rs              local Delta Brief (tasks/follow-ups/audit
+                             activity — no Gmail/Calendar data yet)
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
   src/lib.rs                wires plugins, DB, tray, global shortcut, and
@@ -336,6 +338,23 @@ front of her quickly, not to avoid building them.
   tradeoffs (arbitrary JS execution, content extraction) worth its own
   design pass rather than folding into tonight's minimal version.
 
+## Phase 3 design notes: a local Delta Brief, real Gmail/Calendar blocked
+
+`src-tauri/src/brief.rs` generates a "what changed" summary from Amin's
+own local data only: open task count, tasks created/completed in the
+last 24h, how many follow-ups are currently due, and the 5 most recent
+audit-log lines. 3 unit tests cover the counting logic and that audit
+events actually show up.
+
+This exists specifically because it needs nothing external — Gmail and
+Calendar (the rest of Phase 3, and the "real" Morning Brief the brief
+describes) are hard-blocked on Mona creating a Google Cloud OAuth client
+and granting Amin access, which is account-setup work nobody else can do.
+The "🎙️ Ask Amin to narrate this" button in the Delta Brief panel sends
+the structured data as context to the existing Agent Core (Phase 1) and
+lets it produce a natural-language summary — reusing what already exists
+rather than building a separate narration path.
+
 ## Phase 4 design notes: a local Follow-up Engine, honestly scoped
 
 `src-tauri/src/followups.rs` builds on the `follow_ups` table that's
@@ -364,7 +383,7 @@ better to be honest that the *escalation logic* is real and tested, and
 | 0 | Architecture, security foundation, design system *(this doc)* |
 | 1 | Desktop shell (menu bar), push-to-talk voice, speaker recognition + presence greeting, Agent Core (Anthropic API wiring) |
 | 2 | Task management + Quick Capture, scoped file access, minimal browser control *(all shipped — see Phase 2 notes above for what's still a conservative default vs. a settled decision)* |
-| 3 | Gmail, Calendar, Morning Brief — blocked on Mona creating a Google OAuth client; see the account-setup checklist |
+| 3 | Local Delta Brief *(shipped — see Phase 3 notes below)*; Gmail, Calendar, real Morning Brief still blocked on Mona creating a Google OAuth client — see the account-setup checklist |
 | 4 | Follow-up Engine *(local logic shipped — see Phase 4 notes above)*, delivery channels + Executive Delegate Mode still ahead |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |
 | 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |

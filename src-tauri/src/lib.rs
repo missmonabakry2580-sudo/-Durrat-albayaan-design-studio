@@ -1,5 +1,6 @@
 mod agent;
 mod audit;
+mod brief;
 mod browser;
 mod commands;
 mod db;
@@ -110,6 +111,7 @@ pub fn run() {
             commands::list_due_follow_ups,
             commands::escalate_follow_up,
             commands::set_follow_up_status,
+            commands::generate_delta_brief,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");

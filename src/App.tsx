@@ -8,6 +8,7 @@ import {
   type AppInfo,
   type AuditEntry,
   type AutonomyLevel,
+  type DeltaBrief,
   type FollowUp,
   type Task,
   type WorkspaceEntry,
@@ -18,6 +19,7 @@ import {
   createTask,
   deleteWorkspaceFile,
   escalateFollowUp,
+  generateDeltaBrief,
   getAutonomyLevel,
   hasApiKey,
   isHalted,
@@ -77,6 +79,8 @@ function App() {
   const [browserUrl, setBrowserUrl] = useState("");
   const [browserError, setBrowserError] = useState<string | null>(null);
   const [dueFollowUps, setDueFollowUps] = useState<FollowUp[]>([]);
+  const [deltaBrief, setDeltaBrief] = useState<DeltaBrief | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
 
   async function refresh() {
     if (!inTauri) return;
@@ -107,6 +111,7 @@ function App() {
 
   useEffect(() => {
     refresh();
+    if (inTauri) generateDeltaBrief().then(setDeltaBrief);
   }, []);
 
   // Voice events can arrive from either the mic button below or the global
@@ -287,6 +292,34 @@ function App() {
     await refresh();
   }
 
+  async function handleGetBrief() {
+    const b = await generateDeltaBrief();
+    setDeltaBrief(b);
+  }
+
+  async function handleNarrateBrief() {
+    if (!deltaBrief || agentBusy) return;
+    const prompt =
+      "هات لي ملخص سريع وطبيعي بناءً على البيانات دي (Delta Brief محلي، لسه معندهوش Gmail/Calendar):\n" +
+      JSON.stringify(deltaBrief, null, 2);
+
+    setAgentLog((log) => [...log, { role: "user", text: "📋 Delta Brief" }]);
+    setBriefBusy(true);
+    setOrbState("thinking");
+    try {
+      const reply = await sendAgentMessage(prompt);
+      setAgentLog((log) => [...log, { role: "amin", text: reply }]);
+      setOrbState("speaking");
+    } catch (e) {
+      setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
+      setOrbState("warning");
+    } finally {
+      setBriefBusy(false);
+      await refresh();
+      setTimeout(() => setOrbState("idle"), 1400);
+    }
+  }
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -321,6 +354,32 @@ function App() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header-row">
+            <h2>Delta Brief</h2>
+            <button className="chip" onClick={handleGetBrief} disabled={!inTauri}>
+              Refresh
+            </button>
+          </div>
+          <p className="text-muted">
+            Phase 3 (local slice) — "what changed" using only Amin's own local data. Real
+            Gmail/Calendar data joins this once those connectors exist.
+          </p>
+          {deltaBrief && (
+            <>
+              <div className="brief-stats">
+                <span className="badge">{deltaBrief.open_tasks} open tasks</span>
+                <span className="badge">+{deltaBrief.tasks_created_last_24h} created (24h)</span>
+                <span className="badge">✓{deltaBrief.tasks_completed_last_24h} completed (24h)</span>
+                <span className="badge">{deltaBrief.due_follow_ups} follow-ups due</span>
+              </div>
+              <button className="chip" onClick={handleNarrateBrief} disabled={!inTauri || briefBusy}>
+                {briefBusy ? "..." : "🎙️ Ask Amin to narrate this"}
+              </button>
+            </>
+          )}
         </section>
 
         <section className="panel">

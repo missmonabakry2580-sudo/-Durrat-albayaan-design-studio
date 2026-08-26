@@ -126,3 +126,17 @@ export const deleteWorkspaceFile = (path: string) =>
  * content yet.
  */
 export const openBrowserUrl = (url: string) => invoke<void>("open_browser_url", { url });
+
+export interface DeltaBrief {
+  open_tasks: number;
+  tasks_created_last_24h: number;
+  tasks_completed_last_24h: number;
+  due_follow_ups: number;
+  recent_audit_events: string[];
+}
+
+/**
+ * Local-only "what changed" summary (Phase 3 slice that needs no Gmail/
+ * Calendar). See src-tauri/src/brief.rs.
+ */
+export const generateDeltaBrief = () => invoke<DeltaBrief>("generate_delta_brief");

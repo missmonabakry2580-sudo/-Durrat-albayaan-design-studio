@@ -1,12 +1,13 @@
 use tauri::{AppHandle, State};
 
+use crate::brief::DeltaBrief;
 use crate::db::Db;
 use crate::files::WorkspaceEntry;
 use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, browser, files, followups, secrets, tasks, voice};
+use crate::{agent, audit, brief, browser, files, followups, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -458,4 +459,12 @@ pub fn set_follow_up_status(id: String, status: String, db: State<Db>) -> Result
         None,
     );
     Ok(())
+}
+
+/// Local Delta Brief (Phase 3 slice that needs no Gmail/Calendar) — a
+/// "what changed" summary of Amin's own local activity. See brief.rs.
+#[tauri::command]
+pub fn generate_delta_brief(db: State<Db>) -> Result<DeltaBrief, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    brief::generate(&conn)
 }
