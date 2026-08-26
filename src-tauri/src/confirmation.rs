@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use std::sync::Mutex;
 
 /// The one piece of state that makes Mona's explicit instruction real: "any
@@ -12,11 +13,34 @@ use std::sync::Mutex;
 /// several irreversible-ish proposals waiting for approval at once. A new
 /// ConfirmHighRisk tool call overwrites whatever was pending before it (the
 /// old one is implicitly abandoned, not silently executed later).
+///
+/// This is Mona's "Approval Token" — scoped to one action, target, and set
+/// of parameters, carrying its own timestamp, and (see `is_expired`) good
+/// for a limited window rather than an approval that could fire on a much
+/// later, unrelated "ايوه" if the conversation moved on. It also already
+/// ends the moment it's used: `commands.rs` clears `PendingConfirmation`'s
+/// slot as part of executing or declining, never leaves it sitting armed.
 #[derive(Clone)]
 pub struct PendingAction {
     pub tool_use_id: String,
     pub name: String,
     pub input: serde_json::Value,
+    pub proposed_at: DateTime<Utc>,
+}
+
+/// How long a proposed action stays approvable. Long enough that an
+/// ordinary back-and-forth doesn't spuriously expire mid-conversation;
+/// short enough that a stale proposal from a conversation Mona has since
+/// moved on from can't be approved by surprise much later just because her
+/// next message happens to contain an approval word for something else
+/// entirely.
+const APPROVAL_TIMEOUT_MINUTES: i64 = 10;
+
+/// Whether `action` is too old to approve anymore — `commands.rs` checks
+/// this before acting on any reply to a pending action, expiring it (and
+/// telling Mona plainly) instead of executing a stale approval.
+pub fn is_expired(action: &PendingAction, now: DateTime<Utc>) -> bool {
+    now.signed_duration_since(action.proposed_at) > chrono::Duration::minutes(APPROVAL_TIMEOUT_MINUTES)
 }
 
 pub struct PendingConfirmation(pub Mutex<Option<PendingAction>>);
@@ -82,6 +106,36 @@ pub fn interpret(message: &str) -> Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn action_proposed_at(proposed_at: DateTime<Utc>) -> PendingAction {
+        PendingAction {
+            tool_use_id: "toolu_1".to_string(),
+            name: "delete_workspace_file".to_string(),
+            input: serde_json::json!({}),
+            proposed_at,
+        }
+    }
+
+    #[test]
+    fn a_fresh_proposal_is_not_expired() {
+        let now = Utc::now();
+        let action = action_proposed_at(now);
+        assert!(!is_expired(&action, now));
+    }
+
+    #[test]
+    fn a_proposal_just_under_the_timeout_is_not_expired() {
+        let proposed_at = Utc::now();
+        let now = proposed_at + chrono::Duration::minutes(APPROVAL_TIMEOUT_MINUTES - 1);
+        assert!(!is_expired(&action_proposed_at(proposed_at), now));
+    }
+
+    #[test]
+    fn a_proposal_past_the_timeout_is_expired() {
+        let proposed_at = Utc::now();
+        let now = proposed_at + chrono::Duration::minutes(APPROVAL_TIMEOUT_MINUTES + 1);
+        assert!(is_expired(&action_proposed_at(proposed_at), now));
+    }
 
     #[test]
     fn recognizes_arabic_approval_words() {

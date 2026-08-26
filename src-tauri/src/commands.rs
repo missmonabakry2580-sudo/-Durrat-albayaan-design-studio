@@ -448,6 +448,7 @@ pub async fn send_agent_message(
                 tool_use_id: tool_id,
                 name: tool_name.clone(),
                 input: tool_input,
+                proposed_at: chrono::Utc::now(),
             });
         }
         {
@@ -525,6 +526,33 @@ async fn resolve_pending_action(
     let tool_defs = tools::tool_definitions();
     let description = tools::describe(&action.name, &action.input);
     let risk = tools::risk_for(&action.name);
+
+    // An approval is scoped to this one proposal, not a standing
+    // permission — if too long has passed, Mona has likely moved on, and a
+    // reply that happens to contain an approval word for something else
+    // entirely must never fire this old action by accident. Expire it and
+    // make her re-ask, regardless of what her reply says.
+    if confirmation::is_expired(&action, chrono::Utc::now()) {
+        {
+            let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
+            *guard = None;
+        }
+        {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let _ = audit::record(
+                &conn,
+                "amin",
+                &action.name,
+                risk,
+                audit::Decision::Declined,
+                Some(&format!("{description} — انتهت صلاحية الموافقة")),
+                None,
+            );
+        }
+        return Ok(AgentReply::new(format!(
+            "الطلب ده قديم شوية وانتهت صلاحيته: ⏸️ {description}\n\nلو لسه محتاجة تنفيذه، قوليلي تاني من الأول."
+        )));
+    }
 
     match confirmation::interpret(message) {
         confirmation::Reply::Unclear => Ok(AgentReply::new(format!(
