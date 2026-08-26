@@ -20,6 +20,34 @@ const ELEVENLABS_TTS_URL: &str = "https://api.elevenlabs.io/v1/text-to-speech";
 const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
 const MODEL_ID: &str = "eleven_multilingual_v2";
 
+/// Maps Claude's own `[[emotion:VALUE]]` tag (see agent::KNOWN_EMOTIONS,
+/// agent::extract_emotion) to ElevenLabs' per-request `voice_settings` —
+/// the concrete mechanism behind "a voice with actual emotional tone",
+/// not a cosmetic label. Lower `stability` + higher `style` reads as more
+/// animated/expressive delivery; higher stability + lower style reads as
+/// calmer and more measured. `similarity_boost` and speaker boost stay
+/// fixed — they're about matching the chosen voice's timbre, not mood.
+/// Unknown/missing emotions fall back to ElevenLabs' own balanced default
+/// rather than guessing.
+fn voice_settings_for_emotion(emotion: Option<&str>) -> serde_json::Value {
+    let (stability, style) = match emotion {
+        Some("excited") => (0.30, 0.75),
+        Some("happy") => (0.45, 0.55),
+        Some("playful") => (0.35, 0.65),
+        Some("concerned") => (0.60, 0.30),
+        Some("apologetic") => (0.65, 0.25),
+        Some("serious") => (0.80, 0.10),
+        Some("calm") => (0.75, 0.15),
+        _ => (0.50, 0.35),
+    };
+    serde_json::json!({
+        "stability": stability,
+        "similarity_boost": 0.75,
+        "style": style,
+        "use_speaker_boost": true,
+    })
+}
+
 /// Calls ElevenLabs' TTS API and returns the raw MP3 bytes. Does not play
 /// them — see `play`. `voice_id` overrides the default (Rachel, English)
 /// with one Mona picked from her own ElevenLabs voice library — see
@@ -28,8 +56,16 @@ const MODEL_ID: &str = "eleven_multilingual_v2";
 /// mispronounced speech Mona reported even after the markdown/emoji
 /// cleanup in agent::strip_markdown_for_speech: that cleanup fixed
 /// reading literal punctuation aloud, not the underlying voice being the
-/// wrong language for the text.
-pub async fn synthesize(api_key: &str, text: &str, voice_id: Option<&str>) -> Result<Vec<u8>, String> {
+/// wrong language for the text. `emotion` is Claude's own tag for this
+/// reply (see voice_settings_for_emotion) — the same tag already driving
+/// AminPresence's on-screen expression now also shapes delivery, one real
+/// step toward emotionally expressive speech rather than a flat reading.
+pub async fn synthesize(
+    api_key: &str,
+    text: &str,
+    voice_id: Option<&str>,
+    emotion: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
     let client = reqwest::Client::new();
     let response = client
@@ -39,6 +75,7 @@ pub async fn synthesize(api_key: &str, text: &str, voice_id: Option<&str>) -> Re
         .json(&serde_json::json!({
             "text": text,
             "model_id": MODEL_ID,
+            "voice_settings": voice_settings_for_emotion(emotion),
         }))
         .send()
         .await
@@ -92,4 +129,47 @@ pub fn play(audio: &[u8]) -> Result<(), String> {
 
     let _ = std::fs::remove_file(&path);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn excited_is_more_expressive_than_serious() {
+        let excited = voice_settings_for_emotion(Some("excited"));
+        let serious = voice_settings_for_emotion(Some("serious"));
+        assert!(excited["stability"].as_f64().unwrap() < serious["stability"].as_f64().unwrap());
+        assert!(excited["style"].as_f64().unwrap() > serious["style"].as_f64().unwrap());
+    }
+
+    #[test]
+    fn unknown_or_missing_emotion_falls_back_to_a_balanced_default() {
+        let missing = voice_settings_for_emotion(None);
+        let unknown = voice_settings_for_emotion(Some("ecstatic"));
+        assert_eq!(missing, unknown);
+    }
+
+    #[test]
+    fn every_known_emotion_produces_valid_settings_in_range() {
+        for emotion in [
+            "happy",
+            "calm",
+            "concerned",
+            "excited",
+            "apologetic",
+            "serious",
+            "playful",
+            "neutral",
+        ] {
+            let settings = voice_settings_for_emotion(Some(emotion));
+            for key in ["stability", "similarity_boost", "style"] {
+                let value = settings[key].as_f64().unwrap_or(-1.0);
+                assert!(
+                    (0.0..=1.0).contains(&value),
+                    "{emotion}'s {key} out of range: {value}"
+                );
+            }
+        }
+    }
 }

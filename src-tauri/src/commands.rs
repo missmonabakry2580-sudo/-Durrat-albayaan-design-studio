@@ -712,7 +712,12 @@ pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
 /// engine (voice::speak) — never a hard error just because the optional
 /// upgrade isn't configured.
 #[tauri::command]
-pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Result<(), String> {
+pub async fn speak_text(
+    app: AppHandle,
+    text: String,
+    emotion: Option<String>,
+    db: State<'_, Db>,
+) -> Result<(), String> {
     // Claude's replies are written for the chat UI, which renders markdown
     // (**bold**, bullets, links...) as formatting — a speech engine just
     // reads the punctuation aloud, which is what surfaced as the on-device
@@ -732,7 +737,7 @@ pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Resu
         return voice::speak(app, &text);
     };
 
-    let audio = match elevenlabs::synthesize(&key, &text, voice_id.as_deref()).await {
+    let audio = match elevenlabs::synthesize(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
         Ok(a) => a,
         Err(e) => {
             // ElevenLabs itself failed (bad key, quota, network) — fall

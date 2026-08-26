@@ -81,9 +81,14 @@ export const clearAgentConversation = () => invoke<void>("clear_agent_conversati
 export const startVoiceCapture = () => invoke<void>("start_voice_capture");
 export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");
 
-/** Speaks text aloud through the same on-device voice engine (macOS's
- * AVSpeechSynthesizer) — see docs/ARCHITECTURE.md "Voice pipeline". */
-export const speakText = (text: string) => invoke<void>("speak_text", { text });
+/** Speaks text aloud — the on-device engine (macOS's AVSpeechSynthesizer)
+ * by default, or ElevenLabs when Mona has added her own key (see
+ * hasElevenLabsKey). `emotion` is Claude's own `[[emotion:VALUE]]` tag for
+ * this reply (see AgentReply) — ElevenLabs uses it to shape delivery
+ * (see src-tauri/src/elevenlabs.rs's voice_settings_for_emotion); the
+ * on-device engine ignores it. See docs/ARCHITECTURE.md "Voice pipeline". */
+export const speakText = (text: string, emotion?: string | null) =>
+  invoke<void>("speak_text", { text, emotion: emotion ?? null });
 export const stopSpeaking = () => invoke<void>("stop_speaking");
 
 export interface HandsFreeSettings {

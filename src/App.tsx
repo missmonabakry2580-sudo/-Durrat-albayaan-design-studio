@@ -385,9 +385,9 @@ function App() {
    * above) resets aminState to idle when the real speech ends; the timeout
    * here is only a safety net for when speaking never actually starts
    * (engine missing, TTS failure) so Amin doesn't stay stuck mid-state. */
-  function speak(text: string) {
+  function speak(text: string, emotion?: string | null) {
     if (!inTauri) return;
-    speakText(text).catch((e) => {
+    speakText(text, emotion).catch((e) => {
       setVoiceError(`تعذّر نطق الرد: ${String(e)}`);
       setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
     });
@@ -424,7 +424,7 @@ function App() {
       setLastEmotion(reply.emotion);
       setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
-      speak(reply.text);
+      speak(reply.text, reply.emotion);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
@@ -573,7 +573,7 @@ function App() {
       setLastEmotion(reply.emotion);
       setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
-      speak(reply.text);
+      speak(reply.text, reply.emotion);
     } catch (e) {
       setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
