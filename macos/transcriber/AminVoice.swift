@@ -280,12 +280,26 @@ private final class Transcriber {
         case .authorized:
             beginRecognition(recognizer: recognizer)
         case .notDetermined:
+            // requestAccess's completion fires on an arbitrary system queue
+            // (documented Apple behavior), not necessarily the same
+            // .global(qos: .userInitiated) queue beginRecognition otherwise
+            // always runs on via the .authorized branch above. Mona hit
+            // exactly this on a real Mac, on exactly her first-ever grant on
+            // a fresh build: "couldn't start the audio engine" (CoreAudio
+            // error 268451843) right after tapping Allow — AVAudioEngine is
+            // documented as needing a consistent calling context, and this
+            // was the one path that didn't provide one. Explicitly hopping
+            // back to that same queue here, instead of calling straight out
+            // of the arbitrary completion queue, is the fix.
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                if granted {
-                    self?.beginRecognition(recognizer: recognizer)
-                } else {
-                    self?.emit(2, "microphone access was not granted")
-                    self?.finish()
+                guard let self = self else { return }
+                guard granted else {
+                    self.emit(2, "microphone access was not granted")
+                    self.finish()
+                    return
+                }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    self.beginRecognition(recognizer: recognizer)
                 }
             }
         case .denied, .restricted:
