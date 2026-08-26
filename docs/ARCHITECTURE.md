@@ -288,7 +288,14 @@ keychain, signs the dylib directly with `codesign --options runtime
 --timestamp`, then deletes that keychain immediately — kept deliberately
 separate from tauri-action's own keychain for the main app so codesign
 never sees the same identity registered twice at once ("ambiguous
-identity"). Unverified until the next real signed run confirms it.
+identity").
+
+**Confirmed working in build 0.2.2** (workflow run 33001899302, 2026-08-26):
+the dylib-signing step and tauri-action's own notarization both succeeded,
+with the notary log showing `Notarizing Finished with status Accepted` and
+`Stapling app...`. This is the first real signed-and-notarized `.dmg` — no
+more Gatekeeper warning, and one stable identity for TCC to remember
+permission grants against.
 
 ## The command surface is the whole contract
 
