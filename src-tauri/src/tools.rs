@@ -4,7 +4,7 @@ use tauri::{AppHandle, Runtime};
 
 use crate::commands::task_title;
 use crate::policy::RiskTier;
-use crate::{browser, files, followups, notify, tasks};
+use crate::{browser, files, followups, memory, notify, tasks};
 
 /// Amin's real tool registry for the Anthropic API's tool-use feature.
 /// Three things live here, deliberately kept together rather than spread
@@ -150,6 +150,37 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["id", "status"]
             }
         }),
+        json!({
+            "name": "remember_fact",
+            "description": "Remember a fact about Mona, her people, projects, routines, or a decision made — for recall in future conversations, not just this one. Remembering the same category+key again updates it (corrects the fact) instead of creating a duplicate. Use when Mona says something worth carrying forward, e.g. \"افتكر إن...\" — not for every sentence she says.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "category": { "type": "string", "description": "e.g. preference, person, project, routine, decision" },
+                    "key": { "type": "string", "description": "short label for this fact, e.g. \"اسم ابن منى\"" },
+                    "value": { "type": "string" }
+                },
+                "required": ["category", "key", "value"]
+            }
+        }),
+        json!({
+            "name": "search_memory",
+            "description": "Search remembered facts by keyword, across both their label and their value. Use before answering anything that depends on something Mona told Amin to remember previously.",
+            "input_schema": {
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "forget_fact",
+            "description": "Permanently forget a remembered fact by its id (get the id from search_memory first). Use when Mona explicitly says to forget something, e.g. \"انسَ المعلومة دي\".",
+            "input_schema": {
+                "type": "object",
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            }
+        }),
     ]
 }
 
@@ -178,7 +209,7 @@ pub fn risk_for(name: &str) -> RiskTier {
     match name {
         "create_task" | "quick_capture" | "list_tasks" | "set_task_status"
         | "list_follow_ups" | "list_due_follow_ups" | "set_follow_up_status"
-        | "create_follow_up" => RiskTier::Auto,
+        | "create_follow_up" | "remember_fact" | "search_memory" | "forget_fact" => RiskTier::Auto,
         "escalate_follow_up" => RiskTier::TrustedDelegation,
         "list_workspace_files"
         | "read_workspace_file"
@@ -209,6 +240,9 @@ pub fn describe(name: &str, input: &Value) -> String {
         "list_due_follow_ups" => "عرض المتابعات المستحقة".to_string(),
         "escalate_follow_up" => format!("تصعيد المتابعة رقم {}", s("id")),
         "set_follow_up_status" => format!("تغيير حالة المتابعة {} إلى {}", s("id"), s("status")),
+        "remember_fact" => format!("تذكّر: {} = {}", s("key"), s("value")),
+        "search_memory" => format!("البحث في الذاكرة عن: {}", s("query")),
+        "forget_fact" => format!("نسيان المعلومة رقم {}", s("id")),
         other => format!("تنفيذ إجراء غير معروف: {other} — يُنصح بعدم الموافقة"),
     }
 }
@@ -317,6 +351,23 @@ pub fn execute<R: Runtime>(
                 &required_str(input, "id", name)?,
                 &required_str(input, "status", name)?,
             )?;
+            Ok(json!({ "ok": true }))
+        }
+        "remember_fact" => {
+            let fact = memory::remember(
+                conn,
+                &required_str(input, "category", name)?,
+                &required_str(input, "key", name)?,
+                &required_str(input, "value", name)?,
+            )?;
+            serde_json::to_value(fact).map_err(|e| e.to_string())
+        }
+        "search_memory" => {
+            let results = memory::search(conn, &required_str(input, "query", name)?)?;
+            serde_json::to_value(results).map_err(|e| e.to_string())
+        }
+        "forget_fact" => {
+            memory::forget(conn, &required_str(input, "id", name)?)?;
             Ok(json!({ "ok": true }))
         }
         other => Err(format!("unknown tool: {other}")),

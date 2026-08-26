@@ -46,6 +46,23 @@ CREATE TABLE IF NOT EXISTS conversation_history (
     content TEXT NOT NULL -- JSON, mirrors agent::ChatMessage.content
 );
 
+-- Structured long-term memory (categorized facts Amin can recall, update,
+-- and forget) — distinct from `conversation_history` above, which is raw
+-- transcript replay, not memory Claude reasons over as facts. See
+-- src-tauri/src/memory.rs. `(category, key)` isn't declared UNIQUE here
+-- deliberately — memory.rs's remember() does its own look-up-then-
+-- insert-or-update, since SQLite's ON CONFLICT needs a matching unique
+-- index and a composite one adds a migration step for a constraint the
+-- application layer already enforces.
+CREATE TABLE IF NOT EXISTS memory_facts (
+    id         TEXT PRIMARY KEY,
+    category   TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS follow_ups (
     id               TEXT PRIMARY KEY,
     task_id          TEXT NOT NULL REFERENCES tasks(id),

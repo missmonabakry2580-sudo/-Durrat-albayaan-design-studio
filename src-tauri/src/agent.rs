@@ -396,22 +396,46 @@ pub fn trim_history(history: &mut Vec<ChatMessage>) {
     }
 }
 
+/// Renders remembered facts (see memory.rs) into the block appended to
+/// `SYSTEM_PROMPT` — this is what makes memory.rs's storage actually
+/// *memory* Claude reasons with, rather than just a database it could
+/// query but never sees unprompted. Empty facts produce an empty string
+/// (nothing appended) rather than an empty-but-present section header.
+pub fn memory_prompt_block(facts: &[crate::memory::MemoryFact]) -> String {
+    if facts.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = facts
+        .iter()
+        .map(|f| format!("- [{}] {}: {}", f.category, f.key, f.value))
+        .collect();
+    format!(
+        "\n\nمعلومات محفوظة عن مُنى وسياق عملها من محادثات سابقة (استخدمها لو مفيدة للرد \
+         الحالي، ومتقوليش لها إنك بتقرأها، تصرفي وكأنك عارفة الحاجات دي طبيعي):\n{}",
+        lines.join("\n")
+    )
+}
+
 /// Send the given history (the new turn must already be the last element)
 /// to Claude, with the given tool definitions, and return the raw parsed
 /// response — including any tool_use block — for the caller to act on.
 /// Does not itself mutate any stored conversation or execute any tool;
-/// `commands::send_agent_message` owns both.
+/// `commands::send_agent_message` owns both. `memory_block` is
+/// `memory_prompt_block`'s output, already rendered by the caller (this
+/// function doesn't touch the database itself).
 pub async fn send_message(
     api_key: &str,
     history: &[ChatMessage],
     tools: &[serde_json::Value],
+    memory_block: &str,
 ) -> Result<AnthropicResponse, String> {
     let client = reqwest::Client::new();
+    let system = format!("{SYSTEM_PROMPT}{memory_block}");
 
     let body = AnthropicRequest {
         model: MODEL_ID,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_PROMPT,
+        system: &system,
         messages: history,
         tools,
     };
@@ -445,6 +469,33 @@ pub async fn send_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::MemoryFact;
+
+    fn fact(category: &str, key: &str, value: &str) -> MemoryFact {
+        MemoryFact {
+            id: "id".to_string(),
+            category: category.to_string(),
+            key: key.to_string(),
+            value: value.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn no_facts_produces_no_memory_block() {
+        assert_eq!(memory_prompt_block(&[]), "");
+    }
+
+    #[test]
+    fn facts_render_as_a_labeled_list() {
+        let block = memory_prompt_block(&[
+            fact("person", "اسم ابن منى", "أحمد"),
+            fact("routine", "الاجتماع الأسبوعي", "الأحد الساعة 9"),
+        ]);
+        assert!(block.contains("[person] اسم ابن منى: أحمد"));
+        assert!(block.contains("[routine] الاجتماع الأسبوعي: الأحد الساعة 9"));
+    }
 
     fn parse(json: &str) -> AnthropicResponse {
         serde_json::from_str(json).expect("sample JSON should match AnthropicResponse")

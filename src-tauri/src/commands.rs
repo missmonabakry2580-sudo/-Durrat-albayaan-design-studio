@@ -8,7 +8,7 @@ use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::{HandsFreeSession, VoiceSession};
-use crate::{agent, audit, brief, browser, elevenlabs, files, followups, notify, tasks, tools, voice};
+use crate::{agent, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks, tools, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 /// Optional — Amin's voice falls back to the free, local, on-device engine
@@ -365,14 +365,15 @@ pub async fn send_agent_message(
 
     let tool_defs = tools::tool_definitions();
 
-    let history = {
+    let (history, memory_block) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         let mut turns = conversation.0.lock().map_err(|e| e.to_string())?;
         push_turn(&conn, &mut turns, agent::ChatMessage::user_text(&message));
-        turns.clone()
+        let block = agent::memory_prompt_block(&memory::list(&conn, None).unwrap_or_default());
+        (turns.clone(), block)
     };
 
-    let response = match agent::send_message(&api_key, &history, &tool_defs).await {
+    let response = match agent::send_message(&api_key, &history, &tool_defs, &memory_block).await {
         Ok(r) => r,
         Err(e) => {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -612,12 +613,14 @@ async fn narrate(
     tool_defs: &[serde_json::Value],
     fallback_text: String,
 ) -> Result<AgentReply, String> {
-    let history = {
+    let (history, memory_block) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
         let turns = conversation.0.lock().map_err(|e| e.to_string())?;
-        turns.clone()
+        let block = agent::memory_prompt_block(&memory::list(&conn, None).unwrap_or_default());
+        (turns.clone(), block)
     };
 
-    let response = match agent::send_message(api_key, &history, tool_defs).await {
+    let response = match agent::send_message(api_key, &history, tool_defs, &memory_block).await {
         Ok(r) => r,
         Err(_) => return Ok(AgentReply::new(fallback_text)),
     };

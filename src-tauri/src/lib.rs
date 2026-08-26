@@ -8,6 +8,7 @@ mod db;
 mod elevenlabs;
 mod files;
 mod followups;
+mod memory;
 mod notify;
 mod policy;
 mod secrets;
