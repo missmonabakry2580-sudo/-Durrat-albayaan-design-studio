@@ -61,6 +61,7 @@ type SpeakFn = unsafe extern "C" fn(*const c_char, VoiceCallback) -> c_int;
 type StopSpeakingFn = unsafe extern "C" fn();
 type StartHandsFreeFn = unsafe extern "C" fn(*const c_char, *const c_char, VoiceCallback) -> c_int;
 type StopHandsFreeFn = unsafe extern "C" fn();
+type SetHandsFreeMutedFn = unsafe extern "C" fn(c_int);
 
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
@@ -119,6 +120,18 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         // now rather than holding onto it.
         unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned()
     };
+    // Amin's own voice must never be transcribed back at itself while
+    // hands-free mode is running — see the SELF-HEARING note in
+    // AminVoice.swift. This covers the on-device TTS path; the ElevenLabs
+    // path (commands::speak_text) doesn't go through this callback at all
+    // (playback happens over `afplay`, not the native engine), so it calls
+    // `set_hands_free_muted` directly instead.
+    if kind == 3 {
+        set_hands_free_muted(true);
+    } else if kind == 4 {
+        set_hands_free_muted(false);
+    }
+
     let _ = match kind {
         0 => app.emit("voice://partial", text),
         1 => app.emit("voice://final", text),
@@ -246,6 +259,23 @@ pub fn start_hands_free(
 
     *active = true;
     Ok(())
+}
+
+/// Mutes/unmutes hands-free mode's own recognition results without
+/// stopping anything — called around every `speak_text` (both the
+/// on-device path, via `on_voice_event`'s kind 3/4, and the ElevenLabs
+/// path directly) so Amin's own voice is never transcribed back at
+/// itself. A silent no-op if hands-free mode isn't running or the engine
+/// was never loaded — this is a best-effort safety measure, not something
+/// that should ever fail loudly and interrupt actually speaking the reply.
+pub fn set_hands_free_muted(muted: bool) {
+    if let Some(lib) = LIBRARY.get() {
+        unsafe {
+            if let Ok(f) = lib.get::<SetHandsFreeMutedFn>(b"amin_voice_set_hands_free_muted\0") {
+                f(if muted { 1 } else { 0 });
+            }
+        }
+    }
 }
 
 /// Stops hands-free mode entirely (not just the current command session —

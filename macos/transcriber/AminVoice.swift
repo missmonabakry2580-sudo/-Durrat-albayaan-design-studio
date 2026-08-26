@@ -31,6 +31,7 @@
 //   amin_voice_stop_speaking()
 //   amin_voice_start_hands_free(wakePhrase, closePhrase, callback) -> Int32
 //   amin_voice_stop_hands_free()
+//   amin_voice_set_hands_free_muted(muted: Int32)
 // `callback` is `@convention(c) (Int32, UnsafePointer<CChar>?) -> Void`:
 // kind 0 = partial transcript, 1 = final transcript, 2 = error (recognition
 // side); kind 3 = speech started, 4 = speech finished (speak side, text is
@@ -62,6 +63,19 @@
 // secret, not an identity check — anyone in earshot who knows it can open
 // a session. Voice-print/speaker verification (the actual fix for that) is
 // a separate, not-yet-built phase — see docs/SECURITY.md.
+//
+// SELF-HEARING: the microphone stays live while Amin talks, so without
+// muting it would happily transcribe its own TTS voice coming out of the
+// speakers — best case a wasted round trip, worst case Amin accidentally
+// hearing its own reply contain the close phrase and closing the session
+// on itself. `amin_voice_set_hands_free_muted` is voice.rs's fix: it's
+// called around every speak_text call (both the on-device and ElevenLabs
+// paths) so recognition results are discarded, not acted on, for as long
+// as Amin is actually speaking. This is a mute, not a pause — the audio
+// engine and recognition task keep running underneath so nothing needs
+// restarting when unmuted. It does not solve acoustic echo generally (a
+// loud enough reply could still register as background noise); it solves
+// the specific case that matters here, Amin reacting to its own words.
 
 import Foundation
 import Speech
@@ -122,6 +136,14 @@ public func amin_voice_start_hands_free(
 public func amin_voice_stop_hands_free() {
     activeHandsFree?.stop()
     activeHandsFree = nil
+}
+
+/// See the SELF-HEARING note above — called by voice.rs around every
+/// speak_text call so Amin doesn't transcribe its own voice. A no-op if
+/// hands-free mode isn't running.
+@_cdecl("amin_voice_set_hands_free_muted")
+public func amin_voice_set_hands_free_muted(_ muted: Int32) {
+    activeHandsFree?.setMuted(muted != 0)
 }
 
 /// Text-to-speech for Amin's own replies (Mona asked for spoken output as
@@ -358,8 +380,16 @@ private final class HandsFreeListener {
     private var currentTask: SFSpeechRecognitionTask?
     private var mode: Mode = .passive
     private var stopped = false
+    /// See the SELF-HEARING note in this file's header — set true for as
+    /// long as Amin's own voice is playing, so its own words never get
+    /// treated as a wake phrase, a command, or the close phrase.
+    private var muted = false
 
     private enum Mode: Equatable { case passive, active }
+
+    func setMuted(_ value: Bool) {
+        muted = value
+    }
 
     init(wakePhrase: String, closePhrase: String, callback: @escaping AminVoiceCallback) {
         self.wakePhrase = wakePhrase
@@ -481,6 +511,10 @@ private final class HandsFreeListener {
         emit(5)
         runRecognition(recognizer: recognizer, onDeviceOnly: true) { [weak self] text, isFinal in
             guard let self = self else { return }
+            if self.muted {
+                if isFinal { self.armPassive(recognizer: recognizer) }
+                return
+            }
             if self.heard(self.wakePhrase, in: text) {
                 self.openActiveSession(recognizer: recognizer)
             } else if isFinal {
@@ -511,6 +545,10 @@ private final class HandsFreeListener {
         // phase above hard-requires on-device.
         runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
             guard let self = self else { return }
+            if self.muted {
+                if isFinal { self.listenForCommand(recognizer: recognizer) }
+                return
+            }
             if self.heard(self.closePhrase, in: text) {
                 let remainder = self.textBeforePhrase(self.closePhrase, in: text)
                 if !remainder.isEmpty {
