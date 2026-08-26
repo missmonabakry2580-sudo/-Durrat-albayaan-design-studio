@@ -53,6 +53,51 @@ jobs:
             printf '' > "$DEST"
           fi
 
+      # Notarization scans every Mach-O binary inside the .app, not just the
+      # main executable — libaminvoice.dylib is bundled as a plain resource
+      # (tauri.conf.json's bundle.resources), which tauri-bundler's signing
+      # step does not sign on its own. The first real signed build attempt
+      # failed notarization for exactly this ("The binary is not signed" /
+      # "not signed with a valid Developer ID certificate" / "signature
+      # does not include a secure timestamp" on libaminvoice.dylib). Signs
+      # it here, in its own short-lived keychain that's deleted immediately
+      # after, before tauri-action creates its own keychain for the main
+      # app — keeping the two apart avoids codesign seeing the same
+      # identity in two keychains at once ("ambiguous identity"). A no-op
+      # when the Apple secrets aren't set yet, matching every other signing
+      # step here.
+      - name: Sign the voice engine dylib
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          DYLIB="$GITHUB_WORKSPACE/src-tauri/libaminvoice.dylib"
+          if [ -z "$APPLE_CERTIFICATE" ] || [ ! -s "$DYLIB" ]; then
+            echo "No Apple certificate configured yet (or no real dylib was built) — leaving it unsigned."
+            exit 0
+          fi
+          KEYCHAIN="voice-signing-temp.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/apple_certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          ORIGINAL_KEYCHAINS="$(security list-keychains -d user | tr -d '\"')"
+          security list-keychains -d user -s "$KEYCHAIN" $ORIGINAL_KEYCHAINS
+
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DYLIB"
+          codesign -dv "$DYLIB"
+
+          security list-keychains -d user -s $ORIGINAL_KEYCHAINS
+          security delete-keychain "$KEYCHAIN"
+          rm -f "$CERT_PATH"
+
       # Code signing + notarization: only actually happens once Mona adds
       # the six repo secrets below (Settings → Secrets and variables →
       # Actions) from her own Apple Developer Program account — see

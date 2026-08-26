@@ -275,6 +275,21 @@ notarized `.dmg`: no more Gatekeeper "unidentified developer" warning,
 and — the actual point — one stable identity, so a permission grant
 finally sticks for good instead of splitting or resetting.
 
+**First real attempt with the secrets in place failed notarization** —
+worth recording since it's a genuine gotcha, not a config mistake: Apple
+notarizes by scanning *every* Mach-O binary inside the `.app`, not just
+the main executable. `libaminvoice.dylib` is bundled via plain
+`bundle.resources` in `tauri.conf.json`, which tauri-bundler copies as-is
+without signing — so it reached Apple unsigned even though the app
+around it was signed correctly. The workflow now has its own "Sign the
+voice engine dylib" step, right after the dylib is built and before
+tauri-action runs, that imports the certificate into a short-lived
+keychain, signs the dylib directly with `codesign --options runtime
+--timestamp`, then deletes that keychain immediately — kept deliberately
+separate from tauri-action's own keychain for the main app so codesign
+never sees the same identity registered twice at once ("ambiguous
+identity"). Unverified until the next real signed run confirms it.
+
 ## The command surface is the whole contract
 
 The frontend never gets raw SQL access and never talks to the network
