@@ -81,8 +81,15 @@ pub fn list<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<WorkspaceEntry>, Strin
     let root = workspace_root(app)?;
     let mut entries = Vec::new();
     for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+        // A single unreadable entry must not take down the whole listing —
+        // a real home directory has all sorts of special files (dangling
+        // symlinks, permission-restricted items, sockets) that a broad
+        // Documents-folder scope never had to deal with. Skip what can't
+        // be read rather than erroring the entire call.
+        let Ok(entry) = entry else { continue };
+        let Ok(metadata) = entry.metadata().or_else(|_| entry.path().symlink_metadata()) else {
+            continue;
+        };
         entries.push(WorkspaceEntry {
             name: entry.file_name().to_string_lossy().to_string(),
             is_dir: metadata.is_dir(),

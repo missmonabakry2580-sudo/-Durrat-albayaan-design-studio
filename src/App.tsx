@@ -84,29 +84,34 @@ function App() {
 
   async function refresh() {
     if (!inTauri) return;
-    try {
-      const [i, hasKey, level, killed, log, taskList, files, dueList] = await Promise.all([
-        appInfo(),
-        hasApiKey(),
-        getAutonomyLevel(),
-        isHalted(),
-        listAuditLog(10),
-        listTasks(),
-        listWorkspaceFiles(),
-        listDueFollowUps(),
-      ]);
-      setInfo(i);
-      setKeySaved(hasKey);
-      setAutonomy(level);
-      setHalted(killed);
-      setAuditLog(log);
-      setTasks(taskList);
-      setWorkspaceFiles(files);
-      setDueFollowUps(dueList);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
+    // One failing call (e.g. listing a home directory that now contains a
+    // broken symlink or a permission-restricted item) must never hide the
+    // others — a single Promise.all would let one rejection blank out
+    // everything, including the API key badge that has nothing to do with
+    // it. Each piece of state updates independently instead.
+    const [i, hasKey, level, killed, log, taskList, files, dueList] = await Promise.allSettled([
+      appInfo(),
+      hasApiKey(),
+      getAutonomyLevel(),
+      isHalted(),
+      listAuditLog(10),
+      listTasks(),
+      listWorkspaceFiles(),
+      listDueFollowUps(),
+    ]);
+    if (i.status === "fulfilled") setInfo(i.value);
+    if (hasKey.status === "fulfilled") setKeySaved(hasKey.value);
+    if (level.status === "fulfilled") setAutonomy(level.value);
+    if (killed.status === "fulfilled") setHalted(killed.value);
+    if (log.status === "fulfilled") setAuditLog(log.value);
+    if (taskList.status === "fulfilled") setTasks(taskList.value);
+    if (files.status === "fulfilled") setWorkspaceFiles(files.value);
+    if (dueList.status === "fulfilled") setDueFollowUps(dueList.value);
+
+    const firstFailure = [i, hasKey, level, killed, log, taskList, files, dueList].find(
+      (r) => r.status === "rejected",
+    );
+    setError(firstFailure ? String((firstFailure as PromiseRejectedResult).reason) : null);
   }
 
   useEffect(() => {
