@@ -20,14 +20,14 @@
 
 .amin-presence-glow {
   position: absolute;
-  inset: -45%;
+  inset: -10%;
   background: radial-gradient(
-    circle at 38% 42%,
-    color-mix(in srgb, var(--presence-hue) 65%, transparent),
-    color-mix(in srgb, var(--presence-hue) 25%, transparent) 45%,
+    ellipse 60% 55% at 38% 42%,
+    color-mix(in srgb, var(--presence-hue) 55%, transparent),
+    color-mix(in srgb, var(--presence-hue) 20%, transparent) 45%,
     transparent 72%
   );
-  filter: blur(50px);
+  filter: blur(70px);
   animation: amin-presence-glow-breathe 4.2s var(--ease-standard) infinite;
 }
 
@@ -47,7 +47,8 @@
   position: relative;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center 42%;
   /* The artwork is glowing detail on a near-black field. Screen-blending
      it onto the app's own navy/blue background — instead of laying it
      down as an opaque rectangle — makes that black dissolve into
@@ -90,7 +91,7 @@
 
 .amin-presence-wave {
   position: absolute;
-  bottom: 4%;
+  bottom: 130px;
   display: flex;
   align-items: center;
   justify-content: center;

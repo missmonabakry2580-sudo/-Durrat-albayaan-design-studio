@@ -389,13 +389,12 @@ function App() {
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
       <main className="amin-world">
+        <div className="amin-world-presence">
+          <AminPresence state={aminState} />
+        </div>
         <div className="amin-world-ambient" aria-hidden="true" />
 
         <div className="amin-world-stage">
-          <div className="amin-world-presence">
-            <AminPresence state={aminState} />
-          </div>
-
           {!inTauri && (
             <p className="banner banner-warning">
               شغّال خارج بيئة Tauri (متصفح عادي) — أوامر الخلفية معطّلة. استخدمي

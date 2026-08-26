@@ -14,16 +14,23 @@
   background: var(--bg-app);
 }
 
+.amin-world-presence {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
 .amin-world-ambient {
   position: absolute;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
   background: radial-gradient(
-      ellipse 70% 60% at 50% 26%,
-      color-mix(in srgb, var(--accent-blue) 22%, transparent),
-      transparent 72%
+      ellipse 90% 70% at 50% 30%,
+      color-mix(in srgb, var(--accent-blue) 12%, transparent),
+      transparent 75%
     ),
-    radial-gradient(ellipse 80% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 6%, transparent), transparent 70%);
+    radial-gradient(ellipse 90% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 5%, transparent), transparent 70%);
 }
 
 .amin-world-stage {
@@ -38,11 +45,6 @@
   padding: var(--space-8) var(--space-6) calc(var(--space-12) + 64px);
   overflow-y: auto;
   text-align: center;
-}
-
-.amin-world-presence {
-  width: clamp(240px, 34vw, 420px);
-  aspect-ratio: 1 / 1;
 }
 
 .amin-world-chips {
