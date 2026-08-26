@@ -519,9 +519,8 @@ function App() {
         <section className="panel">
           <h2>متابعات مستحقة — Follow-ups Due</h2>
           <p className="text-muted">
-            Phase 4 — local only for now: "sent" means Amin surfaced it here, not that an email or
-            notification went out (there's no delivery channel wired up yet). Click ⏰ next to a
-            task above to try it.
+            Phase 4 — no email yet (that needs Gmail's OAuth setup), but escalating below sends a
+            real native OS notification. Click ⏰ next to a task above to try it.
           </p>
           {dueFollowUps.length === 0 ? (
             <p className="text-muted">Nothing due right now.</p>

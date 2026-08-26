@@ -83,7 +83,9 @@ src-tauri/                 Rust backend
   src/browser.rs            opens a URL in Amin's own isolated browser
                              window
   src/followups.rs          local Follow-up Engine (creation, escalation,
-                             due-listing — no delivery channel yet)
+                             due-listing)
+  src/notify.rs             native OS notifications — the Follow-up
+                             Engine's one real delivery channel so far
   src/brief.rs              local Delta Brief (tasks/follow-ups/audit
                              activity — no Gmail/Calendar data yet)
   src/commands.rs           every #[tauri::command] the frontend can call
@@ -367,14 +369,20 @@ handled. 6 unit tests cover creation against a missing task, a malformed
 could never compare correctly), the due-filtering logic, and the
 escalation cap.
 
-**What "sent" does and doesn't mean here:** there is no delivery channel
-wired up yet — no email (that needs Phase 3's Gmail connector, which
-needs Mona's own Google OAuth credentials to exist at all), no OS
-notification. "Sent" in this module means *Amin surfaced it in the app's
-own UI* (the "Follow-ups Due" panel). Wiring this to a real channel that
-doesn't exist yet would be a stub pretending to be a finished feature —
-better to be honest that the *escalation logic* is real and tested, and
-*delivery* is real future work once there's a channel to deliver through.
+**Update, same night:** `src-tauri/src/notify.rs` wires escalation to a
+real native OS notification (`tauri-plugin-notification`) — the one
+delivery channel available without any external account. `create_follow_up`
+fires one immediately if the due time has already passed (the ⏰ "remind
+me now" demo path); `escalate_follow_up` fires one on every stage bump,
+with a stage-appropriate title. `notify::send` never panics on failure —
+a missing permission or an environment with no notification daemon (this
+development sandbox has neither a working D-Bus session nor a real Mac)
+degrades to "nothing shown," never a crash; this specific behavior is
+unverified on a real Mac, same caveat as the voice pipeline. Email is
+still genuinely absent — that needs Phase 3's Gmail connector, which
+needs Mona's own Google OAuth credentials to exist at all. "Sent" in the
+`follow_ups` table's status column means "Amin surfaced it" (in the UI
+and, now, as a notification) — not "emailed."
 
 ## Roadmap (for orientation — each phase gets its own design notes)
 

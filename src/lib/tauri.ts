@@ -90,9 +90,9 @@ export interface FollowUp {
 }
 
 /**
- * Follow-up Engine — local only for now. "sent" means Amin surfaced it in
- * the app, not that an email or notification actually went out (there's
- * no delivery channel wired up yet — see docs/ARCHITECTURE.md).
+ * Follow-up Engine. Escalating (see escalateFollowUp) sends a real native
+ * OS notification (src-tauri/src/notify.rs) — that's the one delivery
+ * channel wired up so far. No email yet; that needs Gmail's OAuth setup.
  */
 export const createFollowUp = (taskId: string, dueAt: string) =>
   invoke<FollowUp>("create_follow_up", { taskId, dueAt });

@@ -7,7 +7,7 @@ use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, brief, browser, files, followups, secrets, tasks, voice};
+use crate::{agent, audit, brief, browser, files, followups, notify, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -399,10 +399,21 @@ pub fn open_browser_url(app: AppHandle, url: String, db: State<Db>) -> Result<()
     result
 }
 
+fn task_title(conn: &rusqlite::Connection, task_id: &str) -> String {
+    conn.query_row(
+        "SELECT title FROM tasks WHERE id = ?1",
+        rusqlite::params![task_id],
+        |row| row.get(0),
+    )
+    .unwrap_or_else(|_| task_id.to_string())
+}
+
 /// Follow-up Engine (local only for now — see followups.rs's module doc
-/// for why "sent" doesn't mean an email went out yet).
+/// for why "sent" doesn't mean an email went out yet — except for the one
+/// real local channel, a native OS notification, which this and
+/// escalate_follow_up below both use).
 #[tauri::command]
-pub fn create_follow_up(task_id: String, due_at: String, db: State<Db>) -> Result<FollowUp, String> {
+pub fn create_follow_up(app: AppHandle, task_id: String, due_at: String, db: State<Db>) -> Result<FollowUp, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let follow_up = followups::create(&conn, &task_id, &due_at)?;
     let _ = audit::record(
@@ -414,6 +425,16 @@ pub fn create_follow_up(task_id: String, due_at: String, db: State<Db>) -> Resul
         Some(&format!("task {task_id} due {due_at}")),
         None,
     );
+    // Parsed comparison, not a raw string one — chrono's own to_rfc3339()
+    // uses a "+00:00" suffix while due_at may arrive as "...Z" (e.g. from
+    // JS's Date.toISOString()); those represent the same instants but
+    // don't compare correctly as strings.
+    let already_due = chrono::DateTime::parse_from_rfc3339(&follow_up.due_at)
+        .map(|due| due <= chrono::Utc::now())
+        .unwrap_or(false);
+    if already_due {
+        notify::send(&app, "أمين — متابعة", &task_title(&conn, &task_id));
+    }
     Ok(follow_up)
 }
 
@@ -430,7 +451,7 @@ pub fn list_due_follow_ups(db: State<Db>) -> Result<Vec<FollowUp>, String> {
 }
 
 #[tauri::command]
-pub fn escalate_follow_up(id: String, db: State<Db>) -> Result<FollowUp, String> {
+pub fn escalate_follow_up(app: AppHandle, id: String, db: State<Db>) -> Result<FollowUp, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let follow_up = followups::escalate(&conn, &id)?;
     let _ = audit::record(
@@ -442,6 +463,13 @@ pub fn escalate_follow_up(id: String, db: State<Db>) -> Result<FollowUp, String>
         Some(&format!("{id} -> {}", follow_up.escalation_stage)),
         None,
     );
+    let title = task_title(&conn, &follow_up.task_id);
+    let stage_label = match follow_up.escalation_stage.as_str() {
+        "firm" => "تذكير",
+        "escalate_to_user" => "محتاجة انتباهك",
+        _ => "متابعة",
+    };
+    notify::send(&app, &format!("أمين — {stage_label}"), &title);
     Ok(follow_up)
 }
 
