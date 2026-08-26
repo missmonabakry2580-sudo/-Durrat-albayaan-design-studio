@@ -196,7 +196,37 @@ private final class Transcriber {
         }
     }
 
+    /// Microphone access (AVFoundation/AVCaptureDevice) is a *separate* TCC
+    /// permission from speech recognition (Speech framework) — Mona kept
+    /// hitting the mic prompt again on every press even after the speech-
+    /// recognition side was fixed to check its own status first, because
+    /// that fix never touched this one. `audioEngine.start()` triggers this
+    /// prompt implicitly the first time, with no way to check its status
+    /// first — checking AVCaptureDevice's status explicitly here, the same
+    /// pattern already used for speech recognition, is the fix.
     private func startEngine(recognizer: SFSpeechRecognizer) {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginRecognition(recognizer: recognizer)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                if granted {
+                    self?.beginRecognition(recognizer: recognizer)
+                } else {
+                    self?.emit(2, "microphone access was not granted")
+                    self?.finish()
+                }
+            }
+        case .denied, .restricted:
+            emit(2, "microphone access was not granted")
+            finish()
+        @unknown default:
+            emit(2, "microphone access was not granted")
+            finish()
+        }
+    }
+
+    private func beginRecognition(recognizer: SFSpeechRecognizer) {
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         // Prefer on-device recognition when the OS supports it for this
