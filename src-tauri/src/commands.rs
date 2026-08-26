@@ -1000,10 +1000,18 @@ pub fn set_task_status(id: String, status: String, db: State<Db>) -> Result<(), 
     Ok(())
 }
 
-/// File access is confined to one dedicated folder (`~/Documents/Amin`) —
-/// see files.rs for the containment check every one of these goes through.
-/// Listing/reading is Auto; writing is TrustedDelegation; deleting matches
-/// policy::classify's "delete" keyword and comes back ConfirmHighRisk.
+/// File access spans Mona's whole home directory (broadened from one
+/// dedicated folder at her explicit request — see files.rs's doc comment
+/// for the containment check every one of these still goes through). These
+/// four Tauri commands are the direct, Mona-initiated path from the Notes
+/// panel's own UI (she typed the content and clicked Save herself, which is
+/// its own confirmation) — the risk tiers recorded here are audit-log
+/// labels, not a gate. When Claude proposes the same operation through the
+/// agent tool-use path instead, it goes through `tools::execute`, and
+/// `tools::risk_for` — not this file — is what actually withholds it behind
+/// Mona's confirmation: every file tool there is ConfirmHighRisk, including
+/// a plain read or listing, precisely because that broadened scope now
+/// reaches anything on her machine.
 #[tauri::command]
 pub fn list_workspace_files(app: AppHandle) -> Result<Vec<WorkspaceEntry>, String> {
     files::list(&app)
