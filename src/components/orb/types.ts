@@ -16,13 +16,13 @@ export type OrbState =
   | "waiting";
 
 export const ORB_STATE_LABELS: Record<OrbState, string> = {
-  idle: "Idle",
-  listening: "Listening",
-  thinking: "Thinking",
-  planning: "Planning",
-  executing: "Executing",
-  speaking: "Speaking",
-  success: "Success",
-  warning: "Warning",
-  waiting: "Waiting",
+  idle: "خامل",
+  listening: "بيسمع",
+  thinking: "بيفكر",
+  planning: "بيخطط",
+  executing: "بينفذ",
+  speaking: "بيتكلم",
+  success: "تم بنجاح",
+  warning: "تنبيه",
+  waiting: "بينتظر",
 };

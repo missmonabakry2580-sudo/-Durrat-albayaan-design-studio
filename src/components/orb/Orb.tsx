@@ -1,4 +1,4 @@
-import type { OrbState } from "./types";
+import { ORB_STATE_LABELS, type OrbState } from "./types";
 import "./Orb.css";
 
 interface OrbProps {
@@ -40,7 +40,7 @@ const WAVEFORM_BARS = Array.from({ length: 28 }, (_, i) => i);
  */
 export function Orb({ state, label }: OrbProps) {
   return (
-    <div className="orb-hud" data-state={state} role="img" aria-label={label ?? `Amin is ${state}`}>
+    <div className="orb-hud" data-state={state} role="img" aria-label={label ?? `أمين ${ORB_STATE_LABELS[state]}`}>
       <div className="orb-hud-stage">
         <svg
           className="orb-hud-svg"

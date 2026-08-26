@@ -45,6 +45,49 @@ import "./App.css";
 const ORB_STATES = Object.keys(ORB_STATE_LABELS) as OrbState[];
 const AUTONOMY_LEVELS: AutonomyLevel[] = ["observe", "assist", "delegate", "autopilot"];
 
+// Arabic display labels for values that travel to/from the Rust backend as
+// fixed English identifiers (risk_tier, decision, autonomy level, task
+// source, escalation stage) — the wire values never change, only what's
+// shown on screen.
+const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
+  observe: "مراقبة فقط",
+  assist: "مساعدة",
+  delegate: "تفويض",
+  autopilot: "تلقائي بالكامل",
+};
+
+const RISK_TIER_LABELS: Record<string, string> = {
+  auto: "تلقائي",
+  trusted_delegation: "تفويض موثوق",
+  confirm_high_risk: "يحتاج تأكيدك",
+  excluded: "ممنوع",
+};
+
+const DECISION_LABELS: Record<string, string> = {
+  executed: "تم التنفيذ",
+  confirmed: "تم التأكيد",
+  declined: "تم الرفض",
+  blocked: "محظور",
+  proposed: "مقترح — بانتظار موافقتك",
+};
+
+const TASK_SOURCE_LABELS: Record<string, string> = {
+  manual: "يدوي",
+  quick_capture: "تدوين سريع",
+  amin: "من أمين",
+  amin_quick_capture: "تدوين سريع من أمين",
+};
+
+const ESCALATION_STAGE_LABELS: Record<string, string> = {
+  friendly: "ودّي",
+  firm: "حازم",
+  escalate_to_user: "محتاجة انتباهك",
+};
+
+function arabicLabel(map: Record<string, string>, value: string): string {
+  return map[value] ?? value;
+}
+
 interface AgentTurn {
   role: "user" | "amin";
   text: string;
@@ -330,25 +373,23 @@ function App() {
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
       <main className="app-shell">
         <header className="app-header">
-          <h1>أمين — Amin</h1>
+          <h1>أمين</h1>
           <p className="app-subtitle">
-            {info
-              ? `${info.name} v${info.version}`
-              : "Phase 0 — Architecture, Security & Design System"}
+            {info ? `الإصدار ${info.version}` : "المرحلة صفر — البنية والأمان ونظام التصميم"}
           </p>
         </header>
 
         {!inTauri && (
           <p className="banner banner-warning">
-            Running outside the Tauri shell (plain browser) — backend commands are disabled. Use
-            <code> npm run tauri dev</code> to exercise the Rust side.
+            شغّال خارج بيئة Tauri (متصفح عادي) — أوامر الخلفية معطّلة. استخدمي
+            <code> npm run tauri dev</code> لتشغيل الجزء الخاص بـ Rust.
           </p>
         )}
         {error && <p className="banner banner-danger">{error}</p>}
 
         <section className="panel orb-panel">
           <Orb state={orbState} />
-          <div className="orb-switcher" role="group" aria-label="Orb state preview">
+          <div className="orb-switcher" role="group" aria-label="معاينة حالات أمين">
             {ORB_STATES.map((s) => (
               <button
                 key={s}
@@ -363,25 +404,25 @@ function App() {
 
         <section className="panel">
           <div className="panel-header-row">
-            <h2>Delta Brief</h2>
+            <h2>ملخص التغييرات</h2>
             <button className="chip" onClick={handleGetBrief} disabled={!inTauri}>
-              Refresh
+              تحديث
             </button>
           </div>
           <p className="text-muted">
-            Phase 3 (local slice) — "what changed" using only Amin's own local data. Real
-            Gmail/Calendar data joins this once those connectors exist.
+            ملخص محلي بس (لسه من غير جيميل/كالندر) — "إيه اللي اتغير" بالاعتماد على بيانات أمين
+            المحلية فقط. البيانات الحقيقية من جيميل والكالندر هتنضم لما الربط يتم.
           </p>
           {deltaBrief && (
             <>
               <div className="brief-stats">
-                <span className="badge">{deltaBrief.open_tasks} open tasks</span>
-                <span className="badge">+{deltaBrief.tasks_created_last_24h} created (24h)</span>
-                <span className="badge">✓{deltaBrief.tasks_completed_last_24h} completed (24h)</span>
-                <span className="badge">{deltaBrief.due_follow_ups} follow-ups due</span>
+                <span className="badge">{deltaBrief.open_tasks} مهمة مفتوحة</span>
+                <span className="badge">+{deltaBrief.tasks_created_last_24h} اتضافت (24 ساعة)</span>
+                <span className="badge">✓{deltaBrief.tasks_completed_last_24h} خلصت (24 ساعة)</span>
+                <span className="badge">{deltaBrief.due_follow_ups} متابعة مستحقة</span>
               </div>
               <button className="chip" onClick={handleNarrateBrief} disabled={!inTauri || briefBusy}>
-                {briefBusy ? "..." : "🎙️ Ask Amin to narrate this"}
+                {briefBusy ? "..." : "🎙️ اطلبي من أمين يحكيلك الملخص"}
               </button>
             </>
           )}
@@ -389,18 +430,18 @@ function App() {
 
         <section className="panel">
           <div className="panel-header-row">
-            <h2>كلمي أمين — Talk to Amin</h2>
+            <h2>كلمي أمين</h2>
             <button
               className="chip"
               onClick={handleNewConversation}
               disabled={!inTauri || agentLog.length === 0}
             >
-              New conversation
+              محادثة جديدة
             </button>
           </div>
           <p className="text-muted">
-            Phase 1 Agent Core — conversation only, no tools yet. Amin remembers this session
-            until you start a new conversation or quit the app — nothing is saved to disk yet.
+            محادثة نصية وصوتية مع أمين — بيفتكر كلامكم لحد ما تبدئي محادثة جديدة أو تقفلي
+            التطبيق؛ لسه مفيش حفظ دائم على القرص.
           </p>
           {voiceError && <p className="banner banner-warning">🎤 {voiceError}</p>}
           {agentLog.length > 0 && (
@@ -427,7 +468,7 @@ function App() {
               onMouseUp={handleMicUp}
               onMouseLeave={handleMicUp}
               disabled={!inTauri || agentBusy}
-              title="Push to talk (hold) — or hold alt+A anywhere"
+              title="اضغطي مع الاستمرار للتحدث — أو استخدمي alt+A من أي مكان"
             >
               🎤
             </button>
@@ -439,38 +480,38 @@ function App() {
               disabled={!inTauri || agentBusy}
             />
             <button type="submit" disabled={!inTauri || agentBusy || !agentInput.trim()}>
-              {agentBusy ? "..." : "Send"}
+              {agentBusy ? "..." : "إرسال"}
             </button>
             <button
               type="button"
               className="chip"
               onClick={handleQuickCapture}
               disabled={!inTauri || agentBusy || !agentInput.trim()}
-              title="Save this text as a task instead of sending it to Amin"
+              title="احفظي النص ده كمهمة بدل ما تبعتيه لأمين"
             >
-              📌 Capture
+              📌 تدوين
             </button>
           </form>
         </section>
 
         <section className="panel">
           <div className="panel-header-row">
-            <h2>مهامي — Tasks</h2>
+            <h2>مهامي</h2>
             <label className="show-done-toggle">
               <input
                 type="checkbox"
                 checked={showDoneTasks}
                 onChange={(e) => setShowDoneTasks(e.currentTarget.checked)}
               />
-              Show done
+              عرض المنجزة
             </label>
           </div>
           <p className="text-muted">
-            Phase 2 — local task list and Quick Capture. Use "📌 Capture" above to turn whatever's
-            in the message box (typed or spoken) into a task instead of sending it to Amin.
+            قائمة المهام والتدوين السريع. استخدمي "📌 تدوين" فوق عشان تحوّلي أي حاجة في خانة
+            الرسالة (مكتوبة أو متكلمة) لمهمة بدل ما تتبعت لأمين.
           </p>
           {visibleTasks.length === 0 ? (
-            <p className="text-muted">No tasks yet.</p>
+            <p className="text-muted">لسه مفيش مهام.</p>
           ) : (
             <ul className="task-list">
               {visibleTasks.map((task) => (
@@ -479,20 +520,22 @@ function App() {
                     className={task.status === "done" ? "task-check task-check-done" : "task-check"}
                     onClick={() => handleToggleTask(task)}
                     disabled={!inTauri}
-                    aria-label={task.status === "done" ? "Mark as open" : "Mark as done"}
+                    aria-label={task.status === "done" ? "إرجاعها مفتوحة" : "تحديدها كمنجزة"}
                   >
                     {task.status === "done" ? "✓" : ""}
                   </button>
                   <span className={task.status === "done" ? "task-title task-title-done" : "task-title"}>
                     {task.title}
                   </span>
-                  {task.source && <span className="badge">{task.source}</span>}
+                  {task.source && (
+                    <span className="badge">{arabicLabel(TASK_SOURCE_LABELS, task.source)}</span>
+                  )}
                   {task.status !== "done" && (
                     <button
                       className="chip"
                       onClick={() => handleRemindMe(task)}
                       disabled={!inTauri}
-                      title="Create a follow-up due right now (demo of the Follow-up Engine)"
+                      title="جدولة متابعة مستحقة الآن (تجربة لمحرك المتابعات)"
                     >
                       ⏰
                     </button>
@@ -516,19 +559,19 @@ function App() {
               disabled={!inTauri}
             />
             <button type="submit" disabled={!inTauri || !taskInput.trim()}>
-              Add
+              إضافة
             </button>
           </form>
         </section>
 
         <section className="panel">
-          <h2>متابعات مستحقة — Follow-ups Due</h2>
+          <h2>متابعات مستحقة</h2>
           <p className="text-muted">
-            Phase 4 — no email yet (that needs Gmail's OAuth setup), but escalating below sends a
-            real native OS notification. Click ⏰ next to a task above to try it.
+            لسه مفيش إيميل (محتاج ربط جيميل)، لكن تصعيد المتابعة تحت بيبعت إشعار حقيقي من النظام.
+            دوسي ⏰ جنب أي مهمة فوق عشان تجربيها.
           </p>
           {dueFollowUps.length === 0 ? (
-            <p className="text-muted">Nothing due right now.</p>
+            <p className="text-muted">مفيش حاجة مستحقة دلوقتي.</p>
           ) : (
             <ul className="task-list">
               {dueFollowUps.map((f) => {
@@ -536,16 +579,16 @@ function App() {
                 return (
                   <li key={f.id} className="task-row">
                     <span className="task-title">{task?.title ?? f.task_id}</span>
-                    <span className="badge">{f.escalation_stage}</span>
+                    <span className="badge">{arabicLabel(ESCALATION_STAGE_LABELS, f.escalation_stage)}</span>
                     <button className="chip" onClick={() => handleEscalate(f)} disabled={!inTauri}>
-                      Escalate
+                      تصعيد
                     </button>
                     <button
                       className="chip"
                       onClick={() => handleResolveFollowUp(f)}
                       disabled={!inTauri}
                     >
-                      Resolve
+                      تمت المعالجة
                     </button>
                   </li>
                 );
@@ -555,14 +598,14 @@ function App() {
         </section>
 
         <section className="panel">
-          <h2>ملفات أمين — Workspace Files</h2>
+          <h2>ملفات أمين</h2>
           <p className="text-muted">
-            Phase 2 — confined to one dedicated folder (<code>~/Documents/Amin</code>), never any
-            other path on your Mac. See docs/SECURITY.md if you want the details.
+            الوصول محصور داخل مجلدك الشخصي فقط، ولا يقدر يخرج منه أبدًا. كل ملف — حتى مجرد عرضه —
+            بيستنى موافقتك الصريحة قبل ما ينفذ.
           </p>
           {fileError && <p className="banner banner-warning">📁 {fileError}</p>}
           {workspaceFiles.length === 0 ? (
-            <p className="text-muted">No files yet.</p>
+            <p className="text-muted">لسه مفيش ملفات.</p>
           ) : (
             <ul className="task-list">
               {workspaceFiles.map((f) => (
@@ -571,10 +614,10 @@ function App() {
                   {!f.is_dir && (
                     <>
                       <button className="chip" onClick={() => handleViewFile(f.name)}>
-                        View
+                        عرض
                       </button>
                       <button className="chip chip-danger" onClick={() => handleDeleteFile(f.name)}>
-                        Delete
+                        حذف
                       </button>
                     </>
                   )}
@@ -587,7 +630,7 @@ function App() {
               <div className="panel-header-row">
                 <strong>{filePreview.name}</strong>
                 <button className="chip" onClick={() => setFilePreview(null)}>
-                  Close
+                  إغلاق
                 </button>
               </div>
               <pre className="file-preview-content">{filePreview.content}</pre>
@@ -616,17 +659,16 @@ function App() {
               onClick={handleSaveNote}
               disabled={!inTauri || !noteFilename.trim() || !noteContent.trim()}
             >
-              Save file
+              حفظ الملف
             </button>
           </div>
         </section>
 
         <section className="panel">
-          <h2>متصفح أمين — Browser</h2>
+          <h2>متصفح أمين</h2>
           <p className="text-muted">
-            Phase 2 — opens a page in Amin's own isolated window (its own profile, never your
-            personal browser). Amin doesn't read or act on the page yet — that's further browser
-            control still to come.
+            بيفتح الصفحة في نافذة منعزلة خاصة بأمين (بروفايل خاص بيه، مش متصفحك الشخصي أبدًا).
+            أمين لسه ما بيقراش أو يتصرف في محتوى الصفحة — ده تطوير قادم منفصل.
           </p>
           {browserError && <p className="banner banner-warning">🌐 {browserError}</p>}
           <form
@@ -644,18 +686,18 @@ function App() {
               disabled={!inTauri}
             />
             <button type="submit" disabled={!inTauri || !browserUrl.trim()}>
-              Open
+              فتح
             </button>
           </form>
         </section>
 
         <section className="panel">
-          <h2>Security &amp; Autonomy</h2>
+          <h2>الأمان والاستقلالية</h2>
 
           <div className="field-row">
-            <span className="field-label">Anthropic API key</span>
+            <span className="field-label">مفتاح الاتصال بأنثروبيك</span>
             <span className={keySaved ? "badge badge-success" : "badge"}>
-              {keySaved ? "Configured (Keychain)" : "Not configured"}
+              {keySaved ? "متحط (في الـ Keychain)" : "مش متحط"}
             </span>
           </div>
           <div className="field-row">
@@ -667,15 +709,15 @@ function App() {
               disabled={!inTauri}
             />
             <button onClick={handleSaveKey} disabled={!inTauri || !keyInput.trim()}>
-              Save
+              حفظ
             </button>
             <button onClick={handleClearKey} disabled={!inTauri || !keySaved}>
-              Clear
+              مسح
             </button>
           </div>
 
           <div className="field-row">
-            <span className="field-label">Autonomy level</span>
+            <span className="field-label">مستوى الاستقلالية</span>
             <div className="segmented">
               {AUTONOMY_LEVELS.map((level) => (
                 <button
@@ -684,36 +726,36 @@ function App() {
                   onClick={() => handleAutonomyChange(level)}
                   disabled={!inTauri}
                 >
-                  {level}
+                  {AUTONOMY_LABELS[level]}
                 </button>
               ))}
             </div>
           </div>
 
           <div className="field-row">
-            <span className="field-label">Kill switch</span>
+            <span className="field-label">مفتاح الإيقاف الطارئ</span>
             <button
               className={halted ? "chip chip-danger chip-active" : "chip"}
               onClick={handleKillSwitch}
               disabled={!inTauri}
             >
-              {halted ? "HALTED — click to resume" : "Running — click to halt"}
+              {halted ? "متوقف — دوسي للاستئناف" : "شغّال — دوسي للإيقاف"}
             </button>
           </div>
         </section>
 
         <section className="panel">
-          <h2>Audit log (last 10)</h2>
+          <h2>سجل المراجعة (آخر ١٠)</h2>
           {auditLog.length === 0 ? (
-            <p className="text-muted">No events yet.</p>
+            <p className="text-muted">لسه مفيش أحداث.</p>
           ) : (
             <ul className="audit-list">
               {auditLog.map((entry) => (
                 <li key={entry.id}>
                   <span className="text-muted">{entry.ts}</span>
-                  <span className="badge">{entry.risk_tier}</span>
+                  <span className="badge">{arabicLabel(RISK_TIER_LABELS, entry.risk_tier)}</span>
                   <strong>{entry.action}</strong>
-                  <span className="text-muted">{entry.decision}</span>
+                  <span className="text-muted">{arabicLabel(DECISION_LABELS, entry.decision)}</span>
                 </li>
               ))}
             </ul>
@@ -721,10 +763,10 @@ function App() {
         </section>
 
         <section className="panel about-panel">
-          <h2>حول أمين — About Amin</h2>
+          <h2>حول أمين</h2>
           <p className="text-muted">
-            {info ? `${info.name} v${info.version}` : "Amin"} — Observe → Understand → Decide
-            within policy → Execute → Follow up → Report.
+            {info ? `أمين — الإصدار ${info.version}` : "أمين"} — يلاحظ ← يفهم ← يقرر ضمن السياسة ←
+            ينفذ ← يتابع ← يبلّغ.
           </p>
           <p className="creator-attribution">
             {CREATOR_ATTRIBUTION_AR}
