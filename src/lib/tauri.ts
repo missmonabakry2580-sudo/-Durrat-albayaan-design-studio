@@ -76,3 +76,21 @@ export const quickCapture = (text: string) => invoke<Task>("quick_capture", { te
 export const listTasks = (status?: TaskStatus) => invoke<Task[]>("list_tasks", { status });
 export const setTaskStatus = (id: string, status: TaskStatus) =>
   invoke<void>("set_task_status", { id, status });
+
+export interface WorkspaceEntry {
+  name: string;
+  is_dir: boolean;
+  size_bytes: number;
+}
+
+/**
+ * All confined to one dedicated folder (~/Documents/Amin) — see
+ * src-tauri/src/files.rs. Nothing here can reach any other path.
+ */
+export const listWorkspaceFiles = () => invoke<WorkspaceEntry[]>("list_workspace_files");
+export const readWorkspaceFile = (path: string) =>
+  invoke<string>("read_workspace_file", { path });
+export const writeWorkspaceFile = (path: string, contents: string) =>
+  invoke<void>("write_workspace_file", { path, contents });
+export const deleteWorkspaceFile = (path: string) =>
+  invoke<void>("delete_workspace_file", { path });

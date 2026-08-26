@@ -1,10 +1,11 @@
 use tauri::{AppHandle, State};
 
 use crate::db::Db;
+use crate::files::WorkspaceEntry;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, secrets, tasks, voice};
+use crate::{agent, audit, files, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -315,4 +316,58 @@ pub fn set_task_status(id: String, status: String, db: State<Db>) -> Result<(), 
         None,
     );
     Ok(())
+}
+
+/// File access is confined to one dedicated folder (`~/Documents/Amin`) —
+/// see files.rs for the containment check every one of these goes through.
+/// Listing/reading is Auto; writing is TrustedDelegation; deleting matches
+/// policy::classify's "delete" keyword and comes back ConfirmHighRisk.
+#[tauri::command]
+pub fn list_workspace_files(app: AppHandle) -> Result<Vec<WorkspaceEntry>, String> {
+    files::list(&app)
+}
+
+#[tauri::command]
+pub fn read_workspace_file(app: AppHandle, path: String) -> Result<String, String> {
+    files::read(&app, &path)
+}
+
+#[tauri::command]
+pub fn write_workspace_file(app: AppHandle, path: String, contents: String, db: State<Db>) -> Result<(), String> {
+    let result = files::write(&app, &path, &contents);
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "write_workspace_file",
+        RiskTier::TrustedDelegation,
+        if result.is_ok() {
+            audit::Decision::Executed
+        } else {
+            audit::Decision::Blocked
+        },
+        Some(&path),
+        None,
+    );
+    result
+}
+
+#[tauri::command]
+pub fn delete_workspace_file(app: AppHandle, path: String, db: State<Db>) -> Result<(), String> {
+    let result = files::delete(&app, &path);
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "delete_workspace_file",
+        policy::classify("delete_workspace_file"),
+        if result.is_ok() {
+            audit::Decision::Executed
+        } else {
+            audit::Decision::Blocked
+        },
+        Some(&path),
+        None,
+    );
+    result
 }

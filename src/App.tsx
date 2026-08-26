@@ -9,16 +9,20 @@ import {
   type AuditEntry,
   type AutonomyLevel,
   type Task,
+  type WorkspaceEntry,
   appInfo,
   clearAgentConversation,
   clearApiKey,
   createTask,
+  deleteWorkspaceFile,
   getAutonomyLevel,
   hasApiKey,
   isHalted,
   listAuditLog,
   listTasks,
+  listWorkspaceFiles,
   quickCapture,
+  readWorkspaceFile,
   saveApiKey,
   sendAgentMessage,
   setAutonomyLevel,
@@ -26,6 +30,7 @@ import {
   setTaskStatus,
   startVoiceCapture,
   stopVoiceCapture,
+  writeWorkspaceFile,
 } from "./lib/tauri";
 import "./App.css";
 
@@ -58,17 +63,23 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskInput, setTaskInput] = useState("");
   const [showDoneTasks, setShowDoneTasks] = useState(false);
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceEntry[]>([]);
+  const [noteFilename, setNoteFilename] = useState("");
+  const [noteContent, setNoteContent] = useState("");
+  const [filePreview, setFilePreview] = useState<{ name: string; content: string } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   async function refresh() {
     if (!inTauri) return;
     try {
-      const [i, hasKey, level, killed, log, taskList] = await Promise.all([
+      const [i, hasKey, level, killed, log, taskList, files] = await Promise.all([
         appInfo(),
         hasApiKey(),
         getAutonomyLevel(),
         isHalted(),
         listAuditLog(10),
         listTasks(),
+        listWorkspaceFiles(),
       ]);
       setInfo(i);
       setKeySaved(hasKey);
@@ -76,6 +87,7 @@ function App() {
       setHalted(killed);
       setAuditLog(log);
       setTasks(taskList);
+      setWorkspaceFiles(files);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -202,6 +214,41 @@ function App() {
   }
 
   const visibleTasks = showDoneTasks ? tasks : tasks.filter((t) => t.status !== "done");
+
+  async function handleSaveNote() {
+    const name = noteFilename.trim();
+    if (!name || !noteContent.trim()) return;
+    setFileError(null);
+    try {
+      await writeWorkspaceFile(name, noteContent);
+      setNoteFilename("");
+      setNoteContent("");
+      await refresh();
+    } catch (e) {
+      setFileError(String(e));
+    }
+  }
+
+  async function handleViewFile(name: string) {
+    setFileError(null);
+    try {
+      const content = await readWorkspaceFile(name);
+      setFilePreview({ name, content });
+    } catch (e) {
+      setFileError(String(e));
+    }
+  }
+
+  async function handleDeleteFile(name: string) {
+    setFileError(null);
+    try {
+      await deleteWorkspaceFile(name);
+      if (filePreview?.name === name) setFilePreview(null);
+      await refresh();
+    } catch (e) {
+      setFileError(String(e));
+    }
+  }
 
   return (
     <>
@@ -361,6 +408,73 @@ function App() {
               Add
             </button>
           </form>
+        </section>
+
+        <section className="panel">
+          <h2>ملفات أمين — Workspace Files</h2>
+          <p className="text-muted">
+            Phase 2 — confined to one dedicated folder (<code>~/Documents/Amin</code>), never any
+            other path on your Mac. See docs/SECURITY.md if you want the details.
+          </p>
+          {fileError && <p className="banner banner-warning">📁 {fileError}</p>}
+          {workspaceFiles.length === 0 ? (
+            <p className="text-muted">No files yet.</p>
+          ) : (
+            <ul className="task-list">
+              {workspaceFiles.map((f) => (
+                <li key={f.name} className="task-row">
+                  <span className="task-title">{f.is_dir ? `📁 ${f.name}` : `📄 ${f.name}`}</span>
+                  {!f.is_dir && (
+                    <>
+                      <button className="chip" onClick={() => handleViewFile(f.name)}>
+                        View
+                      </button>
+                      <button className="chip chip-danger" onClick={() => handleDeleteFile(f.name)}>
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {filePreview && (
+            <div className="file-preview">
+              <div className="panel-header-row">
+                <strong>{filePreview.name}</strong>
+                <button className="chip" onClick={() => setFilePreview(null)}>
+                  Close
+                </button>
+              </div>
+              <pre className="file-preview-content">{filePreview.content}</pre>
+            </div>
+          )}
+          <div className="field-row">
+            <input
+              type="text"
+              placeholder="اسم الملف (مثال: note.txt)"
+              value={noteFilename}
+              onChange={(e) => setNoteFilename(e.currentTarget.value)}
+              disabled={!inTauri}
+            />
+          </div>
+          <div className="field-row">
+            <textarea
+              className="note-textarea"
+              placeholder="اكتبي محتوى الملف هنا..."
+              value={noteContent}
+              onChange={(e) => setNoteContent(e.currentTarget.value)}
+              disabled={!inTauri}
+            />
+          </div>
+          <div className="field-row">
+            <button
+              onClick={handleSaveNote}
+              disabled={!inTauri || !noteFilename.trim() || !noteContent.trim()}
+            >
+              Save file
+            </button>
+          </div>
         </section>
 
         <section className="panel">

@@ -2,6 +2,7 @@ mod agent;
 mod audit;
 mod commands;
 mod db;
+mod files;
 mod policy;
 mod secrets;
 mod tasks;
@@ -97,6 +98,10 @@ pub fn run() {
             commands::quick_capture,
             commands::list_tasks,
             commands::set_task_status,
+            commands::list_workspace_files,
+            commands::read_workspace_file,
+            commands::write_workspace_file,
+            commands::delete_workspace_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");
