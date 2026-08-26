@@ -41,16 +41,8 @@
 }
 
 .amin-world-presence {
-  width: clamp(200px, 30vw, 340px);
-  aspect-ratio: 300 / 340;
-}
-
-.amin-world-title {
-  margin: 0;
-  font-size: 1.3rem;
-  color: var(--accent);
-  letter-spacing: 0.08em;
-  opacity: 0.85;
+  width: clamp(240px, 34vw, 420px);
+  aspect-ratio: 1 / 1;
 }
 
 .amin-world-chips {

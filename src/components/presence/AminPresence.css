@@ -1,10 +1,9 @@
 /*
-  Amin's presence: a faceted head-and-shoulders silhouette made entirely of
-  a neural network of connection points. --presence-hue is the one variable
-  that carries state — set on .amin-presence[data-state], read by the core,
-  the blue network, and the rays that bleed off the silhouette into the
-  rest of the screen. Gold nodes/links are a fixed warm accent and never
-  follow the hue, matching the rest of the app's "gold used sparingly" rule.
+  Amin's presence: Mona's own approved artwork, used exactly as designed.
+  --presence-hue is the one variable that carries state — set on
+  .amin-presence[data-state], read by the glow behind the portrait and by
+  the voice waveform. The portrait's pixels are never recolored or
+  redrawn; only the light around it changes.
 */
 
 .amin-presence {
@@ -19,159 +18,72 @@
   pointer-events: none;
 }
 
-.amin-presence-svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+.amin-presence-glow {
+  position: absolute;
+  inset: -22%;
+  background: radial-gradient(
+    circle at 38% 42%,
+    color-mix(in srgb, var(--presence-hue) 50%, transparent),
+    transparent 65%
+  );
+  filter: blur(34px);
+  animation: amin-presence-glow-breathe 4.2s var(--ease-standard) infinite;
 }
 
-/* --- Silhouette --------------------------------------------------------- */
-
-.amin-presence-head,
-.amin-presence-shoulders {
-  fill: color-mix(in srgb, var(--navy-800) 55%, transparent);
-  stroke: color-mix(in srgb, var(--presence-hue) 35%, transparent);
-  stroke-width: 1.2;
-  transition: stroke var(--duration-standard) var(--ease-standard);
-}
-
-.amin-presence-shoulders {
-  fill: color-mix(in srgb, var(--navy-900) 60%, transparent);
-  opacity: 0.9;
-}
-
-/* --- Network: links, nodes, core ---------------------------------------- */
-
-.amin-presence-link {
-  stroke: color-mix(in srgb, var(--presence-hue) 55%, transparent);
-  stroke-width: 0.8;
-  stroke-dasharray: 3 5;
-  opacity: 0.5;
-  animation: amin-presence-link-flow 5s linear infinite;
-}
-
-.amin-presence-link-peer {
-  opacity: 0.35;
-}
-
-@keyframes amin-presence-link-flow {
-  to {
-    stroke-dashoffset: -80;
-  }
-}
-
-.amin-presence-node {
-  fill: color-mix(in srgb, var(--presence-hue) 80%, white 10%);
-  animation: amin-presence-node-twinkle 3.4s var(--ease-standard) infinite;
-}
-
-.amin-presence-node-gold {
-  fill: color-mix(in srgb, var(--accent) 85%, white 8%);
-}
-
-@keyframes amin-presence-node-twinkle {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(0.9);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.1);
-  }
-}
-
-.amin-presence-node,
-.amin-presence-node-gold {
-  transform-origin: center;
-  transform-box: fill-box;
-}
-
-.amin-presence-core-halo {
-  fill: color-mix(in srgb, var(--presence-hue) 45%, transparent);
-  filter: blur(10px);
-  animation: amin-presence-halo-breathe 4.2s var(--ease-standard) infinite;
-}
-
-.amin-presence-core {
-  fill: color-mix(in srgb, var(--ivory-100) 25%, var(--presence-hue) 75%);
-  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--presence-hue) 65%, transparent));
-  animation: amin-presence-core-pulse 3s var(--ease-standard) infinite;
-}
-
-@keyframes amin-presence-halo-breathe {
+@keyframes amin-presence-glow-breathe {
   0%,
   100% {
     opacity: 0.5;
     transform: scale(0.94);
   }
   50% {
-    opacity: 0.9;
-    transform: scale(1.08);
+    opacity: 0.85;
+    transform: scale(1.05);
   }
 }
 
-@keyframes amin-presence-core-pulse {
+.amin-presence-portrait {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Fades the artwork's own square edges into the page instead of a hard
+     card boundary — its corners are already near-black, close to the
+     app's own background, so this blend reads as seamless. */
+  mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 85%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 85%, transparent 100%);
+  animation: amin-presence-portrait-pulse 4s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-portrait-pulse {
   0%,
   100% {
-    transform: scale(1);
+    filter: drop-shadow(0 0 24px color-mix(in srgb, var(--presence-hue) 30%, transparent)) brightness(1);
   }
   50% {
-    transform: scale(1.08);
+    filter: drop-shadow(0 0 42px color-mix(in srgb, var(--presence-hue) 45%, transparent)) brightness(1.05);
   }
-}
-
-.amin-presence-core,
-.amin-presence-core-halo {
-  transform-origin: center;
-  transform-box: fill-box;
-}
-
-/* --- Rays: the light that leaves the silhouette and fades into the rest
-   of the screen, rather than stopping at a hard frame edge. ------------- */
-
-.amin-presence-ray-stop-start {
-  stop-color: var(--presence-hue);
-  stop-opacity: 0.5;
-}
-
-.amin-presence-ray-stop-end {
-  stop-color: var(--presence-hue);
-  stop-opacity: 0;
-}
-
-.amin-presence-ray {
-  stroke-width: 1;
-  stroke-dasharray: 2 6;
-  animation: amin-presence-link-flow 7s linear infinite;
 }
 
 /* Fallback for engines without color-mix(): plain rgba, close enough. */
 @supports not (color: color-mix(in srgb, red, blue)) {
-  .amin-presence-head,
-  .amin-presence-shoulders {
-    fill: rgba(18, 27, 58, 0.55);
-    stroke: rgba(79, 179, 232, 0.35);
+  .amin-presence-glow {
+    background: radial-gradient(circle at 38% 42%, rgba(79, 179, 232, 0.5), transparent 65%);
   }
-  .amin-presence-link {
-    stroke: rgba(79, 179, 232, 0.55);
+  .amin-presence-portrait {
+    animation: none;
+    filter: drop-shadow(0 0 30px rgba(79, 179, 232, 0.4));
   }
-  .amin-presence-node {
-    fill: rgba(79, 179, 232, 0.85);
-  }
-  .amin-presence-node-gold {
-    fill: rgba(217, 184, 74, 0.85);
-  }
-  .amin-presence-core {
-    fill: rgba(79, 179, 232, 0.9);
+  .amin-presence-wave-bar {
+    background: rgba(79, 179, 232, 0.75);
   }
 }
 
-/* --- Voice waveform, at the throat -------------------------------------- */
+/* --- Voice waveform, beneath the portrait -------------------------------- */
 
 .amin-presence-wave {
   position: absolute;
-  bottom: 14%;
+  bottom: 4%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -209,62 +121,51 @@
 
 /* --- States: everything keys off [data-state] on the root -------------- */
 
-.amin-presence[data-state="idle"] .amin-presence-link {
-  opacity: 0.3;
-  animation-duration: 8s;
+.amin-presence[data-state="idle"] .amin-presence-portrait {
+  animation-duration: 6s;
 }
-.amin-presence[data-state="idle"] .amin-presence-core {
-  animation-duration: 5s;
-}
-.amin-presence[data-state="idle"] .amin-presence-node {
-  animation-duration: 4.5s;
+.amin-presence[data-state="idle"] .amin-presence-glow {
+  animation-duration: 6s;
+  opacity: 0.7;
 }
 
-.amin-presence[data-state="listening"] .amin-presence-core {
+.amin-presence[data-state="listening"] .amin-presence-portrait {
   animation-duration: 1.3s;
 }
-.amin-presence[data-state="listening"] .amin-presence-link {
-  animation-duration: 2s;
-  opacity: 0.7;
+.amin-presence[data-state="listening"] .amin-presence-glow {
+  animation-duration: 1.6s;
 }
 .amin-presence[data-state="listening"] .amin-presence-wave-bar {
   animation-name: amin-presence-wave-active;
   animation-duration: 0.7s;
 }
 
-.amin-presence[data-state="thinking"] .amin-presence-node {
-  animation-duration: 0.9s;
-}
-.amin-presence[data-state="thinking"] .amin-presence-link {
-  animation-duration: 1.4s;
-}
-.amin-presence[data-state="thinking"] .amin-presence-core {
+.amin-presence[data-state="thinking"] .amin-presence-portrait {
   animation-duration: 1.6s;
 }
-
-.amin-presence[data-state="planning"] .amin-presence-link {
-  animation-duration: 3s;
-  opacity: 0.75;
+.amin-presence[data-state="thinking"] .amin-presence-glow {
+  animation-duration: 1.4s;
 }
-.amin-presence[data-state="planning"] .amin-presence-core {
-  animation-duration: 3.2s;
+
+.amin-presence[data-state="planning"] .amin-presence-portrait {
+  animation-duration: 3s;
+}
+.amin-presence[data-state="planning"] .amin-presence-glow {
+  animation-duration: 3s;
 }
 
 .amin-presence[data-state="executing"] {
   --presence-hue: var(--accent);
 }
-.amin-presence[data-state="executing"] .amin-presence-node {
-  animation-duration: 0.6s;
-}
-.amin-presence[data-state="executing"] .amin-presence-link {
+.amin-presence[data-state="executing"] .amin-presence-portrait {
   animation-duration: 0.9s;
 }
-.amin-presence[data-state="executing"] .amin-presence-core {
+.amin-presence[data-state="executing"] .amin-presence-glow {
   animation-duration: 0.9s;
 }
 
-.amin-presence[data-state="speaking"] .amin-presence-core {
-  animation-duration: 0.8s;
+.amin-presence[data-state="speaking"] .amin-presence-portrait {
+  animation-duration: 0.9s;
 }
 .amin-presence[data-state="speaking"] .amin-presence-wave-bar {
   animation-name: amin-presence-wave-active;
@@ -274,28 +175,27 @@
 .amin-presence[data-state="success"] {
   --presence-hue: var(--state-success);
 }
-.amin-presence[data-state="success"] .amin-presence-core {
+.amin-presence[data-state="success"] .amin-presence-portrait {
   animation-duration: 2.2s;
 }
 
 .amin-presence[data-state="warning"] {
   --presence-hue: var(--state-warning);
 }
-.amin-presence[data-state="warning"] .amin-presence-core {
-  animation-duration: 0.9s;
-}
-.amin-presence[data-state="warning"] .amin-presence-link {
+.amin-presence[data-state="warning"] .amin-presence-portrait {
   animation-duration: 0.8s;
-  opacity: 0.8;
+}
+.amin-presence[data-state="warning"] .amin-presence-glow {
+  animation-duration: 0.8s;
 }
 
 .amin-presence[data-state="waiting"] {
   --presence-hue: var(--state-warning);
 }
-.amin-presence[data-state="waiting"] .amin-presence-core {
+.amin-presence[data-state="waiting"] .amin-presence-portrait {
   animation-duration: 5.5s;
 }
-.amin-presence[data-state="waiting"] .amin-presence-link {
-  animation-duration: 6s;
-  opacity: 0.35;
+.amin-presence[data-state="waiting"] .amin-presence-glow {
+  animation-duration: 5.5s;
+  opacity: 0.55;
 }

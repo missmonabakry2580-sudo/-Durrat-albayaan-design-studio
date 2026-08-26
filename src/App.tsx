@@ -395,7 +395,6 @@ function App() {
           <div className="amin-world-presence">
             <AminPresence state={aminState} />
           </div>
-          <h1 className="amin-world-title">أمين</h1>
 
           {!inTauri && (
             <p className="banner banner-warning">

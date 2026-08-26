@@ -34,7 +34,6 @@ export function Splash({ onDone, duration = 1800 }: SplashProps) {
       <div className="splash-presence">
         <AminPresence state="idle" />
       </div>
-      <h1 className="splash-title">أمين</h1>
       <p className="splash-attribution">{CREATOR_ATTRIBUTION_AR}</p>
     </div>
   );
