@@ -10,6 +10,8 @@ mod files;
 mod followups;
 mod memory;
 mod notify;
+#[cfg(test)]
+mod pipeline_test;
 mod policy;
 mod secrets;
 mod tasks;
