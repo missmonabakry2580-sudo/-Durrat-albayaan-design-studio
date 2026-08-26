@@ -137,6 +137,17 @@
   opacity: 0.7;
 }
 
+/* Hands-free mode, passively watching for the wake phrase — calmer than
+   "listening" (an open command session) so the two are visually distinct;
+   not idle either, since the mic is actually live the whole time. */
+.amin-presence[data-state="armed"] .amin-presence-portrait {
+  animation-duration: 4s;
+}
+.amin-presence[data-state="armed"] .amin-presence-glow {
+  animation-duration: 4s;
+  opacity: 0.85;
+}
+
 .amin-presence[data-state="listening"] .amin-presence-portrait {
   animation-duration: 1.3s;
 }

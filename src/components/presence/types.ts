@@ -7,6 +7,7 @@
  */
 export type AminState =
   | "idle"
+  | "armed"
   | "listening"
   | "thinking"
   | "planning"
@@ -18,6 +19,7 @@ export type AminState =
 
 export const AMIN_STATE_LABELS: Record<AminState, string> = {
   idle: "خامل",
+  armed: "بيراقب صوتك",
   listening: "بيسمع",
   thinking: "بيفكر",
   planning: "بيخطط",

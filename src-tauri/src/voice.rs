@@ -14,6 +14,10 @@ impl VoiceSession {
     pub fn new() -> Self {
         VoiceSession(Mutex::new(false))
     }
+
+    pub fn is_active(&self) -> bool {
+        self.0.lock().map(|g| *g).unwrap_or(false)
+    }
 }
 
 impl Default for VoiceSession {
@@ -22,14 +26,41 @@ impl Default for VoiceSession {
     }
 }
 
+/// Whether hands-free mode (wake phrase opens a session, close phrase or
+/// silence ends it — see AminVoice.swift's `HandsFreeListener`) is
+/// currently running. Separate from `VoiceSession`: the two are mutually
+/// exclusive at the UI level (see commands.rs) but are tracked
+/// independently since they call into different native entry points.
+pub struct HandsFreeSession(Mutex<bool>);
+
+impl HandsFreeSession {
+    pub fn new() -> Self {
+        HandsFreeSession(Mutex::new(false))
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.0.lock().map(|g| *g).unwrap_or(false)
+    }
+}
+
+impl Default for HandsFreeSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `kind` as passed by `AminVoice.swift`'s C callback: 0 = partial
 /// transcript, 1 = final transcript, 2 = error (recognition side); 3 =
-/// speech started, 4 = speech finished (speak side).
+/// speech started, 4 = speech finished (speak side); 5 = hands-free armed
+/// (passively watching for the wake phrase), 6 = wake phrase heard — a
+/// command session opened, 7 = the close phrase ended the command session.
 type VoiceCallback = unsafe extern "C" fn(c_int, *const c_char);
 type StartFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
 type StopFn = unsafe extern "C" fn();
 type SpeakFn = unsafe extern "C" fn(*const c_char, VoiceCallback) -> c_int;
 type StopSpeakingFn = unsafe extern "C" fn();
+type StartHandsFreeFn = unsafe extern "C" fn(*const c_char, *const c_char, VoiceCallback) -> c_int;
+type StopHandsFreeFn = unsafe extern "C" fn();
 
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
@@ -93,6 +124,9 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         1 => app.emit("voice://final", text),
         3 => app.emit("voice://speaking-started", text),
         4 => app.emit("voice://speaking-finished", text),
+        5 => app.emit("voice://hands-free-armed", text),
+        6 => app.emit("voice://hands-free-listening", text),
+        7 => app.emit("voice://hands-free-closed", text),
         _ => app.emit("voice://error", text),
     };
 }
@@ -176,5 +210,60 @@ pub fn stop_speaking() -> Result<(), String> {
             }
         }
     }
+    Ok(())
+}
+
+/// Starts hands-free mode: Mona says `wake_phrase` to open a session, then
+/// `close_phrase` (or just going quiet) to end it — see the HANDS-FREE MODE
+/// note in AminVoice.swift for the privacy trade-off (continuous mic use,
+/// on-device-only wake-phrase watching). A second call while already
+/// running is a no-op, not an error, matching `start_listening`'s pattern.
+pub fn start_hands_free(
+    app: AppHandle,
+    session: tauri::State<'_, HandsFreeSession>,
+    wake_phrase: &str,
+    close_phrase: &str,
+) -> Result<(), String> {
+    let mut active = session.0.lock().map_err(|e| e.to_string())?;
+    if *active {
+        return Ok(());
+    }
+
+    let _ = APP_HANDLE.set(app.clone());
+    let lib = engine(&app)?;
+    let c_wake = std::ffi::CString::new(wake_phrase).map_err(|e| e.to_string())?;
+    let c_close = std::ffi::CString::new(close_phrase).map_err(|e| e.to_string())?;
+
+    let rc = unsafe {
+        let start: Symbol<StartHandsFreeFn> = lib
+            .get(b"amin_voice_start_hands_free\0")
+            .map_err(|e| format!("voice engine is missing amin_voice_start_hands_free: {e}"))?;
+        start(c_wake.as_ptr(), c_close.as_ptr(), on_voice_event)
+    };
+    if rc != 0 {
+        return Err(format!("hands-free mode failed to start (code {rc})"));
+    }
+
+    *active = true;
+    Ok(())
+}
+
+/// Stops hands-free mode entirely (not just the current command session —
+/// the passive wake-phrase watch too). A no-op if it isn't running.
+pub fn stop_hands_free(session: tauri::State<'_, HandsFreeSession>) -> Result<(), String> {
+    let mut active = session.0.lock().map_err(|e| e.to_string())?;
+    if !*active {
+        return Ok(());
+    }
+
+    if let Some(lib) = LIBRARY.get() {
+        unsafe {
+            if let Ok(stop) = lib.get::<StopHandsFreeFn>(b"amin_voice_stop_hands_free\0") {
+                stop();
+            }
+        }
+    }
+
+    *active = false;
     Ok(())
 }

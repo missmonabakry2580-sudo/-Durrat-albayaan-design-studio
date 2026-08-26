@@ -45,14 +45,17 @@ only "Quit Amin" from the tray actually exits the process. This is the
 Phase 0 shell groundwork; Phase 1 fills it with the actual voice pipeline
 below.
 
-### Availability model: push-to-talk now, wake word later
+### Availability model: push-to-talk by default, hands-free opt-in
 
-Phase 1 ships **push-to-talk only** (a shortcut/menu-bar click arms
-listening) — always running in the background, never a fully-quit app, but
-never listening to raw audio until asked to. Continuous listening / wake
-word is a later, separate milestone gated on the voice privacy model in
-docs/SECURITY.md actually holding up in practice — it is not something
-Phase 1 turns on by default.
+Push-to-talk (a mic-button tap or the `alt+A` shortcut arms one utterance)
+is the default and always available. Continuous "say a phrase to open, say
+a phrase to close" hands-free listening (see "Hands-free mode" below) is a
+later addition Mona explicitly opts into from Settings — off by default,
+never turned on silently, because it means the microphone stays open
+continuously rather than only while a key is held. The two are mutually
+exclusive at runtime (see `voice::VoiceSession`/`voice::HandsFreeSession`'s
+`is_active()` guards in `commands.rs` and `lib.rs`) since both would
+otherwise fight over the same native audio engine.
 
 ## Repo layout
 
@@ -187,6 +190,40 @@ choice to make (an on-device speaker-embedding model, e.g. an
 ECAPA-TDNN-style network run via an embedded ONNX Runtime) — a case of
 the "radical architecture change" the brief says to surface, not decide
 silently, and one best made once there's a Mac to validate it on.
+
+### Hands-free mode: wake phrase / close phrase
+
+Mona asked for Amin to be reachable without pressing anything — say a
+phrase, Amin listens, say a phrase (or just go quiet) when done. Built as
+`HandsFreeListener` in `macos/transcriber/AminVoice.swift`, wired through
+`voice::start_hands_free`/`stop_hands_free` in `voice.rs` and
+`get_hands_free_settings`/`save_hands_free_phrases`/`set_hands_free_mode`
+in `commands.rs`. Same unverified-until-a-real-Mac status as the rest of
+this file's voice pipeline — written from documented APIs, never run
+against a real microphone.
+
+Two phases, cycled for as long as the mode is on:
+
+- **Armed (passive).** Watches only for the wake phrase. Hard-requires
+  on-device recognition (`requiresOnDeviceRecognition` forced `true`,
+  regardless of what the OS would otherwise pick) — if on-device isn't
+  available for the locale, hands-free mode refuses to start rather than
+  silently streaming continuous audio to Apple's servers just to watch for
+  a phrase. Nothing here reaches the frontend as a transcript.
+- **Active (a command session).** Opens once the wake phrase is heard;
+  every finalized utterance is sent as a normal final transcript, and
+  `App.tsx` auto-sends it to the agent (rather than just filling the input
+  box, which is what the same event does for manual push-to-talk) as long
+  as the session is open. Ends when the close phrase is heard (stripped out
+  of whatever it's appended to) or `stop_hands_free` is called explicitly;
+  a natural pause between utterances does *not* end it — that's what lets
+  a multi-turn exchange happen without repeating the wake phrase.
+
+Disclosed trade-off, not hidden: a spoken phrase is a shared secret, not an
+identity check — anyone in earshot who knows it can open a session. That's
+exactly the concern Mona raised herself; voice-print/speaker verification
+(above) is the real fix and is intentionally still a separate, not-yet-built
+phase, not folded into this one.
 
 ## The command surface is the whole contract
 

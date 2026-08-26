@@ -79,6 +79,26 @@ export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");
 export const speakText = (text: string) => invoke<void>("speak_text", { text });
 export const stopSpeaking = () => invoke<void>("stop_speaking");
 
+export interface HandsFreeSettings {
+  enabled: boolean;
+  wake_phrase: string;
+  close_phrase: string;
+}
+
+/**
+ * Hands-free mode: say the wake phrase to open a session, the close phrase
+ * (or just go quiet) to end it — see macos/transcriber/AminVoice.swift's
+ * `HandsFreeListener` and docs/SECURITY.md. Off by default: while it's on,
+ * the microphone stays open continuously (macOS's own mic indicator shows
+ * the whole time), and the wake-phrase-watching phase runs on-device only.
+ * Not yet verified end to end on a real Mac.
+ */
+export const getHandsFreeSettings = () => invoke<HandsFreeSettings>("get_hands_free_settings");
+export const saveHandsFreePhrases = (wakePhrase: string, closePhrase: string) =>
+  invoke<void>("save_hands_free_phrases", { wakePhrase, closePhrase });
+export const setHandsFreeMode = (enabled: boolean) =>
+  invoke<void>("set_hands_free_mode", { enabled });
+
 export type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
 
 export interface Task {

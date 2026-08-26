@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AminPresence } from "./components/presence/AminPresence";
 import type { AminState } from "./components/presence/types";
@@ -22,6 +22,7 @@ import {
   escalateFollowUp,
   generateDeltaBrief,
   getAutonomyLevel,
+  getHandsFreeSettings,
   hasApiKey,
   hasElevenLabsKey,
   isHalted,
@@ -34,9 +35,11 @@ import {
   readWorkspaceFile,
   saveApiKey,
   saveElevenLabsKey,
+  saveHandsFreePhrases,
   sendAgentMessage,
   setAutonomyLevel,
   setFollowUpStatus,
+  setHandsFreeMode,
   setKillSwitch,
   setTaskStatus,
   speakText,
@@ -120,6 +123,21 @@ function App() {
   const [elevenLabsKeySaved, setElevenLabsKeySaved] = useState(false);
   const [elevenLabsKeyInput, setElevenLabsKeyInput] = useState("");
   const [lastEmotion, setLastEmotion] = useState<string | null>(null);
+  const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
+  const [handsFreeBusy, setHandsFreeBusy] = useState(false);
+  const [wakePhraseInput, setWakePhraseInput] = useState("");
+  const [closePhraseInput, setClosePhraseInput] = useState("");
+  const [handsFreeSessionOpen, setHandsFreeSessionOpenState] = useState(false);
+  // Mirrors handsFreeSessionOpen for synchronous reads from event handlers.
+  // React (StrictMode especially) may invoke a functional state updater
+  // more than once as a purity check, so a real side effect — sending a
+  // just-heard command to the agent — can never live inside one; this ref
+  // is what the voice://final handler below reads instead.
+  const handsFreeSessionOpenRef = useRef(false);
+  function setHandsFreeSessionOpen(open: boolean) {
+    handsFreeSessionOpenRef.current = open;
+    setHandsFreeSessionOpenState(open);
+  }
   const [autonomy, setAutonomy] = useState<AutonomyLevel>("observe");
   const [halted, setHalted] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
@@ -185,7 +203,18 @@ function App() {
 
   useEffect(() => {
     refresh();
-    if (inTauri) generateDeltaBrief().then(setDeltaBrief);
+    if (inTauri) {
+      generateDeltaBrief().then(setDeltaBrief);
+      // Loaded once here (not folded into `refresh`'s Promise.allSettled)
+      // so a later refresh — triggered after some unrelated action — never
+      // clobbers phrases Mona is mid-way through editing in the Settings
+      // panel below.
+      getHandsFreeSettings().then((s) => {
+        setHandsFreeEnabled(s.enabled);
+        setWakePhraseInput(s.wake_phrase);
+        setClosePhraseInput(s.close_phrase);
+      });
+    }
   }, []);
 
   // Voice events can arrive from either the mic button below or the global
@@ -196,23 +225,49 @@ function App() {
     if (!inTauri) return;
     const unlistenPromises = [
       listen<string>("voice://partial", (e) => setAgentInput(e.payload)),
-      listen<string>("voice://final", (e) => setAgentInput(e.payload)),
+      // Manual tap-to-toggle only fills the input box — Mona still presses
+      // "إرسال". During an open hands-free session (handsFreeSessionOpen)
+      // the same event instead sends itself straight to the agent, since
+      // the whole point of hands-free is not touching anything.
+      listen<string>("voice://final", (e) => {
+        setAgentInput(e.payload);
+        if (handsFreeSessionOpenRef.current) handleSendToAgent(e.payload);
+      }),
       listen<string>("voice://error", (e) => {
         setVoiceError(e.payload);
         setIsListening(false);
         setAminState("warning");
-        setTimeout(() => setAminState("idle"), 1400);
+        setTimeout(
+          () => setAminState((s) => (s === "warning" ? (handsFreeEnabled ? "armed" : "idle") : s)),
+          1400,
+        );
       }),
       listen<string>("voice://state", (e) => {
         setIsListening(e.payload === "listening");
         setAminState(e.payload === "listening" ? "listening" : "idle");
       }),
-      listen("voice://speaking-finished", () => setAminState("idle")),
+      listen("voice://speaking-finished", () =>
+        setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s)),
+      ),
+      // Hands-free: armed = passively watching for the wake phrase (nothing
+      // said yet reaches the input box or the agent); "listening" fires
+      // once the wake phrase opens an actual command session.
+      listen("voice://hands-free-armed", () => {
+        setHandsFreeSessionOpen(false);
+        setAminState("armed");
+      }),
+      listen("voice://hands-free-listening", () => {
+        setHandsFreeSessionOpen(true);
+        setAminState("listening");
+      }),
+      listen("voice://hands-free-closed", () => {
+        setHandsFreeSessionOpen(false);
+      }),
     ];
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
     };
-  }, []);
+  }, [handsFreeEnabled]);
 
   async function handleSaveKey() {
     if (!keyInput.trim()) return;
@@ -236,6 +291,34 @@ function App() {
   async function handleClearElevenLabsKey() {
     await clearElevenLabsKey();
     await refresh();
+  }
+
+  async function handleToggleHandsFree() {
+    if (handsFreeBusy) return;
+    setHandsFreeBusy(true);
+    setVoiceError(null);
+    try {
+      const next = !handsFreeEnabled;
+      await setHandsFreeMode(next);
+      setHandsFreeEnabled(next);
+      if (!next) {
+        setHandsFreeSessionOpen(false);
+        setAminState((s) => (s === "armed" || s === "listening" ? "idle" : s));
+      }
+    } catch (e) {
+      setVoiceError(String(e));
+    } finally {
+      setHandsFreeBusy(false);
+    }
+  }
+
+  async function handleSaveHandsFreePhrases() {
+    setVoiceError(null);
+    try {
+      await saveHandsFreePhrases(wakePhraseInput.trim(), closePhraseInput.trim());
+    } catch (e) {
+      setVoiceError(String(e));
+    }
   }
 
   async function handleAutonomyChange(level: AutonomyLevel) {
@@ -263,8 +346,11 @@ function App() {
     }, 25000);
   }
 
-  async function handleSendToAgent() {
-    const text = agentInput.trim();
+  /** `overrideText` lets hands-free mode send a just-heard command straight
+   * through without a round trip via `agentInput` state, which would
+   * otherwise be stale in the same tick it's set. */
+  async function handleSendToAgent(overrideText?: string) {
+    const text = (overrideText ?? agentInput).trim();
     if (!text || agentBusy) return;
 
     setAgentLog((log) => [...log, { role: "user", text }]);
@@ -813,6 +899,54 @@ function App() {
                   </div>
 
                   <div className="field-row">
+                    <span className="field-label">الاستماع الحر (بدون لمس أي زرار)</span>
+                    <button
+                      className={handsFreeEnabled ? "chip chip-active" : "chip"}
+                      onClick={handleToggleHandsFree}
+                      disabled={!inTauri || handsFreeBusy}
+                    >
+                      {handsFreeEnabled ? "شغّال — دوسي للإيقاف" : "متوقف — دوسي للتشغيل"}
+                    </button>
+                  </div>
+                  <p className="text-muted">
+                    لو شغّلتيه، المايك هيفضل شغّال باستمرار (هتشوفي مؤشر المايك في الماك شغّال طول
+                    الوقت) وهو بيراقب محليًا على جهازك بس عشان يسمع عبارة الفتح — مفيش صوت بيتبعت
+                    لحد قبل ما تقوليها. أمين هيبدأ يسمعك فعليًا لما تقولي عبارة الفتح، وهيفضل سامعك
+                    لحد ما تقولي عبارة القفل أو تسكتي شوية. العبارة دي سر بينك وبينه بس — أي حد يعرفها
+                    يقدر يفتحه، فاختاري عبارة مش سهل حد يخمنها.
+                  </p>
+                  <div className="field-row">
+                    <label className="field-label" htmlFor="wake-phrase-input">
+                      عبارة الفتح
+                    </label>
+                    <input
+                      id="wake-phrase-input"
+                      type="text"
+                      value={wakePhraseInput}
+                      onChange={(e) => setWakePhraseInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                  </div>
+                  <div className="field-row">
+                    <label className="field-label" htmlFor="close-phrase-input">
+                      عبارة القفل
+                    </label>
+                    <input
+                      id="close-phrase-input"
+                      type="text"
+                      value={closePhraseInput}
+                      onChange={(e) => setClosePhraseInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                    <button
+                      onClick={handleSaveHandsFreePhrases}
+                      disabled={!inTauri || !wakePhraseInput.trim() || !closePhraseInput.trim()}
+                    >
+                      حفظ
+                    </button>
+                  </div>
+
+                  <div className="field-row">
                     <span className="field-label">مستوى الاستقلالية</span>
                     <div className="segmented">
                       {AUTONOMY_LEVELS.map((level) => (
@@ -863,11 +997,15 @@ function App() {
             type="button"
             className={isListening ? "command-bar-mic command-bar-mic-active" : "command-bar-mic"}
             onClick={handleMicToggle}
-            disabled={!inTauri || agentBusy}
+            disabled={!inTauri || agentBusy || handsFreeEnabled}
             title={
-              isListening
-                ? "دوسي تاني لو خلصتي كلامك — أو استنيه يوقف من نفسه"
-                : "دوسي وابدئي الكلام — أو استخدمي alt+A من أي مكان"
+              handsFreeEnabled
+                ? handsFreeSessionOpen
+                  ? "أمين سامعك دلوقتي — قولي عبارة القفل أو استني شوية لما تخلصي"
+                  : "الاستماع الحر شغّال — كلّمي أمين بعبارة الفتح من غير ما تدوسي حاجة"
+                : isListening
+                  ? "دوسي تاني لو خلصتي كلامك — أو استنيه يوقف من نفسه"
+                  : "دوسي وابدئي الكلام — أو استخدمي alt+A من أي مكان"
             }
           >
             🎤

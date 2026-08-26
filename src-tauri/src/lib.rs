@@ -39,6 +39,7 @@ pub fn run() {
             app.manage(agent::Conversation::with_history(history));
             app.manage(confirmation::PendingConfirmation::new());
             app.manage(voice::VoiceSession::new());
+            app.manage(voice::HandsFreeSession::new());
 
             tray::setup(app.handle())?;
 
@@ -64,6 +65,17 @@ pub fn run() {
                             let session = app.state::<voice::VoiceSession>();
                             match event.state {
                                 ShortcutState::Pressed => {
+                                    // See commands::start_voice_capture's own
+                                    // guard — the two native voice engines
+                                    // each open their own AVAudioEngine and
+                                    // shouldn't run at once.
+                                    if app.state::<voice::HandsFreeSession>().is_active() {
+                                        let _ = app.emit(
+                                            "voice://error",
+                                            "الاستماع الحر شغّال دلوقتي — قفليه الأول لو عايزة تستخدمي alt+A",
+                                        );
+                                        return;
+                                    }
                                     if let Err(e) = voice::start_listening(app.clone(), session) {
                                         let _ = app.emit("voice://error", e);
                                     } else {
@@ -122,6 +134,9 @@ pub fn run() {
             commands::stop_voice_capture,
             commands::speak_text,
             commands::stop_speaking,
+            commands::get_hands_free_settings,
+            commands::save_hands_free_phrases,
+            commands::set_hands_free_mode,
             commands::create_task,
             commands::quick_capture,
             commands::list_tasks,

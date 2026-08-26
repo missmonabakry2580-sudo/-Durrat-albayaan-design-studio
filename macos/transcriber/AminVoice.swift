@@ -29,12 +29,18 @@
 //   amin_voice_stop()
 //   amin_voice_speak(text, callback) -> Int32
 //   amin_voice_stop_speaking()
+//   amin_voice_start_hands_free(wakePhrase, closePhrase, callback) -> Int32
+//   amin_voice_stop_hands_free()
 // `callback` is `@convention(c) (Int32, UnsafePointer<CChar>?) -> Void`:
 // kind 0 = partial transcript, 1 = final transcript, 2 = error (recognition
 // side); kind 3 = speech started, 4 = speech finished (speak side, text is
-// always null). The string is a NUL-terminated UTF-8 C string valid only
-// for the duration of the call — the Rust side must copy it before
-// returning.
+// always null); kind 5 = hands-free armed (passively watching for the wake
+// phrase, text is always null), 6 = wake phrase heard — a command session
+// just opened (text always null), 7 = the close phrase ended the command
+// session (text always null; any command text before the close phrase was
+// already sent as a normal kind-1 final). The string is a NUL-terminated
+// UTF-8 C string valid only for the duration of the call — the Rust side
+// must copy it before returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -42,6 +48,20 @@
 // listener would. This starts with a single locale (Arabic, Egypt) and
 // that limitation is a real product conversation to have, not a bug to
 // silently work around.
+//
+// HANDS-FREE MODE: Mona asked for Amin to be reachable without pressing
+// anything — she says a wake phrase, Amin listens, she says a closing
+// phrase (or just goes quiet) when she's done. The privacy trade-off she'd
+// actually care about is real and disclosed, not hidden: while this mode
+// is on, the microphone stays open continuously (macOS's own orange mic
+// indicator will show the whole time), and the wake-phrase-watching phase
+// is HARD-REQUIRED to run on-device (`requiresOnDeviceRecognition` forced
+// true) — if the OS/locale can't do on-device recognition, hands-free mode
+// refuses to start rather than silently streaming continuous audio to
+// Apple's servers just to watch for a phrase. A spoken phrase is a shared
+// secret, not an identity check — anyone in earshot who knows it can open
+// a session. Voice-print/speaker verification (the actual fix for that) is
+// a separate, not-yet-built phase — see docs/SECURITY.md.
 
 import Foundation
 import Speech
@@ -73,6 +93,35 @@ public func amin_voice_start(_ callback: @escaping AminVoiceCallback) -> Int32 {
 @_cdecl("amin_voice_stop")
 public func amin_voice_stop() {
     activeTranscriber?.stop()
+}
+
+/// One hands-free session at a time, matching the single `HandsFreeSession`
+/// the Rust side manages (see voice.rs).
+private var activeHandsFree: HandsFreeListener?
+
+@_cdecl("amin_voice_start_hands_free")
+public func amin_voice_start_hands_free(
+    _ wakePhrase: UnsafePointer<CChar>,
+    _ closePhrase: UnsafePointer<CChar>,
+    _ callback: @escaping AminVoiceCallback
+) -> Int32 {
+    if activeHandsFree != nil {
+        return 0
+    }
+    let listener = HandsFreeListener(
+        wakePhrase: String(cString: wakePhrase),
+        closePhrase: String(cString: closePhrase),
+        callback: callback
+    )
+    activeHandsFree = listener
+    listener.start()
+    return 0
+}
+
+@_cdecl("amin_voice_stop_hands_free")
+public func amin_voice_stop_hands_free() {
+    activeHandsFree?.stop()
+    activeHandsFree = nil
 }
 
 /// Text-to-speech for Amin's own replies (Mona asked for spoken output as
@@ -288,5 +337,241 @@ private final class Transcriber {
         audioEngine.stop()
         task?.cancel()
         onFinished?()
+    }
+}
+
+/// Continuous "say a phrase to open, say a phrase to close" listening — see
+/// the HANDS-FREE MODE note in this file's header for the privacy trade-off.
+/// Unlike `Transcriber` (one push-to-talk utterance, then done), this keeps
+/// the audio engine running and cycles between two phases for as long as
+/// hands-free mode is enabled: passively watching for the wake phrase
+/// (nothing is sent anywhere as a command), then — once heard — capturing
+/// one or more command utterances until the close phrase is heard or
+/// `stop()` is called explicitly.
+private final class HandsFreeListener {
+    private let callback: AminVoiceCallback
+    private let wakePhrase: String
+    private let closePhrase: String
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ar-EG"))
+    private let audioEngine = AVAudioEngine()
+    private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var currentTask: SFSpeechRecognitionTask?
+    private var mode: Mode = .passive
+    private var stopped = false
+
+    private enum Mode: Equatable { case passive, active }
+
+    init(wakePhrase: String, closePhrase: String, callback: @escaping AminVoiceCallback) {
+        self.wakePhrase = wakePhrase
+        self.closePhrase = closePhrase
+        self.callback = callback
+    }
+
+    private func emit(_ kind: Int32, _ text: String = "") {
+        text.withCString { cstr in callback(kind, cstr) }
+    }
+
+    /// Case-folds and strips Arabic diacritics (tashkeel) so "يا أمِين" and
+    /// "يا أمين" are treated as the same phrase — SFSpeechRecognizer's
+    /// output isn't guaranteed to be diacritic-free.
+    private func normalize(_ text: String) -> String {
+        let diacritics = CharacterSet(
+            charactersIn: "\u{064B}\u{064C}\u{064D}\u{064E}\u{064F}\u{0650}\u{0651}\u{0652}\u{0670}"
+        )
+        let stripped = text.unicodeScalars.filter { !diacritics.contains($0) }
+        return String(String.UnicodeScalarView(stripped))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private func heard(_ phrase: String, in text: String) -> Bool {
+        !phrase.isEmpty && normalize(text).contains(normalize(phrase))
+    }
+
+    /// Best-effort: drops everything from where the close phrase starts
+    /// onward, so "افتحيلي كذا خلاص يا أمين" becomes "افتحيلي كذا" instead
+    /// of sending the closing instruction itself as a command. Diacritic
+    /// stripping can shift character offsets slightly, so this is an
+    /// approximate cut, not an exact one — good enough for "drop the
+    /// trailing close phrase", which is all this needs.
+    private func textBeforePhrase(_ phrase: String, in text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedText = normalize(trimmed)
+        guard let range = normalizedText.range(of: normalize(phrase)) else { return trimmed }
+        let cut = min(normalizedText.distance(from: normalizedText.startIndex, to: range.lowerBound), trimmed.count)
+        let idx = trimmed.index(trimmed.startIndex, offsetBy: cut)
+        return String(trimmed[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func start() {
+        guard let recognizer = recognizer, recognizer.supportsOnDeviceRecognition else {
+            emit(2, "hands-free mode needs on-device speech recognition, which isn't available here")
+            return
+        }
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            beginAudioEngine(recognizer: recognizer)
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                DispatchQueue.main.async {
+                    if status == .authorized {
+                        self?.beginAudioEngine(recognizer: recognizer)
+                    } else {
+                        self?.emit(2, "speech recognition permission was not granted")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            emit(2, "speech recognition permission was not granted")
+        @unknown default:
+            emit(2, "speech recognition permission was not granted")
+        }
+    }
+
+    private func beginAudioEngine(recognizer: SFSpeechRecognizer) {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            openTap(recognizer: recognizer)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                if granted {
+                    self?.openTap(recognizer: recognizer)
+                } else {
+                    self?.emit(2, "microphone access was not granted")
+                }
+            }
+        case .denied, .restricted:
+            emit(2, "microphone access was not granted")
+        @unknown default:
+            emit(2, "microphone access was not granted")
+        }
+    }
+
+    /// Installs the tap and starts the audio engine once, up front — unlike
+    /// `Transcriber`, whose engine starts and stops per utterance, this
+    /// keeps recording continuously across both phases and every command
+    /// utterance; only the recognition request/task underneath is swapped
+    /// out (`runRecognition`) each time one finishes.
+    private func openTap(recognizer: SFSpeechRecognizer) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, !self.stopped else { return }
+            let inputNode = self.audioEngine.inputNode
+            let format = inputNode.outputFormat(forBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                self?.currentRequest?.append(buffer)
+            }
+            do {
+                self.audioEngine.prepare()
+                try self.audioEngine.start()
+            } catch {
+                self.emit(2, "couldn't start the audio engine: \(error.localizedDescription)")
+                return
+            }
+            self.armPassive(recognizer: recognizer)
+        }
+    }
+
+    /// Phase 1: watching for the wake phrase only. Nothing here is a
+    /// command — partial/final transcripts are checked locally and never
+    /// forwarded as kind 0/1, so nothing reaches Amin's input box until she
+    /// actually opens a session.
+    private func armPassive(recognizer: SFSpeechRecognizer) {
+        guard !stopped else { return }
+        mode = .passive
+        emit(5)
+        runRecognition(recognizer: recognizer, onDeviceOnly: true) { [weak self] text, isFinal in
+            guard let self = self else { return }
+            if self.heard(self.wakePhrase, in: text) {
+                self.openActiveSession(recognizer: recognizer)
+            } else if isFinal {
+                self.armPassive(recognizer: recognizer)
+            }
+        }
+    }
+
+    /// Phase 2: a command session is open. Every finalized utterance is
+    /// sent as a normal kind-1 final (the frontend auto-sends it to the
+    /// agent while a hands-free session is open, the same event a manual
+    /// tap-to-toggle final uses otherwise) — this keeps listening for
+    /// follow-up utterances afterward instead of ending, until the close
+    /// phrase is heard.
+    private func openActiveSession(recognizer: SFSpeechRecognizer) {
+        guard !stopped else { return }
+        mode = .active
+        emit(6)
+        listenForCommand(recognizer: recognizer)
+    }
+
+    private func listenForCommand(recognizer: SFSpeechRecognizer) {
+        guard !stopped else { return }
+        // Command utterances go through Apple's server recognizer when
+        // on-device isn't available for this locale — same fallback
+        // `Transcriber` uses for ordinary push-to-talk, and the same
+        // trade-off already disclosed there. Only the passive wake-phrase
+        // phase above hard-requires on-device.
+        runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
+            guard let self = self else { return }
+            if self.heard(self.closePhrase, in: text) {
+                let remainder = self.textBeforePhrase(self.closePhrase, in: text)
+                if !remainder.isEmpty {
+                    self.emit(1, remainder)
+                }
+                self.emit(7)
+                self.armPassive(recognizer: recognizer)
+                return
+            }
+            if isFinal {
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.emit(1, text)
+                }
+                self.listenForCommand(recognizer: recognizer)
+            } else {
+                self.emit(0, text)
+            }
+        }
+    }
+
+    /// Starts one recognition request/task against the already-running
+    /// audio engine. Identity-checks `currentTask` in the completion
+    /// handler so a late callback from a task we've already moved past
+    /// (e.g. one `armPassive`/`openActiveSession` superseded) is ignored
+    /// instead of re-triggering a phase transition a second time.
+    private func runRecognition(
+        recognizer: SFSpeechRecognizer,
+        onDeviceOnly: Bool,
+        onUpdate: @escaping (String, Bool) -> Void
+    ) {
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        req.requiresOnDeviceRecognition = onDeviceOnly
+        currentRequest = req
+
+        var task: SFSpeechRecognitionTask?
+        task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+            guard let self = self, !self.stopped, self.currentTask === task else { return }
+            if let result = result {
+                onUpdate(result.bestTranscription.formattedString, result.isFinal)
+            }
+            if let error = error {
+                self.emit(2, error.localizedDescription)
+                // A dropped recognition task (a transient Speech framework
+                // error) shouldn't silently end hands-free mode — re-arm
+                // whichever phase we were in rather than going dark.
+                if self.mode == .passive {
+                    self.armPassive(recognizer: recognizer)
+                } else {
+                    self.listenForCommand(recognizer: recognizer)
+                }
+            }
+        }
+        currentTask = task
+    }
+
+    func stop() {
+        stopped = true
+        currentRequest?.endAudio()
+        currentTask?.cancel()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
     }
 }

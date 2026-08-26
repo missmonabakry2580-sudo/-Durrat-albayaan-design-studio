@@ -7,7 +7,7 @@ use crate::files::WorkspaceEntry;
 use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
-use crate::voice::VoiceSession;
+use crate::voice::{HandsFreeSession, VoiceSession};
 use crate::{agent, audit, brief, browser, elevenlabs, files, followups, notify, tasks, tools, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
@@ -16,6 +16,16 @@ const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 /// elevenlabs.rs for why this is a distinct, disclosed trade-off (cost,
 /// and the reply text leaving the device) rather than the default.
 const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
+
+/// Hands-free mode settings — see voice::start_hands_free and
+/// AminVoice.swift's `HandsFreeListener`. Off by default: it means the
+/// microphone stays open continuously while enabled, which is a real
+/// privacy trade-off Mona opts into explicitly, not a default.
+const HANDS_FREE_ENABLED_KEY: &str = "hands_free_enabled";
+const WAKE_PHRASE_KEY: &str = "wake_phrase";
+const CLOSE_PHRASE_KEY: &str = "close_phrase";
+const DEFAULT_WAKE_PHRASE: &str = "يا أمين";
+const DEFAULT_CLOSE_PHRASE: &str = "خلاص يا أمين";
 
 fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
     conn.execute(
@@ -659,7 +669,18 @@ pub fn list_audit_log(limit: i64, db: State<Db>) -> Result<Vec<AuditEntry>, Stri
 /// the global keyboard shortcut in lib.rs — both call the same
 /// `voice::start_listening`.
 #[tauri::command]
-pub fn start_voice_capture(app: AppHandle, session: State<VoiceSession>) -> Result<(), String> {
+pub fn start_voice_capture(
+    app: AppHandle,
+    session: State<VoiceSession>,
+    hands_free: State<HandsFreeSession>,
+) -> Result<(), String> {
+    // The two native engines each open their own AVAudioEngine — running
+    // both at once would fight over the same microphone input rather than
+    // cleanly cooperate. Hands-free mode already covers this case anyway
+    // (no need to also tap the mic button while it's armed).
+    if hands_free.is_active() {
+        return Err("الاستماع الحر شغّال دلوقتي — قفليه الأول لو عايزة تستخدمي زرار المايك".to_string());
+    }
     voice::start_listening(app, session)
 }
 
@@ -708,6 +729,75 @@ pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Resu
 #[tauri::command]
 pub fn stop_speaking() -> Result<(), String> {
     voice::stop_speaking()
+}
+
+#[derive(serde::Serialize)]
+pub struct HandsFreeSettings {
+    pub enabled: bool,
+    pub wake_phrase: String,
+    pub close_phrase: String,
+}
+
+#[tauri::command]
+pub fn get_hands_free_settings(db: State<Db>) -> Result<HandsFreeSettings, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(HandsFreeSettings {
+        enabled: get_setting(&conn, HANDS_FREE_ENABLED_KEY).as_deref() == Some("on"),
+        wake_phrase: get_setting(&conn, WAKE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_WAKE_PHRASE.to_string()),
+        close_phrase: get_setting(&conn, CLOSE_PHRASE_KEY)
+            .unwrap_or_else(|| DEFAULT_CLOSE_PHRASE.to_string()),
+    })
+}
+
+/// Saves custom wake/close phrases. Doesn't itself start or stop hands-free
+/// mode — a change while it's already running takes effect the next time
+/// it's (re)enabled via `set_hands_free_mode`, same as any other setting.
+#[tauri::command]
+pub fn save_hands_free_phrases(wake_phrase: String, close_phrase: String, db: State<Db>) -> Result<(), String> {
+    let wake = wake_phrase.trim();
+    let close = close_phrase.trim();
+    if wake.is_empty() || close.is_empty() {
+        return Err("العبارتين لازم ميكونوش فاضيين".to_string());
+    }
+    if wake == close {
+        return Err("لازم عبارة الفتح وعبارة القفل يكونوا مختلفين عن بعض".to_string());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, WAKE_PHRASE_KEY, wake)?;
+    set_setting(&conn, CLOSE_PHRASE_KEY, close)?;
+    Ok(())
+}
+
+/// Turns hands-free mode on or off and persists the choice. The persisted
+/// `enabled` flag is set optimistically here — if the native side then
+/// fails asynchronously (e.g. on-device recognition unavailable, mic/speech
+/// permission denied), that failure only surfaces later as a
+/// `voice://error` event, same unresolved gap as the rest of this voice
+/// pipeline (see AminVoice.swift's header). Not yet verified on a real Mac.
+#[tauri::command]
+pub fn set_hands_free_mode(
+    enabled: bool,
+    app: AppHandle,
+    db: State<Db>,
+    hands_free: State<HandsFreeSession>,
+    voice_session: State<VoiceSession>,
+) -> Result<(), String> {
+    if enabled && voice_session.is_active() {
+        return Err("زرار المايك شغّال دلوقتي — سيبيه يخلص الأول".to_string());
+    }
+    let (wake_phrase, close_phrase) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        set_setting(&conn, HANDS_FREE_ENABLED_KEY, if enabled { "on" } else { "off" })?;
+        (
+            get_setting(&conn, WAKE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_WAKE_PHRASE.to_string()),
+            get_setting(&conn, CLOSE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_CLOSE_PHRASE.to_string()),
+        )
+    };
+    if enabled {
+        voice::start_hands_free(app, hands_free, &wake_phrase, &close_phrase)
+    } else {
+        voice::stop_hands_free(hands_free)
+    }
 }
 
 /// Create a task manually (from the Tasks panel's own form).

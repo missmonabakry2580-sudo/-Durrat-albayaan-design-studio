@@ -61,6 +61,34 @@ path and says plainly if it can't find or load it.
    shown? denied? console/log output?) rather than assuming this fix
    didn't work; there may be a second, different problem to diagnose.
 
+## Hands-free mode
+
+`HandsFreeListener` (also in `AminVoice.swift`, entry points
+`amin_voice_start_hands_free`/`amin_voice_stop_hands_free`) is a second,
+independent listening mode: say a wake phrase to open a session, a close
+phrase (or go quiet) to end it — enabled from Amin's Settings panel, off
+by default. See docs/ARCHITECTURE.md's "Hands-free mode" section and
+docs/SECURITY.md section 17 for the design and the privacy trade-off
+(continuous mic use while on, on-device-only wake-phrase watching). Same
+unverified status as everything else in this file.
+
+What to check the first time it runs on a real Mac, once push-to-talk
+above is confirmed working:
+
+1. Turning it on in Settings should trigger the same permission prompts as
+   push-to-talk (if not already granted), then leave the mic visibly live
+   (macOS's mic indicator) without anything reaching the chat input yet.
+2. Saying the wake phrase should open a session — watch for
+   `voice://hands-free-listening`, then normal `voice://partial`/
+   `voice://final` events as you keep talking, auto-sent to the agent
+   without touching anything.
+3. Saying the close phrase should end the session (`voice://hands-free-
+   closed`) and go back to step 1's passive state; a natural pause instead
+   should just keep the session open for a follow-up utterance.
+4. Try the mic button and `alt+A` while hands-free mode is on — both
+   should refuse with a clear error (see `commands::start_voice_capture`'s
+   guard) rather than fighting the hands-free engine for the microphone.
+
 ## Known limitations to revisit, not silently work around
 
 - **Single locale (`ar-EG`).** `SFSpeechRecognizer` doesn't do free

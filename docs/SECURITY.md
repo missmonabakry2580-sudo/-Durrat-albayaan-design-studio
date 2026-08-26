@@ -289,3 +289,42 @@ gate" for the full file-by-file breakdown.
   Mona typing "موافقة", Amin executing and narrating the result — hasn't
   been exercised against the real Anthropic API yet. That's flagged
   honestly rather than claimed as verified.
+
+## 17. Hands-free mode: a spoken phrase is a shared secret, not an identity check
+
+Added per Mona's request to talk to Amin without pressing anything (see
+docs/ARCHITECTURE.md's "Hands-free mode: wake phrase / close phrase"). The
+trade-off here is the one Mona raised herself, unprompted, and it's real —
+disclosed plainly, not minimized:
+
+- **Off by default, opt-in only.** `set_hands_free_mode` is never called on
+  startup or silently — Mona turns it on herself from Settings, and the UI
+  states plainly what that means: the microphone stays open continuously
+  (macOS's own mic indicator reflects this honestly, it isn't hidden) for
+  as long as the mode is on, not just while a key is held.
+- **The wake-phrase watch stays on-device, always.** `HandsFreeListener`
+  forces `requiresOnDeviceRecognition = true` for the passive phase
+  regardless of what the OS default would pick, and refuses to start at
+  all if on-device recognition isn't available for the locale — it will
+  not silently fall back to streaming continuous audio to a server just to
+  watch for a phrase. The active command phase, once a session is open,
+  follows the same on-device-preferred/server-fallback rule the rest of
+  this file already discloses for ordinary push-to-talk.
+- **This is a shared secret, not Mona's identity.** Anyone within earshot
+  who knows (or guesses, or overhears) the wake phrase can open a session
+  and have Amin act as if it were her — the phrase alone proves nothing
+  about who's speaking. That is a known, accepted gap for this phase, not
+  an oversight: it's exactly what voice-print/speaker verification
+  (section 13, not yet built) is the real fix for, and hands-free mode is
+  deliberately shipped ahead of that fix rather than waiting on it, on the
+  understanding that the gap is disclosed rather than papered over.
+- **Choose an unguessable phrase.** Because of the above, the Settings
+  panel's own copy tells Mona this directly: pick a wake/close phrase pair
+  that isn't something a stranger would say by coincidence — this is
+  product-level mitigation standing in for the not-yet-built one, not a
+  substitute for it.
+- **A session still can't do anything the confirmation gate wouldn't
+  otherwise allow.** Hands-free mode changes how a command reaches Amin,
+  not what Amin is allowed to do with it — every `ConfirmHighRisk` tool
+  call it triggers still waits on section 16's gate exactly as if she'd
+  typed the same words.
