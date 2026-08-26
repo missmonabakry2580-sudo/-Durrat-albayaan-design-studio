@@ -165,8 +165,15 @@ pub async fn send_agent_message(
         return Err("Amin is halted — turn the kill switch off to resume.".to_string());
     }
 
+    // Surfaces the real Keychain error rather than a generic "not
+    // configured" message — Mona has hit a case where save_api_key
+    // genuinely reports success (logged in the audit table) yet the key
+    // still reads back as missing moments later in the same session. A
+    // generic message can't distinguish "never saved" from "saved but the
+    // OS won't hand it back," so the actual error text is the only way to
+    // diagnose that without a real Mac to test on.
     let api_key = secrets::get_secret(ANTHROPIC_KEY_NAME)
-        .map_err(|_| "No Anthropic API key configured yet — add one above first.".to_string())?;
+        .map_err(|e| format!("مفيش مفتاح API متاح للقراءة من الـ Keychain دلوقتي: {e}"))?;
 
     let existing_pending = {
         let guard = pending.0.lock().map_err(|e| e.to_string())?;
