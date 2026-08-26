@@ -588,7 +588,15 @@ private final class HandsFreeListener {
                 if isFinal { self.listenForCommand(recognizer: recognizer) }
                 return
             }
-            if self.heard(self.closePhrase, in: text) {
+            // Gated to isFinal — checking the close phrase against every
+            // partial result closed the session the instant a still-growing
+            // transcript happened to contain it, sometimes before Mona had
+            // even finished her sentence. The wake phrase above stays
+            // partial-triggered deliberately (that responsiveness is the
+            // point of a wake word); closing an already-open session is the
+            // one direction where waiting the extra beat for a final result
+            // is worth it.
+            if isFinal, self.heard(self.closePhrase, in: text) {
                 let remainder = self.textBeforePhrase(self.closePhrase, in: text)
                 if !remainder.isEmpty {
                     self.emit(1, remainder)

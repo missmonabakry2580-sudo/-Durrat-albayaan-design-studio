@@ -30,7 +30,19 @@ const HANDS_FREE_ENABLED_KEY: &str = "hands_free_enabled";
 const WAKE_PHRASE_KEY: &str = "wake_phrase";
 const CLOSE_PHRASE_KEY: &str = "close_phrase";
 const DEFAULT_WAKE_PHRASE: &str = "يا أمين";
-const DEFAULT_CLOSE_PHRASE: &str = "خلاص يا أمين";
+/// Deliberately shares no words with `DEFAULT_WAKE_PHRASE` — an earlier
+/// default, "خلاص يا أمين", literally *contained* the wake phrase as a
+/// substring. Since AminVoice.swift's `heard()` matches by substring
+/// containment (see its own doc comment on why: diacritics/exact-boundary
+/// matching is too brittle for speech recognition output), saying the
+/// close phrase in one breath also satisfied the wake-phrase check, then
+/// the tail end of that same breath ("يا أمين") could itself satisfy the
+/// *new* active session's close-phrase check moments later — Mona hit
+/// this directly: hands-free mode opened and immediately closed again
+/// without ever actually listening to a command. See
+/// save_hands_free_phrases' substring-overlap validation below, which now
+/// rejects this class of phrase pair for any custom phrases too.
+const DEFAULT_CLOSE_PHRASE: &str = "كفاية كده";
 
 fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
     conn.execute(
@@ -787,6 +799,31 @@ pub fn get_hands_free_settings(db: State<Db>) -> Result<HandsFreeSettings, Strin
     })
 }
 
+/// Rejects empty, identical, or substring-overlapping wake/close phrase
+/// pairs. Pulled out of `save_hands_free_phrases` as a pure function so the
+/// substring-overlap case — the exact bug behind "hands-free opens and
+/// immediately closes again" (see DEFAULT_CLOSE_PHRASE's doc comment) — is
+/// directly unit-testable without a database.
+fn validate_hands_free_phrases(wake: &str, close: &str) -> Result<(), String> {
+    if wake.is_empty() || close.is_empty() {
+        return Err("العبارتين لازم ميكونوش فاضيين".to_string());
+    }
+    if wake == close {
+        return Err("لازم عبارة الفتح وعبارة القفل يكونوا مختلفين عن بعض".to_string());
+    }
+    // AminVoice.swift matches phrases by substring containment (diacritics
+    // make exact matching too brittle) — if one phrase contains the other,
+    // saying the longer one satisfies both checks in the same breath and
+    // hands-free mode opens and immediately closes again.
+    let (wake_lower, close_lower) = (wake.to_lowercase(), close.to_lowercase());
+    if wake_lower.contains(&close_lower) || close_lower.contains(&wake_lower) {
+        return Err(
+            "عبارة الفتح وعبارة القفل لازم متكونش وحدة منهم جزء من التانية (زي \"يا أمين\" و\"خلاص يا أمين\") — دي بتسبب فتح وقفل فوري من غير ما يسمعك".to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Saves custom wake/close phrases. Doesn't itself start or stop hands-free
 /// mode — a change while it's already running takes effect the next time
 /// it's (re)enabled via `set_hands_free_mode`, same as any other setting.
@@ -794,16 +831,39 @@ pub fn get_hands_free_settings(db: State<Db>) -> Result<HandsFreeSettings, Strin
 pub fn save_hands_free_phrases(wake_phrase: String, close_phrase: String, db: State<Db>) -> Result<(), String> {
     let wake = wake_phrase.trim();
     let close = close_phrase.trim();
-    if wake.is_empty() || close.is_empty() {
-        return Err("العبارتين لازم ميكونوش فاضيين".to_string());
-    }
-    if wake == close {
-        return Err("لازم عبارة الفتح وعبارة القفل يكونوا مختلفين عن بعض".to_string());
-    }
+    validate_hands_free_phrases(wake, close)?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     set_setting(&conn, WAKE_PHRASE_KEY, wake)?;
     set_setting(&conn, CLOSE_PHRASE_KEY, close)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod hands_free_phrase_tests {
+    use super::validate_hands_free_phrases;
+
+    #[test]
+    fn rejects_the_original_default_pair_that_bit_mona() {
+        // The literal old defaults: "خلاص يا أمين" contains "يا أمين".
+        assert!(validate_hands_free_phrases("يا أمين", "خلاص يا أمين").is_err());
+    }
+
+    #[test]
+    fn rejects_overlap_in_either_direction() {
+        assert!(validate_hands_free_phrases("خلاص يا أمين", "يا أمين").is_err());
+    }
+
+    #[test]
+    fn accepts_the_new_non_overlapping_defaults() {
+        assert!(validate_hands_free_phrases("يا أمين", "كفاية كده").is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_or_identical_phrases() {
+        assert!(validate_hands_free_phrases("", "كفاية كده").is_err());
+        assert!(validate_hands_free_phrases("يا أمين", "").is_err());
+        assert!(validate_hands_free_phrases("يا أمين", "يا أمين").is_err());
+    }
 }
 
 /// Turns hands-free mode on or off and persists the choice. The persisted

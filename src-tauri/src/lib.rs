@@ -26,7 +26,40 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Tauri's auto-generated macOS menu bar (File/Edit/View/Go/Window/
+        // Help) is a generic document-app default — the "View"/"Go"/
+        // "Window" items don't apply to Amin's single voice-first window,
+        // and Mona flagged the whole bar directly as visual clutter that
+        // doesn't belong in a presence-style app. Disabled here; a minimal
+        // replacement (just enough for Quit and text-field copy/paste) is
+        // installed explicitly in `setup` below instead of leaving the app
+        // with no menu at all.
+        .enable_macos_default_menu(false)
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+                let handle = app.handle();
+                let app_menu = Submenu::with_items(
+                    handle,
+                    "أمين",
+                    true,
+                    &[&PredefinedMenuItem::quit(handle, None)?],
+                )?;
+                let edit_menu = Submenu::with_items(
+                    handle,
+                    "Edit",
+                    true,
+                    &[
+                        &PredefinedMenuItem::cut(handle, None)?,
+                        &PredefinedMenuItem::copy(handle, None)?,
+                        &PredefinedMenuItem::paste(handle, None)?,
+                        &PredefinedMenuItem::select_all(handle, None)?,
+                    ],
+                )?;
+                app.set_menu(Menu::with_items(handle, &[&app_menu, &edit_menu])?)?;
+            }
+
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let database = db::init(dir.join("amin.db"))?;
