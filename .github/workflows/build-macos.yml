@@ -107,7 +107,13 @@ jobs:
       # also the real fix for the repeated-microphone-permission-dialog
       # bug — an unsigned build has no stable identity for macOS's TCC
       # privacy system to remember a grant against.
+      # timeout-minutes: the first real notarization run hung for over an
+      # hour with no error (way past the ~5-15 min this step normally
+      # takes) — cancelled by hand since nothing here would have caught
+      # it otherwise short of GitHub's own 6-hour job ceiling, silently
+      # burning Mona's Actions minutes the whole time. Bounds a repeat.
       - uses: tauri-apps/tauri-action@v0
+        timeout-minutes: 20
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
