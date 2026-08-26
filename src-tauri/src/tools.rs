@@ -186,6 +186,11 @@ pub fn tool_definitions() -> Vec<Value> {
             "input_schema": { "type": "object", "properties": {} }
         }),
         json!({
+            "name": "get_evening_review",
+            "description": "Gathers what actually got marked done in roughly the last 24 hours (real task titles, not a guess from the conversation), what's still open or in progress, and any follow-ups still due. Use this when Mona asks Amin to close out the day (e.g. \"قفل لي اليوم\") so the reply can say specifically what happened and what's left, instead of a generic \"تم إنهاء اليوم\".",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
+        json!({
             "name": "forget_fact",
             "description": "Permanently forget a remembered fact by its id (get the id from search_memory first). Use when Mona explicitly says to forget something, e.g. \"انسَ المعلومة دي\".",
             "input_schema": {
@@ -223,7 +228,7 @@ pub fn risk_for(name: &str) -> RiskTier {
         "create_task" | "quick_capture" | "list_tasks" | "set_task_status"
         | "list_follow_ups" | "list_due_follow_ups" | "set_follow_up_status"
         | "create_follow_up" | "remember_fact" | "search_memory" | "forget_fact"
-        | "get_daily_overview" => RiskTier::Auto,
+        | "get_daily_overview" | "get_evening_review" => RiskTier::Auto,
         "escalate_follow_up" => RiskTier::TrustedDelegation,
         "list_workspace_files"
         | "read_workspace_file"
@@ -258,6 +263,7 @@ pub fn describe(name: &str, input: &Value) -> String {
         "search_memory" => format!("البحث في الذاكرة عن: {}", s("query")),
         "forget_fact" => format!("نسيان المعلومة رقم {}", s("id")),
         "get_daily_overview" => "تجميع نظرة عامة على اليوم (مهام، متابعات، ذاكرة)".to_string(),
+        "get_evening_review" => "تجميع مراجعة نهاية اليوم (منجز، مفتوح، متابعات مستحقة)".to_string(),
         other => format!("تنفيذ إجراء غير معروف: {other} — يُنصح بعدم الموافقة"),
     }
 }
@@ -409,6 +415,29 @@ pub fn execute<R: Runtime>(
                 "remembered_facts": remembered_facts,
             }))
         }
+        "get_evening_review" => {
+            // "Today" isn't tracked against Mona's timezone anywhere in this
+            // database, so — same honest simplification brief.rs's
+            // DeltaBrief already makes — this is a rolling 24 hours, not a
+            // real calendar-day boundary.
+            let since = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+            let all_tasks = tasks::list(conn, None)?;
+            let completed_last_24h: Vec<_> = all_tasks
+                .iter()
+                .filter(|t| t.status == "done" && t.updated_at >= since)
+                .cloned()
+                .collect();
+            let still_open: Vec<_> = all_tasks
+                .into_iter()
+                .filter(|t| t.status == "open" || t.status == "in_progress")
+                .collect();
+            let due_follow_ups = followups::list_due(conn, chrono::Utc::now())?;
+            Ok(json!({
+                "completed_last_24h": completed_last_24h,
+                "still_open": still_open,
+                "due_follow_ups": due_follow_ups,
+            }))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -479,6 +508,27 @@ mod tests {
         assert_eq!(result["open_tasks"].as_array().unwrap().len(), 1);
         assert_eq!(result["due_follow_ups"].as_array().unwrap().len(), 1);
         assert_eq!(result["remembered_facts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn get_evening_review_separates_completed_from_still_open() {
+        let conn = test_db();
+        let app = tauri::test::mock_app();
+        let done_task = tasks::create(&conn, "اتصلت بالمدرسة", "amin").unwrap();
+        tasks::set_status(&conn, &done_task.id, "done").unwrap();
+        let open_task = tasks::create(&conn, "متابعة الرسوم", "amin").unwrap();
+        followups::create(&conn, &open_task.id, "2020-01-01T00:00:00Z").unwrap(); // already due
+
+        let result = execute(app.handle(), &conn, "get_evening_review", &json!({})).unwrap();
+        let completed = result["completed_last_24h"].as_array().unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["title"], "اتصلت بالمدرسة");
+
+        let still_open = result["still_open"].as_array().unwrap();
+        assert_eq!(still_open.len(), 1);
+        assert_eq!(still_open[0]["title"], "متابعة الرسوم");
+
+        assert_eq!(result["due_follow_ups"].as_array().unwrap().len(), 1);
     }
 
     #[test]
