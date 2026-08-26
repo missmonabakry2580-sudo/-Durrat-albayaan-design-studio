@@ -69,6 +69,10 @@
 
 .orb-panel {
   align-items: center;
+  background: radial-gradient(ellipse at center, var(--navy-800) 0%, var(--navy-950) 78%);
+  border-color: var(--border-strong);
+  padding: var(--space-8) var(--space-6);
+  box-shadow: inset 0 0 0 1px rgba(217, 184, 74, 0.06), 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
 .orb-switcher {
