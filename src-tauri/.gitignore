@@ -6,8 +6,8 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
-# The voice transcriber helper binary — compiled from macos/transcriber/
-# main.swift by .github/workflows/build-macos.yml on a macOS CI runner and
-# placed here so tauri.conf.json's bundle.resources can pick it up. Never
-# a source file; never commit a compiled binary.
-/amin-transcriber
+# The voice engine dylib — compiled from macos/transcriber/AminVoice.swift
+# by .github/workflows/build-macos.yml on a macOS CI runner and placed here
+# so tauri.conf.json's bundle.resources can pick it up. Never a source
+# file; never commit a compiled binary.
+/libaminvoice.dylib

@@ -4,10 +4,10 @@
 <dict>
 	<!--
 	  Merged into the generated Info.plist by tauri-bundler. Required for
-	  the push-to-talk voice pipeline (macos/transcriber/main.swift): the
-	  helper is a plain spawned executable, not its own signed .app bundle,
-	  so macOS attributes its microphone/speech-recognition TCC prompts to
-	  this app's own Info.plist strings (its "responsible process"). See
+	  the push-to-talk voice pipeline (macos/transcriber/AminVoice.swift):
+	  it runs in-process (loaded as a dylib via dlopen, not spawned as a
+	  separate helper), so these strings are exactly what macOS shows in
+	  the microphone/speech-recognition permission prompts. See
 	  src-tauri/src/voice.rs and docs/ARCHITECTURE.md's "Voice pipeline".
 	-->
 	<key>NSMicrophoneUsageDescription</key>

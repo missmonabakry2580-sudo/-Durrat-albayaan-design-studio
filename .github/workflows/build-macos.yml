@@ -29,26 +29,28 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Compiles macos/transcriber/main.swift (Speech/AVFoundation push-to-
-      # talk helper — see src-tauri/src/voice.rs) as a universal binary and
-      # places it where tauri.conf.json's bundle.resources expects it. This
-      # Swift code has never been compiled before it reaches this runner —
-      # if it fails, a placeholder that reports a clear in-app error is
-      # bundled instead, so a Swift build problem never breaks Amin's whole
-      # release. Check this step's log first if voice doesn't work.
-      - name: Build the voice transcriber helper
+      # Compiles macos/transcriber/AminVoice.swift (Speech/AVFoundation
+      # push-to-talk engine — see src-tauri/src/voice.rs) as a universal
+      # dylib and places it where tauri.conf.json's bundle.resources
+      # expects it. Amin's Rust binary loads this in-process via
+      # dlopen/dlsym at runtime (see macos/transcriber/README.md for why
+      # it's a dylib, not a spawned helper process). If it fails, a
+      # placeholder that reports a clear in-app error is bundled instead,
+      # so a Swift build problem never breaks Amin's whole release. Check
+      # this step's log first if voice doesn't work.
+      - name: Build the voice engine
         run: |
           cd macos/transcriber
-          DEST="$GITHUB_WORKSPACE/src-tauri/amin-transcriber"
-          if swiftc -O -target arm64-apple-macosx13.0 main.swift -o amin-transcriber-arm64 \
-            && swiftc -O -target x86_64-apple-macosx13.0 main.swift -o amin-transcriber-x86_64 \
-            && lipo -create amin-transcriber-arm64 amin-transcriber-x86_64 -output "$DEST"; then
-            chmod +x "$DEST"
-            echo "Voice transcriber compiled successfully (universal binary)."
+          DEST="$GITHUB_WORKSPACE/src-tauri/libaminvoice.dylib"
+          if swiftc -O -target arm64-apple-macosx13.0 -emit-library -parse-as-library \
+               -module-name AminVoice AminVoice.swift -o libaminvoice-arm64.dylib \
+            && swiftc -O -target x86_64-apple-macosx13.0 -emit-library -parse-as-library \
+               -module-name AminVoice AminVoice.swift -o libaminvoice-x86_64.dylib \
+            && lipo -create libaminvoice-arm64.dylib libaminvoice-x86_64.dylib -output "$DEST"; then
+            echo "Voice engine compiled successfully (universal dylib)."
           else
-            echo "::warning::Voice transcriber failed to compile — bundling a placeholder instead of failing the whole build. Push-to-talk will report a clear error until this is fixed."
-            printf '%s\n' '#!/bin/sh' 'echo "{\"type\":\"error\",\"message\":\"the voice transcriber failed to build in CI - see the build-macos workflow logs\"}"' > "$DEST"
-            chmod +x "$DEST"
+            echo "::warning::Voice engine failed to compile — bundling a placeholder instead of failing the whole build. Push-to-talk will report a clear error until this is fixed."
+            printf '' > "$DEST"
           fi
 
       - uses: tauri-apps/tauri-action@v0

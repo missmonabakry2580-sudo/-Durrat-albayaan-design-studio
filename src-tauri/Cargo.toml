@@ -41,6 +41,10 @@ keyring = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+# Loads the voice engine (macos/transcriber/AminVoice.swift, built as a
+# dylib) in-process via dlopen/dlsym — see src/voice.rs for why this
+# replaced spawning it as a separate helper process.
+libloading = "0.8"
 
 [dev-dependencies]
 # tauri::test::mock_app — used by tools.rs's unit tests, which need a real

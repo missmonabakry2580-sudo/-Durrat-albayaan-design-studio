@@ -1,19 +1,18 @@
-use serde::Deserialize;
-use std::io::{BufRead, BufReader, Write};
+use libloading::{Library, Symbol};
+use std::ffi::{c_char, c_int, CStr};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// The one push-to-talk session, if a recording is currently in progress.
-/// Plain `std::process` + `std::thread`, deliberately not async — this runs
-/// from a global-shortcut key-event handler, whose execution context isn't
-/// guaranteed to have a Tokio runtime entered, so it must not depend on one.
-pub struct VoiceSession(pub Mutex<Option<Child>>);
+/// Whether a push-to-talk session is currently in progress. Plain
+/// `std::sync`, deliberately not async — this runs from a global-shortcut
+/// key-event handler, whose execution context isn't guaranteed to have a
+/// Tokio runtime entered, so it must not depend on one.
+pub struct VoiceSession(Mutex<bool>);
 
 impl VoiceSession {
     pub fn new() -> Self {
-        VoiceSession(Mutex::new(None))
+        VoiceSession(Mutex::new(false))
     }
 }
 
@@ -23,104 +22,119 @@ impl Default for VoiceSession {
     }
 }
 
-/// One line of the native transcriber helper's stdout protocol. See
-/// macos/transcriber/main.swift for the producer side of this contract.
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum TranscriberMessage {
-    Partial { text: String },
-    Final { text: String },
-    Error { message: String },
-    #[serde(other)]
-    Other,
-}
+/// `kind` as passed by `AminVoice.swift`'s C callback: 0 = partial
+/// transcript, 1 = final transcript, anything else = error.
+type VoiceCallback = unsafe extern "C" fn(c_int, *const c_char);
+type StartFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
+type StopFn = unsafe extern "C" fn();
 
-/// Where the compiled native helper is expected to live, bundled as a
-/// Tauri resource. **Not shipped yet** — see docs/ARCHITECTURE.md's "Voice
-/// pipeline" section for the build step that produces it. Until then,
-/// `start_listening` fails with a clear "not built yet" error rather than
-/// a confusing file-not-found one.
-fn helper_path(app: &AppHandle) -> Result<PathBuf, String> {
+/// The loaded voice engine, once found — loaded at most once per run, then
+/// reused for every push-to-talk session.
+static LIBRARY: OnceLock<Library> = OnceLock::new();
+/// Set on the first `start_listening` call so the plain C callback below
+/// (which, being `extern "C"`, cannot capture any Rust state) has a way to
+/// reach the app and emit events. Amin only ever runs one app instance, so
+/// one static handle is all this needs.
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+/// Where the compiled voice engine is expected to live, bundled as a Tauri
+/// resource. See macos/transcriber/README.md for the build step that
+/// produces it and why it's a dylib loaded in-process rather than a
+/// spawned helper.
+fn engine_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
-        .resolve("amin-transcriber", tauri::path::BaseDirectory::Resource)
+        .resolve("libaminvoice.dylib", tauri::path::BaseDirectory::Resource)
         .map_err(|e| e.to_string())
 }
 
-/// Starts push-to-talk listening: spawns the native transcriber helper and
-/// forwards its partial/final transcript lines to the frontend as
-/// `voice://partial`, `voice://final`, `voice://error` events. A second
-/// call while already listening is a no-op, not an error (a key that
-/// auto-repeats while held shouldn't spawn a second helper).
-pub fn start_listening(app: AppHandle, session: tauri::State<'_, VoiceSession>) -> Result<(), String> {
-    {
-        let mut guard = session.0.lock().map_err(|e| e.to_string())?;
-        if let Some(child) = guard.as_mut() {
-            // `Ok(None)` means it's genuinely still running; anything else
-            // (exited, or we can't tell) clears the stale handle instead of
-            // getting permanently stuck refusing to start a new session.
-            if matches!(child.try_wait(), Ok(None)) {
-                return Ok(());
-            }
-            *guard = None;
-        }
+fn engine(app: &AppHandle) -> Result<&'static Library, String> {
+    if let Some(lib) = LIBRARY.get() {
+        return Ok(lib);
     }
 
-    let path = helper_path(&app)?;
+    let path = engine_path(app)?;
     if !path.exists() {
         return Err(format!(
-            "the voice transcriber isn't built yet (expected at {}) — see docs/ARCHITECTURE.md \"Voice pipeline\"",
+            "the voice engine isn't built yet (expected at {}) — see macos/transcriber/README.md",
             path.display()
         ));
     }
 
-    let mut child = Command::new(&path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("couldn't start the voice transcriber: {e}"))?;
+    // Safety: libaminvoice.dylib is built by this repo's own CI step
+    // (.github/workflows/build-macos.yml) from
+    // macos/transcriber/AminVoice.swift immediately before bundling — never
+    // a third-party or user-supplied file.
+    let lib = unsafe { Library::new(&path) }
+        .map_err(|e| format!("couldn't load the voice engine: {e}"))?;
+    // Someone else may have raced us and already set it; either way,
+    // LIBRARY now holds a library, which is all the caller needs.
+    let _ = LIBRARY.set(lib);
+    Ok(LIBRARY.get().expect("just set above"))
+}
 
-    let stdout = child
-        .stdout
-        .take()
-        .expect("stdout was requested as piped above");
+/// Forwards a partial/final/error event from the (in-process) voice engine
+/// to the frontend. Runs on whatever thread the Speech framework's
+/// recognition task happens to call back on.
+unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
+    let Some(app) = APP_HANDLE.get() else { return };
+    let text = if text.is_null() {
+        String::new()
+    } else {
+        // Safety: AminVoice.swift documents this pointer as a NUL-terminated
+        // UTF-8 C string valid only for the duration of this call — copy it
+        // now rather than holding onto it.
+        unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned()
+    };
+    let _ = match kind {
+        0 => app.emit("voice://partial", text),
+        1 => app.emit("voice://final", text),
+        _ => app.emit("voice://error", text),
+    };
+}
 
-    let app_for_thread = app.clone();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let message = match serde_json::from_str::<TranscriberMessage>(&line) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let _ = match message {
-                TranscriberMessage::Partial { text } => app_for_thread.emit("voice://partial", text),
-                TranscriberMessage::Final { text } => app_for_thread.emit("voice://final", text),
-                TranscriberMessage::Error { message } => app_for_thread.emit("voice://error", message),
-                TranscriberMessage::Other => Ok(()),
-            };
-        }
-    });
+/// Starts push-to-talk listening: loads the voice engine on first use and
+/// calls straight into it — no subprocess, no stdin/stdout protocol. A
+/// second call while already listening is a no-op, not an error (a key
+/// that auto-repeats while held shouldn't start a second session).
+pub fn start_listening(app: AppHandle, session: tauri::State<'_, VoiceSession>) -> Result<(), String> {
+    let mut listening = session.0.lock().map_err(|e| e.to_string())?;
+    if *listening {
+        return Ok(());
+    }
 
-    let mut guard = session.0.lock().map_err(|e| e.to_string())?;
-    *guard = Some(child);
+    let _ = APP_HANDLE.set(app.clone());
+    let lib = engine(&app)?;
+
+    let rc = unsafe {
+        let start: Symbol<StartFn> = lib
+            .get(b"amin_voice_start\0")
+            .map_err(|e| format!("voice engine is missing amin_voice_start: {e}"))?;
+        start(on_voice_event)
+    };
+    if rc != 0 {
+        return Err(format!("the voice engine failed to start (code {rc})"));
+    }
+
+    *listening = true;
     Ok(())
 }
 
-/// Stops push-to-talk listening: sends the helper its stop signal over
-/// stdin and waits for it to exit (it's expected to flush a final
-/// transcript line first). A no-op if nothing is listening.
+/// Stops push-to-talk listening: calls into the voice engine to end the
+/// current utterance. A no-op if nothing is listening.
 pub fn stop_listening(session: tauri::State<'_, VoiceSession>) -> Result<(), String> {
-    let mut child = {
-        let mut guard = session.0.lock().map_err(|e| e.to_string())?;
-        match guard.take() {
-            Some(child) => child,
-            None => return Ok(()),
-        }
-    };
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        let _ = stdin.write_all(b"stop\n");
+    let mut listening = session.0.lock().map_err(|e| e.to_string())?;
+    if !*listening {
+        return Ok(());
     }
-    let _ = child.wait();
+
+    if let Some(lib) = LIBRARY.get() {
+        unsafe {
+            if let Ok(stop) = lib.get::<StopFn>(b"amin_voice_stop\0") {
+                stop();
+            }
+        }
+    }
+
+    *listening = false;
     Ok(())
 }

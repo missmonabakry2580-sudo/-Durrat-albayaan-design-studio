@@ -76,8 +76,8 @@ src-tauri/                 Rust backend
                              list (banking, payments, ...)
   src/audit.rs              append-only audit log writer
   src/agent.rs              Agent Core: the Anthropic API client
-  src/voice.rs              push-to-talk session: spawns/manages the
-                             native transcriber helper (see macos/)
+  src/voice.rs              push-to-talk session: loads and calls the
+                             native voice engine in-process (see macos/)
   src/tasks.rs              local task CRUD + Quick Capture
   src/files.rs              file access, confined to ~/Documents/Amin
   src/browser.rs            opens a URL in Amin's own isolated browser
@@ -93,8 +93,9 @@ src-tauri/                 Rust backend
   src/lib.rs                wires plugins, DB, tray, global shortcut, and
                              commands together
 
-macos/transcriber/          native Speech-framework helper — NOT verified,
-                             see its own README before touching voice.rs
+macos/transcriber/          native Speech-framework voice engine (dylib,
+                             loaded in-process) — NOT verified, see its
+                             own README before touching voice.rs
 
 docs/                       this file, SECURITY.md
 .env.local.example          dev-only convenience; see SECURITY.md
@@ -138,14 +139,14 @@ is ready to add a voice-provider key, not assumed here.
 
 **Built and verified (compiles, runs, unit-tested in this sandbox):**
 
-- `src-tauri/src/voice.rs`: manages one push-to-talk `VoiceSession` —
-  spawns the native transcriber helper as a plain child process (`std`,
-  not async — see the module doc comment for why), streams its stdout
-  lines as `voice://partial` / `voice://final` / `voice://error` events,
-  and sends it a stop signal on release. If the helper binary isn't
-  present, it fails with a clear "not built yet" error rather than doing
+- `src-tauri/src/voice.rs`: manages one push-to-talk `VoiceSession` — loads
+  `libaminvoice.dylib` in-process (via `dlopen`/`dlsym`, the `libloading`
+  crate) the first time listening starts, calls straight into it, and
+  forwards the partial/final/error events its C callback receives as
+  `voice://partial` / `voice://final` / `voice://error`. If the dylib isn't
+  present or fails to load, it fails with a clear error rather than doing
   nothing silently — that path itself is exercised and correct even
-  without a real helper.
+  without a real engine.
 - A global `alt+A` push-to-talk shortcut (`tauri-plugin-global-shortcut`,
   registered in `lib.rs`), armed even when Amin's window isn't focused —
   registers cleanly and doesn't crash the app (verified under a virtual
@@ -158,18 +159,20 @@ is ready to add a voice-provider key, not assumed here.
   the recognition accuracy is itself unverified, sending unreviewed text
   straight to the API isn't the right default yet.
 
-**Written but never compiled or run — needs a real Mac:**
-`macos/transcriber/main.swift`, a standalone Speech-framework helper
+**Written and compiling in CI — never run against a real microphone:**
+`macos/transcriber/AminVoice.swift`, a Speech-framework voice engine
 (`SFSpeechRecognizer` + `AVAudioEngine`, following Apple's documented
 live-recognition pattern). There is no macOS, no Xcode, and no
-microphone in this development sandbox to compile or exercise it against
-— see `macos/transcriber/README.md` for the build steps and, importantly,
-**a known open risk that needs deciding, not just testing**: a standalone
-CLI helper spawned as a child process may not cleanly inherit
-microphone/speech TCC permission prompts the way code inside the signed
-`.app` bundle does. If that turns out to be true, the fix is moving this
-logic in-process via a Rust↔Swift FFI bridge instead of a separate
-executable, which is a real (if bounded) rewrite, not a tweak.
+microphone in this development sandbox to exercise it against a real
+mic. It used to be a standalone executable spawned as a child process;
+Mona hit "couldn't start the audio engine" on a real Mac, which matched
+this file's own previously-flagged open risk — a spawned CLI binary may
+not cleanly inherit microphone/speech TCC (privacy permission) prompts
+the way code inside the signed `.app` bundle does. The fix applied:
+`AminVoice.swift` now builds as a dylib that Amin's own process loads
+in-process instead of spawning as a separate executable — see
+`macos/transcriber/README.md` for the build details and what to check
+the first time this runs on a real Mac.
 
 Speaker recognition (the voice-print / presence-greeting feature) is a
 separate step after the above is proven out, with its own real model

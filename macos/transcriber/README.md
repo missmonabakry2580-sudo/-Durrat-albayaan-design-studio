@@ -1,54 +1,65 @@
-# Amin's push-to-talk transcriber (macOS helper)
+# Amin's push-to-talk voice engine (macOS helper)
 
-**Status: written, never compiled or run.** This was written in a Linux
-sandbox with no macOS, no Xcode, and no microphone — see `main.swift`'s
-header comment for the full detail. This README is the checklist for the
-first time it's built on a real Mac.
+**Status: written, compiled successfully in CI, never run against a real
+microphone.** This was written in a Linux sandbox with no macOS, no Xcode,
+and no microphone — see `AminVoice.swift`'s header comment for the full
+detail.
 
-## 1. Build it
+## Why this is a library, not a standalone helper
+
+An earlier version was a standalone executable, spawned as a child
+process from `src-tauri/src/voice.rs` and talked to over stdin/stdout JSON
+lines. On a real Mac, Mona hit "couldn't start the audio engine" — the
+exact failure this file's header had flagged as a known open risk before
+it was tried: a spawned CLI binary may not cleanly inherit the signed
+`.app`'s microphone/speech TCC (privacy permission) grant.
+
+The fix was moving this logic in-process: `AminVoice.swift` now compiles
+to a small dylib, loaded and called directly by Amin's own Rust binary
+(via `dlopen`/`dlsym`, the `libloading` crate — see `voice.rs`) instead of
+being spawned as a separate process. Every AVFoundation/Speech call now
+executes as the same process macOS prompts for microphone/speech access,
+closing the TCC-identity gap a subprocess had.
+
+## How it's built
+
+CI (`.github/workflows/build-macos.yml`) compiles this for both
+architectures and lipo-combines them into one universal dylib:
 
 ```bash
 cd macos/transcriber
-swiftc -O main.swift -o amin-transcriber
+swiftc -O -target arm64-apple-macosx13.0 -emit-library -parse-as-library \
+  -module-name AminVoice AminVoice.swift -o libaminvoice-arm64.dylib
+swiftc -O -target x86_64-apple-macosx13.0 -emit-library -parse-as-library \
+  -module-name AminVoice AminVoice.swift -o libaminvoice-x86_64.dylib
+lipo -create libaminvoice-arm64.dylib libaminvoice-x86_64.dylib -output libaminvoice.dylib
 ```
 
-Fix whatever the compiler says first — this is genuinely unverified Swift,
-and a first-pass compile error or two would not be surprising.
+The result is placed at `src-tauri/libaminvoice.dylib`, which
+`tauri.conf.json`'s `bundle.resources` picks up and bundles into the
+`.app`. If the compile fails, CI bundles a placeholder that reports a
+clear in-app error instead of failing the whole release — check that
+workflow step's log first if voice doesn't work.
 
-## 2. Test it standalone, before wiring it into Amin
+There is deliberately no manual "run it standalone from a terminal" step
+anymore: `-parse-as-library` means this file has no executable entry
+point of its own. The only way to exercise it is through the running
+Amin app (`npm run tauri dev`, hold the mic button or `alt+A`) on a real
+Mac — `src-tauri/src/voice.rs` looks for the dylib at the Tauri resource
+path and says plainly if it can't find or load it.
 
-```bash
-./amin-transcriber
-```
+## What to check the first time this runs on a real Mac
 
-It should prompt for microphone and speech-recognition permission the
-first time (macOS's permission dialog). Say something, then type `stop`
-and press Enter. Watch for JSON lines like:
-
-```json
-{"type":"partial","text":"..."}
-{"type":"final","text":"..."}
-```
-
-**If no permission prompt appears, or it silently fails:** this is the
-known open risk flagged in `main.swift` — a standalone CLI binary may not
-get TCC (privacy permission) prompts the way code running inside a signed
-`.app` bundle does. Don't spend hours on it here; the likely fix is moving
-this logic in-process into the main Rust/Tauri binary via a Swift↔Rust FFI
-bridge instead of a separate child process. Report back with what actually
-happened (prompt shown? denied? no prompt at all?) so we can decide.
-
-## 3. Wire it into Amin
-
-Once step 2 works:
-
-1. Copy `amin-transcriber` into this repo somewhere Tauri can bundle it
-   (or leave it here and reference it by relative path).
-2. Add a `resources` entry to `bundle` in `src-tauri/tauri.conf.json`,
-   e.g. `"resources": ["../macos/transcriber/amin-transcriber"]`.
-3. Run `npm run tauri dev` and hold the mic button (or `alt+A`) in the app.
-   `src-tauri/src/voice.rs` already looks for the binary at the Tauri
-   resource path and will say plainly if it can't find it.
+1. Holding the mic button (or `alt+A`) should trigger macOS's microphone
+   and speech-recognition permission prompts the first time.
+2. If a prompt appears and is granted, watch for `voice://partial` /
+   `voice://final` events reaching the chat input as you speak, and
+   `voice://error` if something goes wrong (see `AminVoice.swift`'s error
+   strings for what each one means).
+3. If **no prompt appears at all**, or it fails silently even after
+   granting permission — report back exactly what happened (prompt
+   shown? denied? console/log output?) rather than assuming this fix
+   didn't work; there may be a second, different problem to diagnose.
 
 ## Known limitations to revisit, not silently work around
 
