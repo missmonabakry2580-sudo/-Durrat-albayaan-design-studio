@@ -98,10 +98,25 @@ private final class Transcriber {
     /// in the old standalone-CLI version which had no run loop pumping it.
     func start(onFinished: @escaping () -> Void) {
         self.onFinished = onFinished
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            DispatchQueue.main.async {
-                self?.handleAuthorization(status == .authorized)
+        // Check the already-decided status first rather than calling
+        // requestAuthorization unconditionally on every push-to-talk press.
+        // Once Mona has answered the system prompt once, every later press
+        // should go straight to listening — asking again on every single
+        // press is exactly the "keeps sending me back to the permission
+        // screen" bug she hit.
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            handleAuthorization(true)
+        case .denied, .restricted:
+            handleAuthorization(false)
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                DispatchQueue.main.async {
+                    self?.handleAuthorization(status == .authorized)
+                }
             }
+        @unknown default:
+            handleAuthorization(false)
         }
     }
 
