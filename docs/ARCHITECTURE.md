@@ -297,6 +297,24 @@ with the notary log showing `Notarizing Finished with status Accepted` and
 more Gatekeeper warning, and one stable identity for TCC to remember
 permission grants against.
 
+**But 0.2.2 traded the old mic bug for a new one**: notarization requires
+signing with the Hardened Runtime (`codesign --options runtime`), and
+Hardened Runtime blocks microphone access outright — no system permission
+prompt at all — unless the app explicitly carries the
+`com.apple.security.device.audio-input` entitlement. `NSMicrophoneUsageDescription`
+in `Info.plist` isn't enough on its own once Hardened Runtime is in play;
+that string controls what a prompt *says*, this entitlement controls
+whether the OS will show one *at all*. Mona hit this immediately in 0.2.2:
+pressing push-to-talk gave "microphone access was not granted" instantly,
+with no dialog, even right after a `tccutil reset Microphone` — because
+unsigned/ad-hoc builds never engage Hardened Runtime, this never surfaced
+before real signing landed. Fixed by adding `src-tauri/entitlements.plist`
+(just that one entitlement) and pointing `tauri.conf.json`'s
+`bundle.macOS.entitlements` at it, from 0.2.4 on. The dylib itself needs no
+entitlements of its own — it runs inside the signed host process's
+context once loaded via `dlopen`, so only the main executable's
+entitlements matter here.
+
 ## The command surface is the whole contract
 
 The frontend never gets raw SQL access and never talks to the network
