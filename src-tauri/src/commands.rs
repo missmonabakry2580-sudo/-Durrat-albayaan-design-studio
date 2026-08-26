@@ -696,6 +696,13 @@ pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
 /// upgrade isn't configured.
 #[tauri::command]
 pub async fn speak_text(app: AppHandle, text: String, db: State<'_, Db>) -> Result<(), String> {
+    // Claude's replies are written for the chat UI, which renders markdown
+    // (**bold**, bullets, links...) as formatting — a speech engine just
+    // reads the punctuation aloud, which is what surfaced as the on-device
+    // Arabic voice "breaking up letters" and mis-spelling everything. Only
+    // the spoken copy is cleaned; the chat log keeps the original text.
+    let text = agent::strip_markdown_for_speech(&text);
+
     let eleven_key = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty())

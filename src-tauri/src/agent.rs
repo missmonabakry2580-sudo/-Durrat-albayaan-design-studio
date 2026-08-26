@@ -104,6 +104,69 @@ pub fn extract_emotion(text: &str) -> (String, Option<String>) {
     }
 }
 
+/// Strips common Markdown punctuation before text reaches speech
+/// synthesis (on-device or ElevenLabs — see `commands::speak_text`).
+/// Claude's replies are written to be *read* in the chat UI, which
+/// renders `**bold**`, `# headings`, `- bullets`, `` `code` ``, and
+/// `[label](url)` as formatting. A speech engine has no such rendering
+/// and reads the punctuation itself — Mona reported the on-device Arabic
+/// voice "breaking up letters" and mis-spelling everything; the mangled
+/// parts turned out to be literal markdown symbols read aloud, not the
+/// voice mispronouncing real words.
+pub fn strip_markdown_for_speech(text: &str) -> String {
+    strip_markdown_links(text)
+        .lines()
+        .map(strip_line_markers)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("**", "")
+        .replace('`', "")
+}
+
+fn strip_line_markers(line: &str) -> String {
+    let trimmed = line.trim_start().trim_start_matches('#').trim_start();
+    match trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        Some(rest) => rest.to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// Rewrites `[label](url)` to just `label` — the URL itself is meaningless
+/// read aloud, and reading `[`/`]`/`(`/`)` literally is exactly the kind
+/// of "broken letters" this whole function exists to avoid. Leaves a lone
+/// `[` alone (not a link) rather than dropping it.
+fn strip_markdown_links(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '[' {
+            out.push(c);
+            continue;
+        }
+        let mut label = String::new();
+        let mut lookahead = chars.clone();
+        let mut closed = false;
+        for c2 in lookahead.by_ref() {
+            if c2 == ']' {
+                closed = true;
+                break;
+            }
+            label.push(c2);
+        }
+        if closed && lookahead.peek() == Some(&'(') {
+            lookahead.next();
+            let consumed_url = lookahead.by_ref().any(|c2| c2 == ')');
+            if consumed_url {
+                out.push_str(&label);
+                chars = lookahead;
+                continue;
+            }
+        }
+        out.push('[');
+    }
+    out
+}
+
 /// One turn of conversation, kept in memory across calls so Amin has
 /// short-term context. `content` is a `Value` rather than a plain string
 /// because assistant turns that call a tool, and the user turns that
@@ -516,5 +579,32 @@ mod tests {
         let (text, emotion) = extract_emotion("تمام.\n[[emotion:ecstatic]]");
         assert_eq!(text, "تمام.");
         assert_eq!(emotion, None);
+    }
+
+    #[test]
+    fn strips_bold_and_backtick_markers_for_speech() {
+        assert_eq!(
+            strip_markdown_for_speech("هدوس زرار **حفظ** بعدها `git push`"),
+            "هدوس زرار حفظ بعدها git push"
+        );
+    }
+
+    #[test]
+    fn strips_heading_and_bullet_markers_for_speech() {
+        let input = "## الخطوات\n- الأولى\n* الثانية";
+        assert_eq!(strip_markdown_for_speech(input), "الخطوات\nالأولى\nالثانية");
+    }
+
+    #[test]
+    fn rewrites_a_markdown_link_to_just_its_label_for_speech() {
+        assert_eq!(
+            strip_markdown_for_speech("شوفي [الرابط ده](https://example.com) الأول"),
+            "شوفي الرابط ده الأول"
+        );
+    }
+
+    #[test]
+    fn leaves_a_lone_bracket_alone_for_speech() {
+        assert_eq!(strip_markdown_for_speech("القيمة [مش معروفة]"), "القيمة [مش معروفة]");
     }
 }
