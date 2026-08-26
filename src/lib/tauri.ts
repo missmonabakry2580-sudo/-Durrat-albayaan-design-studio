@@ -77,6 +77,30 @@ export const listTasks = (status?: TaskStatus) => invoke<Task[]>("list_tasks", {
 export const setTaskStatus = (id: string, status: TaskStatus) =>
   invoke<void>("set_task_status", { id, status });
 
+export type EscalationStage = "friendly" | "firm" | "escalate_to_user";
+export type FollowUpStatus = "pending" | "sent" | "resolved" | "cancelled";
+
+export interface FollowUp {
+  id: string;
+  task_id: string;
+  due_at: string;
+  escalation_stage: EscalationStage;
+  status: FollowUpStatus;
+  created_at: string;
+}
+
+/**
+ * Follow-up Engine — local only for now. "sent" means Amin surfaced it in
+ * the app, not that an email or notification actually went out (there's
+ * no delivery channel wired up yet — see docs/ARCHITECTURE.md).
+ */
+export const createFollowUp = (taskId: string, dueAt: string) =>
+  invoke<FollowUp>("create_follow_up", { taskId, dueAt });
+export const listDueFollowUps = () => invoke<FollowUp[]>("list_due_follow_ups");
+export const escalateFollowUp = (id: string) => invoke<FollowUp>("escalate_follow_up", { id });
+export const setFollowUpStatus = (id: string, status: FollowUpStatus) =>
+  invoke<void>("set_follow_up_status", { id, status });
+
 export interface WorkspaceEntry {
   name: string;
   is_dir: boolean;

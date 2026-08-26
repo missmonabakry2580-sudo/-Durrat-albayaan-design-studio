@@ -4,6 +4,7 @@ mod browser;
 mod commands;
 mod db;
 mod files;
+mod followups;
 mod policy;
 mod secrets;
 mod tasks;
@@ -104,6 +105,11 @@ pub fn run() {
             commands::write_workspace_file,
             commands::delete_workspace_file,
             commands::open_browser_url,
+            commands::create_follow_up,
+            commands::list_follow_ups,
+            commands::list_due_follow_ups,
+            commands::escalate_follow_up,
+            commands::set_follow_up_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");

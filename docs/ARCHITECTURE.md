@@ -82,6 +82,8 @@ src-tauri/                 Rust backend
   src/files.rs              file access, confined to ~/Documents/Amin
   src/browser.rs            opens a URL in Amin's own isolated browser
                              window
+  src/followups.rs          local Follow-up Engine (creation, escalation,
+                             due-listing — no delivery channel yet)
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
   src/lib.rs                wires plugins, DB, tray, global shortcut, and
@@ -334,6 +336,27 @@ front of her quickly, not to avoid building them.
   tradeoffs (arbitrary JS execution, content extraction) worth its own
   design pass rather than folding into tonight's minimal version.
 
+## Phase 4 design notes: a local Follow-up Engine, honestly scoped
+
+`src-tauri/src/followups.rs` builds on the `follow_ups` table that's
+existed since Phase 0's schema: create a follow-up tied to a task with a
+due time, escalate it through the three stages the brief named
+(friendly → firm → escalate_to_user, capping at the last one rather than
+erroring or wrapping around), list what's currently due, resolve it once
+handled. 6 unit tests cover creation against a missing task, a malformed
+`due_at` (fails loudly rather than silently storing something `list_due`
+could never compare correctly), the due-filtering logic, and the
+escalation cap.
+
+**What "sent" does and doesn't mean here:** there is no delivery channel
+wired up yet — no email (that needs Phase 3's Gmail connector, which
+needs Mona's own Google OAuth credentials to exist at all), no OS
+notification. "Sent" in this module means *Amin surfaced it in the app's
+own UI* (the "Follow-ups Due" panel). Wiring this to a real channel that
+doesn't exist yet would be a stub pretending to be a finished feature —
+better to be honest that the *escalation logic* is real and tested, and
+*delivery* is real future work once there's a channel to deliver through.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |
@@ -341,8 +364,8 @@ front of her quickly, not to avoid building them.
 | 0 | Architecture, security foundation, design system *(this doc)* |
 | 1 | Desktop shell (menu bar), push-to-talk voice, speaker recognition + presence greeting, Agent Core (Anthropic API wiring) |
 | 2 | Task management + Quick Capture, scoped file access, minimal browser control *(all shipped — see Phase 2 notes above for what's still a conservative default vs. a settled decision)* |
-| 3 | Gmail, Calendar, Morning Brief |
-| 4 | Follow-up Engine, Executive Delegate Mode |
+| 3 | Gmail, Calendar, Morning Brief — blocked on Mona creating a Google OAuth client; see the account-setup checklist |
+| 4 | Follow-up Engine *(local logic shipped — see Phase 4 notes above)*, delivery channels + Executive Delegate Mode still ahead |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |
 | 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |
 | 7 | Mobile Companion (iOS, personal install only) — remote control over a private VPN mesh to the same core; see "Mobile Companion" above |

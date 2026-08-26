@@ -2,10 +2,11 @@ use tauri::{AppHandle, State};
 
 use crate::db::Db;
 use crate::files::WorkspaceEntry;
+use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, browser, files, secrets, tasks, voice};
+use crate::{agent, audit, browser, files, followups, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -395,4 +396,66 @@ pub fn open_browser_url(app: AppHandle, url: String, db: State<Db>) -> Result<()
         None,
     );
     result
+}
+
+/// Follow-up Engine (local only for now — see followups.rs's module doc
+/// for why "sent" doesn't mean an email went out yet).
+#[tauri::command]
+pub fn create_follow_up(task_id: String, due_at: String, db: State<Db>) -> Result<FollowUp, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let follow_up = followups::create(&conn, &task_id, &due_at)?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "create_follow_up",
+        RiskTier::Auto,
+        audit::Decision::Executed,
+        Some(&format!("task {task_id} due {due_at}")),
+        None,
+    );
+    Ok(follow_up)
+}
+
+#[tauri::command]
+pub fn list_follow_ups(task_id: Option<String>, db: State<Db>) -> Result<Vec<FollowUp>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    followups::list(&conn, task_id.as_deref())
+}
+
+#[tauri::command]
+pub fn list_due_follow_ups(db: State<Db>) -> Result<Vec<FollowUp>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    followups::list_due(&conn, chrono::Utc::now())
+}
+
+#[tauri::command]
+pub fn escalate_follow_up(id: String, db: State<Db>) -> Result<FollowUp, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let follow_up = followups::escalate(&conn, &id)?;
+    let _ = audit::record(
+        &conn,
+        "amin",
+        "escalate_follow_up",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Executed,
+        Some(&format!("{id} -> {}", follow_up.escalation_stage)),
+        None,
+    );
+    Ok(follow_up)
+}
+
+#[tauri::command]
+pub fn set_follow_up_status(id: String, status: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    followups::set_status(&conn, &id, &status)?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "set_follow_up_status",
+        RiskTier::Auto,
+        audit::Decision::Executed,
+        Some(&format!("{id} -> {status}")),
+        None,
+    );
+    Ok(())
 }

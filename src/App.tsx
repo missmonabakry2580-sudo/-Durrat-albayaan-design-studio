@@ -8,17 +8,21 @@ import {
   type AppInfo,
   type AuditEntry,
   type AutonomyLevel,
+  type FollowUp,
   type Task,
   type WorkspaceEntry,
   appInfo,
   clearAgentConversation,
   clearApiKey,
+  createFollowUp,
   createTask,
   deleteWorkspaceFile,
+  escalateFollowUp,
   getAutonomyLevel,
   hasApiKey,
   isHalted,
   listAuditLog,
+  listDueFollowUps,
   listTasks,
   listWorkspaceFiles,
   openBrowserUrl,
@@ -27,6 +31,7 @@ import {
   saveApiKey,
   sendAgentMessage,
   setAutonomyLevel,
+  setFollowUpStatus,
   setKillSwitch,
   setTaskStatus,
   startVoiceCapture,
@@ -71,11 +76,12 @@ function App() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   const [browserError, setBrowserError] = useState<string | null>(null);
+  const [dueFollowUps, setDueFollowUps] = useState<FollowUp[]>([]);
 
   async function refresh() {
     if (!inTauri) return;
     try {
-      const [i, hasKey, level, killed, log, taskList, files] = await Promise.all([
+      const [i, hasKey, level, killed, log, taskList, files, dueList] = await Promise.all([
         appInfo(),
         hasApiKey(),
         getAutonomyLevel(),
@@ -83,6 +89,7 @@ function App() {
         listAuditLog(10),
         listTasks(),
         listWorkspaceFiles(),
+        listDueFollowUps(),
       ]);
       setInfo(i);
       setKeySaved(hasKey);
@@ -91,6 +98,7 @@ function App() {
       setAuditLog(log);
       setTasks(taskList);
       setWorkspaceFiles(files);
+      setDueFollowUps(dueList);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -264,6 +272,21 @@ function App() {
     }
   }
 
+  async function handleRemindMe(task: Task) {
+    await createFollowUp(task.id, new Date().toISOString());
+    await refresh();
+  }
+
+  async function handleEscalate(followUp: FollowUp) {
+    await escalateFollowUp(followUp.id);
+    await refresh();
+  }
+
+  async function handleResolveFollowUp(followUp: FollowUp) {
+    await setFollowUpStatus(followUp.id, "resolved");
+    await refresh();
+  }
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -400,6 +423,16 @@ function App() {
                     {task.title}
                   </span>
                   {task.source && <span className="badge">{task.source}</span>}
+                  {task.status !== "done" && (
+                    <button
+                      className="chip"
+                      onClick={() => handleRemindMe(task)}
+                      disabled={!inTauri}
+                      title="Create a follow-up due right now (demo of the Follow-up Engine)"
+                    >
+                      ⏰
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -422,6 +455,40 @@ function App() {
               Add
             </button>
           </form>
+        </section>
+
+        <section className="panel">
+          <h2>متابعات مستحقة — Follow-ups Due</h2>
+          <p className="text-muted">
+            Phase 4 — local only for now: "sent" means Amin surfaced it here, not that an email or
+            notification went out (there's no delivery channel wired up yet). Click ⏰ next to a
+            task above to try it.
+          </p>
+          {dueFollowUps.length === 0 ? (
+            <p className="text-muted">Nothing due right now.</p>
+          ) : (
+            <ul className="task-list">
+              {dueFollowUps.map((f) => {
+                const task = tasks.find((t) => t.id === f.task_id);
+                return (
+                  <li key={f.id} className="task-row">
+                    <span className="task-title">{task?.title ?? f.task_id}</span>
+                    <span className="badge">{f.escalation_stage}</span>
+                    <button className="chip" onClick={() => handleEscalate(f)} disabled={!inTauri}>
+                      Escalate
+                    </button>
+                    <button
+                      className="chip"
+                      onClick={() => handleResolveFollowUp(f)}
+                      disabled={!inTauri}
+                    >
+                      Resolve
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
 
         <section className="panel">
