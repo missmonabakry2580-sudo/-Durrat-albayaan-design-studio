@@ -34,6 +34,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": ["amin-transcriber"],
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

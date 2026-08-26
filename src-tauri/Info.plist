@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated Info.plist by tauri-bundler. Required for
+	  the push-to-talk voice pipeline (macos/transcriber/main.swift): the
+	  helper is a plain spawned executable, not its own signed .app bundle,
+	  so macOS attributes its microphone/speech-recognition TCC prompts to
+	  this app's own Info.plist strings (its "responsible process"). See
+	  src-tauri/src/voice.rs and docs/ARCHITECTURE.md's "Voice pipeline".
+	-->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>أمين يحتاج الميكروفون عشان يسمعك لما تتكلمي معاه بالصوت (Push-to-Talk). Amin needs the microphone to hear you when you talk to it by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>أمين يحوّل كلامك لنص عشان يفهم طلبك — التفريغ الصوتي يحصل على جهازك قدر الإمكان. Amin transcribes your speech to understand your request — recognition happens on-device where possible.</string>
+</dict>
+</plist>

@@ -1,10 +1,15 @@
 // Amin's push-to-talk transcriber helper (macOS).
 //
-// STATUS: written from documented Speech/AVFoundation APIs, NEVER COMPILED
-// OR RUN. There is no macOS, no Xcode, and no microphone in the sandbox
-// this was written in — see docs/ARCHITECTURE.md's "Voice pipeline"
-// section and the morning checklist for what to verify first. Treat this
-// as a first draft to build and debug, not a finished feature.
+// STATUS: written from documented Speech/AVFoundation APIs, now wired into
+// the CI build (.github/workflows/build-macos.yml compiles this as a
+// universal binary and bundles it as a Tauri resource) and into
+// tauri.conf.json + src-tauri/Info.plist (NSMicrophoneUsageDescription /
+// NSSpeechRecognitionUsageDescription). Still NEVER RUN AGAINST A REAL
+// MICROPHONE — there is no macOS, no Xcode, and no microphone in the
+// sandbox this was written and wired up in. The macOS permission prompt,
+// the subprocess-TCC risk noted below, and actual transcription accuracy
+// are all unverified until tried on a real Mac. See docs/ARCHITECTURE.md's
+// "Voice pipeline" section.
 //
 // Protocol: reads nothing until a "stop\n" line arrives on stdin, at which
 // point it finishes the current utterance and exits. Meanwhile it writes
@@ -125,6 +130,15 @@ final class Transcriber {
             while let line = readLine(strippingNewline: true) {
                 if line == "stop" {
                     self?.request?.endAudio()
+                    // Safety net: if the recognizer never delivers a final
+                    // result after endAudio() (no speech detected, a stuck
+                    // recognition task), don't hang forever — the Rust side
+                    // is blocked in child.wait() for this exact process to
+                    // exit. Whatever partial transcript already reached the
+                    // frontend stays in its input box either way.
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 8) {
+                        self?.finish()
+                    }
                     break
                 }
             }
