@@ -1,0 +1,46 @@
+name: Build Amin (macOS)
+
+# Builds a ready-to-download macOS app for Mona so she never has to install
+# Node/Rust/Xcode tools herself — every push to the Amin branch (and manual
+# runs) produces a fresh universal (Intel + Apple Silicon) .dmg attached to
+# the "amin-preview" GitHub Release. See docs/ARCHITECTURE.md.
+on:
+  push:
+    branches: [claude/amin-project-6wwufr]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target universal-apple-darwin
+          tagName: amin-preview
+          releaseName: "أمين — نسخة تجريبية (Preview)"
+          releaseBody: |
+            بُنيت تلقائيًا من فرع claude/amin-project-6wwufr — آخر تحديث: ${{ github.sha }}
+
+            هذا التطبيق غير موقّع بشهادة مطوّر آبل (شخصي، غير موزّع عبر App Store)، فعند فتحه أول مرة سيظهر تحذير أمان من macOS. الحل:
+            كليك يمين (أو Control+كليك) على أيقونة "Amin" ثم اختاري "Open" من القائمة، وأكّدي "Open" في مربع التحذير — مرة واحدة فقط، بعدها يفتح عادي.
+            أو من: إعدادات النظام ← الخصوصية والأمان ← وابحثي عن رسالة "Amin was blocked" واضغطي "Open Anyway".
+          releaseDraft: false
+          prerelease: true
