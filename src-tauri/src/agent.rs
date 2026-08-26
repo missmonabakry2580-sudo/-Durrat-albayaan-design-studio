@@ -215,9 +215,27 @@ impl AnthropicResponse {
     /// The full content array, ready to store as this turn's assistant
     /// message in history (preserving the tool_use block, if any, exactly
     /// as Claude produced it — required for a later tool_result to be
-    /// valid).
+    /// valid). Drops `ContentBlock::Other` entries (e.g. `thinking` blocks,
+    /// which this app doesn't request or replay) rather than round-tripping
+    /// them: `ContentBlock`'s `Serialize` impl has no real JSON to give an
+    /// `Other` block, so it wrote a bare `null` into the array — silently
+    /// corrupting that turn in conversation history. The very next message
+    /// sent to the API then included that `null` where a content block was
+    /// expected, which the API rejects outright ("Input should be an
+    /// object"), breaking the conversation permanently until history aged
+    /// past that turn. Falls back to an empty-text block on the rare turn
+    /// that was nothing but such blocks, since Anthropic rejects an empty
+    /// content array too.
     pub fn as_assistant_content(&self) -> serde_json::Value {
-        serde_json::to_value(&self.content).unwrap_or(serde_json::Value::Null)
+        let mut blocks: Vec<&ContentBlock> = self
+            .content
+            .iter()
+            .filter(|b| !matches!(b, ContentBlock::Other))
+            .collect();
+        if blocks.is_empty() {
+            return serde_json::json!([{ "type": "text", "text": "" }]);
+        }
+        serde_json::to_value(&mut blocks).unwrap_or(serde_json::Value::Null)
     }
 
     pub fn refusal_error(&self) -> Option<String> {
@@ -392,6 +410,43 @@ mod tests {
         );
         let err = response.refusal_error().unwrap();
         assert!(err.contains("cyber"), "expected category in error, got: {err}");
+    }
+
+    #[test]
+    fn drops_thinking_blocks_instead_of_nulling_them_in_history() {
+        let response = parse(
+            r#"{
+                "content": [
+                    {"type": "thinking", "thinking": "let me consider"},
+                    {"type": "text", "text": "أهلاً"}
+                ],
+                "stop_reason": "end_turn",
+                "stop_details": null
+            }"#,
+        );
+        let content = response.as_assistant_content();
+        let blocks = content.as_array().expect("content should be an array");
+        assert!(
+            blocks.iter().all(|b| b.is_object()),
+            "every persisted block must be a JSON object, got: {content}"
+        );
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["text"], "أهلاً");
+    }
+
+    #[test]
+    fn falls_back_to_an_empty_text_block_when_only_thinking_was_returned() {
+        let response = parse(
+            r#"{
+                "content": [{"type": "thinking", "thinking": ""}],
+                "stop_reason": "end_turn",
+                "stop_details": null
+            }"#,
+        );
+        let content = response.as_assistant_content();
+        let blocks = content.as_array().expect("content should be an array");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
     }
 
     #[test]
