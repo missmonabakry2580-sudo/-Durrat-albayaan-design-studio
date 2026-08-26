@@ -94,3 +94,11 @@ export const writeWorkspaceFile = (path: string, contents: string) =>
   invoke<void>("write_workspace_file", { path, contents });
 export const deleteWorkspaceFile = (path: string) =>
   invoke<void>("delete_workspace_file", { path });
+
+/**
+ * Opens a URL in Amin's own isolated browser window (its own profile,
+ * never Mona's personal browser) — see src-tauri/src/browser.rs. This is
+ * intentionally just "show a page"; Amin does not read or act on its
+ * content yet.
+ */
+export const openBrowserUrl = (url: string) => invoke<void>("open_browser_url", { url });

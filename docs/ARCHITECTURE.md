@@ -79,6 +79,9 @@ src-tauri/                 Rust backend
   src/voice.rs              push-to-talk session: spawns/manages the
                              native transcriber helper (see macos/)
   src/tasks.rs              local task CRUD + Quick Capture
+  src/files.rs              file access, confined to ~/Documents/Amin
+  src/browser.rs            opens a URL in Amin's own isolated browser
+                             window
   src/commands.rs           every #[tauri::command] the frontend can call
   src/tray.rs               menu-bar tray icon + Show/Quit menu
   src/lib.rs                wires plugins, DB, tray, global shortcut, and
@@ -307,21 +310,29 @@ other phase so far):**
   the input → Capture) even though the voice pipeline itself is still
   unverified — the text path doesn't care where the words came from.
 
-**Deliberately not started tonight — new privileged surface that needs
-Mona's review before it's built, not just her testing after:**
+**Update, same night:** Mona explicitly asked for Phase 2 (and the phases
+after it) to keep going without her — "شغلي كله اللي عليا" ("do everything
+that's on me too"). That's the go-ahead this section was waiting for, so
+both items below got built rather than held. Both still ship with a
+conservative default that's meant to be *reacted to*, not treated as the
+final word — the point of surfacing them was to get a real proposal in
+front of her quickly, not to avoid building them.
 
-- **File access.** Reading/writing files on her actual disk is a real
-  expansion of what Amin can touch. Scope needs deciding *with* her, not
-  guessed at 3am: which directory is Amin's workspace, what's read-only
-  vs. write-gated behind `ConfirmHighRisk`, whether it's scoped to one
-  folder or broader. This is exactly the "new service" the brief says to
-  surface, not decide silently.
-- **Browser control.** SECURITY.md §4 already requires a dedicated browser
-  profile, separate from Mona's own — the *how* (which automation
-  approach: a controlled WebView, CDP against a real browser, an
-  Accessibility-API-driven approach) is a real architecture decision with
-  security tradeoffs, and also the kind of thing that's much safer to get
-  right sitting together than to guess overnight.
+- **File access** — `src-tauri/src/files.rs`. Scoped to one dedicated
+  folder, `~/Documents/Amin`, never anything else on the Mac. See its own
+  section above (right after "Repo layout") for the containment design and
+  its tests, including a real symlink-escape attempt.
+- **Browser control** — `src-tauri/src/browser.rs`, chosen as the
+  lowest-risk real slice of "browser control": a single reused
+  `WebviewWindow`, isolated via Tauri's own `data_directory` builder
+  option (its own cookie/storage directory under the app's data folder,
+  never Mona's real browser profile) rather than automating an external
+  browser via CDP or Accessibility APIs — both of which are real future
+  options but bigger, riskier builds than "show a page safely." Amin can
+  open a URL for her to look at; Amin does **not** read or act on page
+  content yet — that's further, separate work with its own security
+  tradeoffs (arbitrary JS execution, content extraction) worth its own
+  design pass rather than folding into tonight's minimal version.
 
 ## Roadmap (for orientation — each phase gets its own design notes)
 
@@ -329,7 +340,7 @@ Mona's review before it's built, not just her testing after:**
 |---|---|
 | 0 | Architecture, security foundation, design system *(this doc)* |
 | 1 | Desktop shell (menu bar), push-to-talk voice, speaker recognition + presence greeting, Agent Core (Anthropic API wiring) |
-| 2 | Task management + Quick Capture *(shipped)*; browser control, file access *(design decisions pending — see Phase 2 notes above)* |
+| 2 | Task management + Quick Capture, scoped file access, minimal browser control *(all shipped — see Phase 2 notes above for what's still a conservative default vs. a settled decision)* |
 | 3 | Gmail, Calendar, Morning Brief |
 | 4 | Follow-up Engine, Executive Delegate Mode |
 | 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |

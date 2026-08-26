@@ -5,7 +5,7 @@ use crate::files::WorkspaceEntry;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::VoiceSession;
-use crate::{agent, audit, files, secrets, tasks, voice};
+use crate::{agent, audit, browser, files, secrets, tasks, voice};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 
@@ -367,6 +367,31 @@ pub fn delete_workspace_file(app: AppHandle, path: String, db: State<Db>) -> Res
             audit::Decision::Blocked
         },
         Some(&path),
+        None,
+    );
+    result
+}
+
+/// Opens a URL in Amin's own isolated browser window — never Mona's
+/// personal browser/profile. See browser.rs and docs/SECURITY.md §4. This
+/// is TrustedDelegation, not Auto: showing a page is low-risk, but it's
+/// still Amin reaching an external destination, worth a line in the audit
+/// log.
+#[tauri::command]
+pub fn open_browser_url(app: AppHandle, url: String, db: State<Db>) -> Result<(), String> {
+    let result = browser::open_url(&app, &url);
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let _ = audit::record(
+        &conn,
+        "user",
+        "open_browser_url",
+        RiskTier::TrustedDelegation,
+        if result.is_ok() {
+            audit::Decision::Executed
+        } else {
+            audit::Decision::Blocked
+        },
+        Some(&url),
         None,
     );
     result

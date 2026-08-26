@@ -21,6 +21,7 @@ import {
   listAuditLog,
   listTasks,
   listWorkspaceFiles,
+  openBrowserUrl,
   quickCapture,
   readWorkspaceFile,
   saveApiKey,
@@ -68,6 +69,8 @@ function App() {
   const [noteContent, setNoteContent] = useState("");
   const [filePreview, setFilePreview] = useState<{ name: string; content: string } | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [browserUrl, setBrowserUrl] = useState("");
+  const [browserError, setBrowserError] = useState<string | null>(null);
 
   async function refresh() {
     if (!inTauri) return;
@@ -247,6 +250,17 @@ function App() {
       await refresh();
     } catch (e) {
       setFileError(String(e));
+    }
+  }
+
+  async function handleOpenBrowser() {
+    const url = browserUrl.trim();
+    if (!url) return;
+    setBrowserError(null);
+    try {
+      await openBrowserUrl(url);
+    } catch (e) {
+      setBrowserError(String(e));
     }
   }
 
@@ -475,6 +489,34 @@ function App() {
               Save file
             </button>
           </div>
+        </section>
+
+        <section className="panel">
+          <h2>متصفح أمين — Browser</h2>
+          <p className="text-muted">
+            Phase 2 — opens a page in Amin's own isolated window (its own profile, never your
+            personal browser). Amin doesn't read or act on the page yet — that's further browser
+            control still to come.
+          </p>
+          {browserError && <p className="banner banner-warning">🌐 {browserError}</p>}
+          <form
+            className="field-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleOpenBrowser();
+            }}
+          >
+            <input
+              type="text"
+              placeholder="https://..."
+              value={browserUrl}
+              onChange={(e) => setBrowserUrl(e.currentTarget.value)}
+              disabled={!inTauri}
+            />
+            <button type="submit" disabled={!inTauri || !browserUrl.trim()}>
+              Open
+            </button>
+          </form>
         </section>
 
         <section className="panel">

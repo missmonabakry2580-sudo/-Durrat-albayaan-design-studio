@@ -1,5 +1,6 @@
 mod agent;
 mod audit;
+mod browser;
 mod commands;
 mod db;
 mod files;
@@ -102,6 +103,7 @@ pub fn run() {
             commands::read_workspace_file,
             commands::write_workspace_file,
             commands::delete_workspace_file,
+            commands::open_browser_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Amin");
