@@ -114,13 +114,30 @@ pub fn extract_emotion(text: &str) -> (String, Option<String>) {
 /// parts turned out to be literal markdown symbols read aloud, not the
 /// voice mispronouncing real words.
 pub fn strip_markdown_for_speech(text: &str) -> String {
-    strip_markdown_links(text)
+    let without_markdown = strip_markdown_links(text)
         .lines()
         .map(strip_line_markers)
         .collect::<Vec<_>>()
         .join("\n")
         .replace("**", "")
-        .replace('`', "")
+        .replace('`', "");
+    // AVSpeechSynthesizer reads emoji by their VoiceOver accessibility name
+    // ("waving hand") rather than skipping them — Mona hit this directly:
+    // a 🤣👋🏻 in a reply came out spoken as "يد تلوح". Chat text can carry
+    // emoji fine; only the copy sent to speech synthesis needs them gone.
+    without_markdown.chars().filter(|c| !is_emoji_or_modifier(*c)).collect()
+}
+
+fn is_emoji_or_modifier(c: char) -> bool {
+    matches!(c as u32,
+        0x1F000..=0x1FFFF // mahjong/dominoes through every emoji/pictograph block
+        | 0x2600..=0x27BF // misc symbols + dingbats (☀ ❤ ✂ ✅ …)
+        | 0x2B00..=0x2BFF // misc symbols and arrows (⭐ ➡ …)
+        | 0x2300..=0x23FF // misc technical (⌚ ⏰ ⏳ …)
+        | 0xFE0F          // emoji variation selector
+        | 0x200D          // zero-width joiner (combines emoji sequences)
+        | 0x20E3          // combining enclosing keycap
+    )
 }
 
 fn strip_line_markers(line: &str) -> String {
@@ -606,5 +623,10 @@ mod tests {
     #[test]
     fn leaves_a_lone_bracket_alone_for_speech() {
         assert_eq!(strip_markdown_for_speech("القيمة [مش معروفة]"), "القيمة [مش معروفة]");
+    }
+
+    #[test]
+    fn strips_emoji_instead_of_speaking_their_accessibility_names() {
+        assert_eq!(strip_markdown_for_speech("أهلاً 🤣👋🏻 يا مُنى"), "أهلاً  يا مُنى");
     }
 }
