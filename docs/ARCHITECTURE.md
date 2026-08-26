@@ -225,6 +225,56 @@ exactly the concern Mona raised herself; voice-print/speaker verification
 (above) is the real fix and is intentionally still a separate, not-yet-built
 phase, not folded into this one.
 
+## Code signing: the real fix for repeated permission prompts
+
+Every `.dmg` so far has been unsigned (ad-hoc) — no Apple Developer
+certificate. Mona reproduced, on video, that this is the actual cause of
+the microphone/speech permission dialog reappearing even *within one
+running app session*, not just across new downloads: an unsigned build
+has no stable identity for macOS's TCC (privacy permission) system to
+remember a grant against, so it can end up split across two entries
+("amin" the raw binary name, "Amin" the display name — visible directly
+in System Settings → Privacy & Security → any of the mic/speech/screen
+panels) that don't reliably stay in sync with each other. No amount of
+checking `authorizationStatus()` correctly in Swift fixes this — the
+problem is upstream of that code, in what identity the OS has to check
+against at all.
+
+Mona has an active Apple Developer Program membership, so the real fix —
+proper code signing plus notarization — is now just a setup step, not a
+future maybe. `.github/workflows/build-macos.yml` already reads six
+secrets (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`)
+that `tauri-action` uses to sign and notarize automatically when present;
+they're unset today, so builds stay exactly as unsigned as before until
+she adds them. Once she does:
+
+1. **Team ID** — developer.apple.com/account → Membership details.
+2. **A "Developer ID Application" certificate** — via Keychain Access's
+   Certificate Assistant (Request a Certificate from a Certificate
+   Authority) to generate a CSR, upload it at
+   developer.apple.com/account/resources/certificates/add choosing
+   "Developer ID Application", download the issued certificate, and
+   double-click it to install into Keychain (it pairs with the private
+   key the CSR step created). Export that identity from Keychain Access
+   as a `.p12` file with a password, then base64-encode it
+   (`base64 -i cert.p12 -o cert_base64.txt`) — that text is
+   `APPLE_CERTIFICATE`, the export password is
+   `APPLE_CERTIFICATE_PASSWORD`, and `APPLE_SIGNING_IDENTITY` is the
+   certificate's full name as Keychain shows it (e.g. "Developer ID
+   Application: Mona AlSayed (TEAMID)").
+3. **An app-specific password** for notarization — appleid.apple.com →
+   Sign-In and Security → App-Specific Passwords → generate one. That's
+   `APPLE_PASSWORD`; `APPLE_ID` is the Apple ID email itself.
+4. Add all six as repository secrets (GitHub → Settings → Secrets and
+   variables → Actions → New repository secret) — never paste any of
+   them into chat or a committed file.
+
+Once those exist, the very next push builds a properly signed,
+notarized `.dmg`: no more Gatekeeper "unidentified developer" warning,
+and — the actual point — one stable identity, so a permission grant
+finally sticks for good instead of splitting or resetting.
+
 ## The command surface is the whole contract
 
 The frontend never gets raw SQL access and never talks to the network

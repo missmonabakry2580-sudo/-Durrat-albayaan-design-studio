@@ -53,9 +53,24 @@ jobs:
             printf '' > "$DEST"
           fi
 
+      # Code signing + notarization: only actually happens once Mona adds
+      # the six repo secrets below (Settings → Secrets and variables →
+      # Actions) from her own Apple Developer Program account — see
+      # docs/ARCHITECTURE.md's "Code signing" note for the exact steps.
+      # Until then every one of these resolves to an empty string and
+      # tauri-action builds exactly as before: unsigned, ad-hoc. This is
+      # also the real fix for the repeated-microphone-permission-dialog
+      # bug — an unsigned build has no stable identity for macOS's TCC
+      # privacy system to remember a grant against.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: --target universal-apple-darwin
           tagName: amin-preview
