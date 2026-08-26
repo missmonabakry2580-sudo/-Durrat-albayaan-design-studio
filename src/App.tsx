@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { AminPresence } from "./components/presence/AminPresence";
 import type { AminState } from "./components/presence/types";
 import { Splash } from "./components/splash/Splash";
 import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
+import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
 import {
   type AppInfo,
   type AuditEntry,
@@ -162,6 +164,9 @@ function App() {
   const [deltaBrief, setDeltaBrief] = useState<DeltaBrief | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   function togglePanel(key: PanelKey) {
     setActivePanel((current) => (current === key ? null : key));
@@ -215,8 +220,27 @@ function App() {
         setWakePhraseInput(s.wake_phrase);
         setClosePhraseInput(s.close_phrase);
       });
+      // Silent on failure (e.g. offline, or the update endpoint has
+      // nothing newer) — this is a background convenience check, not
+      // something that should ever interrupt Mona with an error banner
+      // just for not finding an update.
+      checkForUpdate()
+        .then((update) => setAvailableUpdate(update))
+        .catch(() => {});
     }
   }, []);
+
+  async function handleInstallUpdate() {
+    if (!availableUpdate) return;
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      await installUpdateAndRestart(availableUpdate);
+    } catch (e) {
+      setUpdateError(String(e));
+      setUpdateBusy(false);
+    }
+  }
 
   // Voice events can arrive from either the mic button below or the global
   // alt+A shortcut (which works even while Amin's window isn't focused) —
@@ -555,6 +579,21 @@ function App() {
           )}
           {error && <p className="banner banner-danger">{error}</p>}
           {voiceError && <p className="banner banner-warning">🎤 {voiceError}</p>}
+          {availableUpdate && (
+            <p className="banner banner-info">
+              ⬆️ في تحديث جديد لأمين (نسخة {availableUpdate.version}) — تحديث تلقائي، من غير ما
+              تنزّلي أي حاجة بنفسك.
+              <button
+                type="button"
+                className="banner-action"
+                onClick={handleInstallUpdate}
+                disabled={updateBusy}
+              >
+                {updateBusy ? "جاري التحديث…" : "حدّثي الآن"}
+              </button>
+            </p>
+          )}
+          {updateError && <p className="banner banner-warning">⬆️ {updateError}</p>}
 
           <div className="amin-world-chips">
             {deltaBrief && (

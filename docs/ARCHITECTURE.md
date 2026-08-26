@@ -315,7 +315,36 @@ entitlements of its own — it runs inside the signed host process's
 context once loaded via `dlopen`, so only the main executable's
 entitlements matter here.
 
-## The command surface is the whole contract
+## In-app updates: no more manual delete-and-redownload
+
+Every fix from 0.2.2 through 0.2.6 required the same manual dance: Mona
+downloads a new `.dmg`, deletes the old `.app`, drags the new one in. She
+pushed back on this directly — reasonably, since ordinary apps just update
+themselves. Fixed with `tauri-plugin-updater` (`src/lib/updater.ts`,
+wired into `App.tsx`): on launch, Amin checks the endpoint configured in
+`tauri.conf.json`'s `plugins.updater.endpoints` for a newer signed build,
+and shows a banner with a "حدّثي الآن" button that downloads and installs
+it in place, then relaunches — no manual download or deleting anything.
+
+This uses a *second*, separate signing keypair from the Apple Developer ID
+certificate above — a Tauri/minisign keypair whose only job is proving an
+update bundle came from this pipeline, unrelated to Apple or notarization.
+Generated once with `npx @tauri-apps/cli signer generate`; the public half
+is committed in `tauri.conf.json` (public keys are meant to be public),
+the private half lives only as the `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets (same never-in-chat rule
+as the Apple secrets). Without them, `tauri-action` builds every artifact
+as before but silently skips producing `latest.json` — this is what the
+build log's "Signature not found for the updater JSON. Skipping upload"
+line was, on every build before 0.2.7.
+
+One deliberate wrinkle: the updater endpoint points at
+`releases/download/amin-preview/latest.json` — the specific tag — rather
+than GitHub's `releases/latest/download/...` alias. That alias only ever
+resolves to the newest *non-prerelease* release, and this workflow
+publishes every build with `prerelease: true` (see the release notes'
+own "نسخة تجريبية" wording); pointed at `/latest/`, the updater would
+never find anything.
 
 The frontend never gets raw SQL access and never talks to the network
 directly. It calls the typed functions in `src/lib/tauri.ts`, which invoke

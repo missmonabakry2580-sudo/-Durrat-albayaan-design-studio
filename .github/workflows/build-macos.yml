@@ -112,6 +112,14 @@ jobs:
       # takes) — cancelled by hand since nothing here would have caught
       # it otherwise short of GitHub's own 6-hour job ceiling, silently
       # burning Mona's Actions minutes the whole time. Bounds a repeat.
+      # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD): a *different* keypair from the
+      # Apple certificate above — this one signs the update bundle itself
+      # (see tauri.conf.json's plugins.updater.pubkey) so the in-app updater
+      # (src/lib/updater.ts) can trust it came from this pipeline and not
+      # somewhere else. Without it tauri-action silently skips producing
+      # latest.json ("Signature not found for the updater JSON") and the
+      # in-app updater has nothing to check against — same no-op-until-set
+      # pattern as the Apple secrets.
       - uses: tauri-apps/tauri-action@v0
         timeout-minutes: 20
         env:
@@ -122,6 +130,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target universal-apple-darwin
           tagName: amin-preview

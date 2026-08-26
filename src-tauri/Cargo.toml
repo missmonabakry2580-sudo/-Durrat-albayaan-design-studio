@@ -1,6 +1,6 @@
 [package]
 name = "amin"
-version = "0.2.6"
+version = "0.2.7"
 description = "Amin — personal executive AI agent (desktop, macOS)"
 authors = ["Mona AlSayed Studio"]
 edition = "2021"
@@ -45,6 +45,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # dylib) in-process via dlopen/dlsym — see src/voice.rs for why this
 # replaced spawning it as a separate helper process.
 libloading = "0.8"
+# In-app updates: every earlier fix this build required Mona to manually
+# delete the old .app and download+drag in the new one — a real, repeated
+# complaint, not a one-off. Checks tauri.conf.json's configured endpoint
+# (the GitHub release's latest.json) and can download+install a newer
+# build without her leaving the app. See docs/ARCHITECTURE.md.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 # tauri::test::mock_app — used by tools.rs's unit tests, which need a real
