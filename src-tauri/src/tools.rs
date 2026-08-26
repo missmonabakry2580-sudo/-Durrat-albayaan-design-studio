@@ -181,6 +181,11 @@ pub fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "get_daily_overview",
+            "description": "Gathers open/in-progress tasks (with their priority, deadline, and next action), due follow-ups, and all remembered facts in one call. Use this at the start of a conversation when Mona greets Amin or asks what's going on today, so the reply can lead with a specific, natural summary instead of a generic greeting.",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
+        json!({
             "name": "forget_fact",
             "description": "Permanently forget a remembered fact by its id (get the id from search_memory first). Use when Mona explicitly says to forget something, e.g. \"انسَ المعلومة دي\".",
             "input_schema": {
@@ -217,7 +222,8 @@ pub fn risk_for(name: &str) -> RiskTier {
     match name {
         "create_task" | "quick_capture" | "list_tasks" | "set_task_status"
         | "list_follow_ups" | "list_due_follow_ups" | "set_follow_up_status"
-        | "create_follow_up" | "remember_fact" | "search_memory" | "forget_fact" => RiskTier::Auto,
+        | "create_follow_up" | "remember_fact" | "search_memory" | "forget_fact"
+        | "get_daily_overview" => RiskTier::Auto,
         "escalate_follow_up" => RiskTier::TrustedDelegation,
         "list_workspace_files"
         | "read_workspace_file"
@@ -251,6 +257,7 @@ pub fn describe(name: &str, input: &Value) -> String {
         "remember_fact" => format!("تذكّر: {} = {}", s("key"), s("value")),
         "search_memory" => format!("البحث في الذاكرة عن: {}", s("query")),
         "forget_fact" => format!("نسيان المعلومة رقم {}", s("id")),
+        "get_daily_overview" => "تجميع نظرة عامة على اليوم (مهام، متابعات، ذاكرة)".to_string(),
         other => format!("تنفيذ إجراء غير معروف: {other} — يُنصح بعدم الموافقة"),
     }
 }
@@ -390,6 +397,18 @@ pub fn execute<R: Runtime>(
             memory::forget(conn, &required_str(input, "id", name)?)?;
             Ok(json!({ "ok": true }))
         }
+        "get_daily_overview" => {
+            let open_tasks = tasks::list(conn, Some("open"))?;
+            let in_progress_tasks = tasks::list(conn, Some("in_progress"))?;
+            let due_follow_ups = followups::list_due(conn, chrono::Utc::now())?;
+            let remembered_facts = memory::list(conn, None)?;
+            Ok(json!({
+                "open_tasks": open_tasks,
+                "in_progress_tasks": in_progress_tasks,
+                "due_follow_ups": due_follow_ups,
+                "remembered_facts": remembered_facts,
+            }))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -446,6 +465,20 @@ mod tests {
         let result = execute(app.handle(), &conn, "create_task", &json!({ "title": "اختبار" })).unwrap();
         assert_eq!(result["title"], "اختبار");
         assert_eq!(result["status"], "open");
+    }
+
+    #[test]
+    fn get_daily_overview_gathers_tasks_follow_ups_and_memory() {
+        let conn = test_db();
+        let app = tauri::test::mock_app();
+        let task = tasks::create(&conn, "متابعة تسجيل أحمد", "amin").unwrap();
+        followups::create(&conn, &task.id, "2020-01-01T00:00:00Z").unwrap(); // already due
+        memory::remember(&conn, "person", "اسم ابن منى", "أحمد").unwrap();
+
+        let result = execute(app.handle(), &conn, "get_daily_overview", &json!({})).unwrap();
+        assert_eq!(result["open_tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(result["due_follow_ups"].as_array().unwrap().len(), 1);
+        assert_eq!(result["remembered_facts"].as_array().unwrap().len(), 1);
     }
 
     #[test]
