@@ -80,11 +80,18 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window hides Amin; it keeps running in the menu
-            // bar. Only the tray's "Quit Amin" item actually exits.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+            // Originally hid the window on close and relied on the tray
+            // icon's "Show Amin" item to bring it back — a real menu-bar-
+            // app pattern, but one that turned out to depend entirely on
+            // that tray icon actually being visible. On at least one real
+            // Mac it wasn't (unclear why — unverified without more Macs to
+            // test on), which left the app running invisibly with no way
+            // back in short of Activity Monitor. Closing the window now
+            // just quits, like any ordinary app: predictable, and doesn't
+            // depend on the tray icon rendering. Revisit menu-bar
+            // residency once the tray icon's reliability is confirmed.
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                window.app_handle().exit(0);
             }
         })
         .invoke_handler(tauri::generate_handler![
