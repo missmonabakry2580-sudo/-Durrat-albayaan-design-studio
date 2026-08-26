@@ -23,14 +23,26 @@ CREATE TABLE IF NOT EXISTS audit_log (
     evidence  TEXT             -- links/citations backing the decision, if any
 );
 
+-- priority/deadline/project/next_action/approval_required/dependencies:
+-- Mona's explicit task shape (she gave the exact JSON in her rearchitecture
+-- request). All nullable/optional — a task from a plain "دوّني كذا" still
+-- works with none of them set. New columns on an existing database are
+-- added by db::migrate's ALTER TABLE statements, not by this CREATE TABLE
+-- (which only ever runs for a brand-new database) — see db.rs.
 CREATE TABLE IF NOT EXISTS tasks (
-    id         TEXT PRIMARY KEY,
-    title      TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'open', -- open | in_progress | done | cancelled
-    source     TEXT,                          -- voice_note | quick_capture | email | manual
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    metadata   TEXT
+    id                TEXT PRIMARY KEY,
+    title             TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'open', -- open | in_progress | done | cancelled
+    source            TEXT,                          -- voice_note | quick_capture | email | manual
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    metadata          TEXT,
+    priority          TEXT,    -- low | medium | high, Claude's judgment — not enforced here
+    deadline          TEXT,    -- RFC3339, if Mona gave or implied one
+    project           TEXT,    -- free-form grouping label, e.g. "تسجيل أحمد"
+    next_action       TEXT,    -- the concrete next step, not just the task title
+    approval_required INTEGER, -- 0/1 — whether finishing this task itself needs Mona's approval
+    dependencies      TEXT     -- JSON array of task ids this one is blocked on
 );
 
 -- Amin's long-term conversation memory — persists across app restarts so

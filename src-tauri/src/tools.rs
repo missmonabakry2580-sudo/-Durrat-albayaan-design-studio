@@ -22,10 +22,18 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "create_task",
-            "description": "Create a new task in Amin's local task list.",
+            "description": "Create a new task in Amin's local task list. Only title is required — fill in the rest when Mona's own words make it clear (a deadline she mentioned, what the concrete next step is, whether another task blocks this one), not by guessing for the sake of completeness.",
             "input_schema": {
                 "type": "object",
-                "properties": { "title": { "type": "string" } },
+                "properties": {
+                    "title": { "type": "string" },
+                    "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+                    "deadline": { "type": "string", "description": "RFC3339 timestamp, if Mona gave or implied one" },
+                    "project": { "type": "string", "description": "free-form grouping label, e.g. \"تسجيل أحمد\"" },
+                    "next_action": { "type": "string", "description": "the concrete next step, not just a restatement of the title" },
+                    "approval_required": { "type": "boolean", "description": "whether finishing this task itself needs Mona's approval before it counts as done" },
+                    "dependencies": { "type": "array", "items": { "type": "string" }, "description": "ids of other tasks this one is blocked on" }
+                },
                 "required": ["title"]
             }
         }),
@@ -271,7 +279,19 @@ pub fn execute<R: Runtime>(
 ) -> Result<Value, String> {
     match name {
         "create_task" => {
-            let task = tasks::create(conn, &required_str(input, "title", name)?, "amin")?;
+            let details = tasks::NewTaskDetails {
+                priority: optional_str(input, "priority"),
+                deadline: optional_str(input, "deadline"),
+                project: optional_str(input, "project"),
+                next_action: optional_str(input, "next_action"),
+                approval_required: input.get("approval_required").and_then(|v| v.as_bool()).unwrap_or(false),
+                dependencies: input
+                    .get("dependencies")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default(),
+            };
+            let task = tasks::create_with_details(conn, &required_str(input, "title", name)?, "amin", details)?;
             serde_json::to_value(task).map_err(|e| e.to_string())
         }
         "quick_capture" => {

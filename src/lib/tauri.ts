@@ -121,6 +121,17 @@ export interface Task {
   created_at: string;
   updated_at: string;
   metadata: string | null;
+  /** Mona's explicit task shape — see src-tauri/src/tasks.rs's
+   * NewTaskDetails. Claude fills these in from context, not required.
+   * No dedicated UI shows them yet; they exist so Claude and the Morning
+   * Brief can reason over priority/deadline/dependencies, not just to
+   * round-trip through the type. */
+  priority: string | null;
+  deadline: string | null;
+  project: string | null;
+  next_action: string | null;
+  approval_required: boolean;
+  dependencies: string[];
 }
 
 export const createTask = (title: string) => invoke<Task>("create_task", { title });
