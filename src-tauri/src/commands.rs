@@ -8,7 +8,10 @@ use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::{HandsFreeSession, VoiceSession};
-use crate::{agent, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks, tools, voice};
+use crate::{
+    agent, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks, tools,
+    verification, voice,
+};
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
 /// Optional — Amin's voice falls back to the free, local, on-device engine
@@ -502,11 +505,7 @@ pub async fn send_agent_message(
         push_turn(&conn, &mut turns, agent::ChatMessage::tool_result(&tool_id, &result_text, None));
     }
 
-    let fallback = if exec_result.is_ok() {
-        format!("تم: {description}")
-    } else {
-        format!("حصل خطأ أثناء: {description}")
-    };
+    let fallback = verification::verified_outcome(&exec_result, &description);
     narrate(&api_key, &db, &conversation, &tool_defs, fallback).await
 }
 
@@ -618,11 +617,7 @@ async fn resolve_pending_action(
                     agent::ChatMessage::tool_result(&action.tool_use_id, &result_text, Some(message)),
                 );
             }
-            let fallback = if exec_result.is_ok() {
-                format!("تم: {description}")
-            } else {
-                format!("حصل خطأ أثناء: {description}")
-            };
+            let fallback = verification::verified_outcome(&exec_result, &description);
             narrate(api_key, db, conversation, &tool_defs, fallback).await
         }
     }

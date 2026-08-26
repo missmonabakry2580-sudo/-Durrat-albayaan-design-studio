@@ -17,6 +17,7 @@ mod secrets;
 mod tasks;
 mod tools;
 mod tray;
+mod verification;
 mod voice;
 
 use tauri::{Emitter, Manager};
