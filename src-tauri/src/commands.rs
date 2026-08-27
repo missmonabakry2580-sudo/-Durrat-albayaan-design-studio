@@ -762,6 +762,7 @@ pub async fn speak_text(
     // Arabic voice "breaking up letters" and mis-spelling everything. Only
     // the spoken copy is cleaned; the chat log keeps the original text.
     let text = agent::strip_markdown_for_speech(&text);
+    let text = agent::fix_pronunciation_for_speech(&text);
 
     let (eleven_key, voice_id) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;

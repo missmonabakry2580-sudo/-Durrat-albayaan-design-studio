@@ -153,6 +153,40 @@ pub fn strip_markdown_for_speech(text: &str) -> String {
     without_markdown.chars().filter(|c| !is_emoji_or_modifier(*c)).collect()
 }
 
+/// Arabic script normally omits short vowels (تشكيل) — fine for reading,
+/// but it leaves a text-to-speech engine to guess them, and it guesses
+/// wrong for Mona's own name often enough that Amin says it noticeably
+/// differently from how she actually pronounces it ("منى" read flat
+/// instead of "مُنَى"). Diacritizing everything a voice might mispronounce
+/// would need full Arabic vocalization — a much bigger, riskier
+/// undertaking than this file should take on — but her own name, said in
+/// nearly every reply, earns this one narrowly-scoped fix.
+///
+/// Matches the whole word only (Arabic letters plus any combining
+/// diacritics already on them count as one word for this scan), so it
+/// never touches a longer word that merely contains the same three
+/// letters — يتمنى/تتمنى/أتمنى ("to wish") come from a completely
+/// different root and must be left alone.
+pub fn fix_pronunciation_for_speech(text: &str) -> String {
+    fn is_word_char(c: char) -> bool {
+        c.is_alphanumeric() || matches!(c as u32, 0x064B..=0x0652 | 0x0670)
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    for c in text.chars() {
+        if is_word_char(c) {
+            word.push(c);
+            continue;
+        }
+        out.push_str(if word == "منى" { "مُنَى" } else { &word });
+        word.clear();
+        out.push(c);
+    }
+    out.push_str(if word == "منى" { "مُنَى" } else { &word });
+    out
+}
+
 fn is_emoji_or_modifier(c: char) -> bool {
     matches!(c as u32,
         0x1F000..=0x1FFFF // mahjong/dominoes through every emoji/pictograph block
@@ -704,5 +738,25 @@ mod tests {
     #[test]
     fn strips_emoji_instead_of_speaking_their_accessibility_names() {
         assert_eq!(strip_markdown_for_speech("أهلاً 🤣👋🏻 يا مُنى"), "أهلاً  يا مُنى");
+    }
+
+    #[test]
+    fn diacritizes_monas_name_so_speech_pronounces_it_correctly() {
+        assert_eq!(fix_pronunciation_for_speech("يا منى"), "يا مُنَى");
+        assert_eq!(fix_pronunciation_for_speech("منى، عندك مهمة"), "مُنَى، عندك مهمة");
+        assert_eq!(fix_pronunciation_for_speech("منى؟"), "مُنَى؟");
+    }
+
+    #[test]
+    fn leaves_unrelated_words_containing_the_same_letters_untouched() {
+        // يتمنى/تتمنى/أتمنى ("to wish") share the letters م ن ى with "منى"
+        // but are a different word entirely from a different root.
+        assert_eq!(fix_pronunciation_for_speech("كنت أتمنى نجاح المشروع"), "كنت أتمنى نجاح المشروع");
+        assert_eq!(fix_pronunciation_for_speech("هي بتتمنى ليك التوفيق"), "هي بتتمنى ليك التوفيق");
+    }
+
+    #[test]
+    fn an_already_diacritized_name_is_left_as_is() {
+        assert_eq!(fix_pronunciation_for_speech("يا مُنَى"), "يا مُنَى");
     }
 }
