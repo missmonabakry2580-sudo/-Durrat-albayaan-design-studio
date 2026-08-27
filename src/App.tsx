@@ -1204,26 +1204,36 @@ function App() {
               🔇
             </button>
           )}
-          <input
-            type="text"
-            className="command-bar-input"
-            placeholder="كلّمي أمين أو اكتبي ما تريدين..."
-            value={agentInput}
-            onChange={(e) => setAgentInput(e.currentTarget.value)}
-            disabled={!inTauri || agentBusy}
-          />
-          <button
-            type="button"
-            className="command-bar-action"
-            onClick={handleQuickCapture}
-            disabled={!inTauri || agentBusy || !agentInput.trim()}
-            title="احفظي النص ده كمهمة بدل ما تبعتيه لأمين"
-          >
-            📌
-          </button>
-          <button type="submit" className="command-bar-send" disabled={!inTauri || agentBusy || !agentInput.trim()}>
-            {agentBusy ? "..." : "إرسال"}
-          </button>
+          {/* Hidden during hands-free: typing here would defeat the whole
+              point of hands-free mode, and Mona's repeated complaint has
+              been that seeing a chat box + send button at all makes Amin
+              feel like a typed chat app instead of a voice assistant.
+              Manual mode keeps them — that's the deliberate typed
+              fallback for when voice isn't practical. */}
+          {!handsFreeEnabled && (
+            <>
+              <input
+                type="text"
+                className="command-bar-input"
+                placeholder="كلّمي أمين أو اكتبي ما تريدين..."
+                value={agentInput}
+                onChange={(e) => setAgentInput(e.currentTarget.value)}
+                disabled={!inTauri || agentBusy}
+              />
+              <button
+                type="button"
+                className="command-bar-action"
+                onClick={handleQuickCapture}
+                disabled={!inTauri || agentBusy || !agentInput.trim()}
+                title="احفظي النص ده كمهمة بدل ما تبعتيه لأمين"
+              >
+                📌
+              </button>
+              <button type="submit" className="command-bar-send" disabled={!inTauri || agentBusy || !agentInput.trim()}>
+                {agentBusy ? "..." : "إرسال"}
+              </button>
+            </>
+          )}
         </form>
       </main>
     </>
