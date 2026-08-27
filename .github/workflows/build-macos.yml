@@ -98,6 +98,28 @@ jobs:
           security delete-keychain "$KEYCHAIN"
           rm -f "$CERT_PATH"
 
+      # tauri-action reuses the same "amin-preview" release/tag on every
+      # push, and when one already exists it fetches and merges its old
+      # latest.json before uploading the new one instead of writing a
+      # clean file. That merge is where a real bug surfaced: it kept the
+      # PREVIOUS run's updater signature for a platform even though this
+      # run generated (and uploaded) a brand-new .sig — so latest.json
+      # pointed the in-app updater at a signature that no longer matched
+      # the actual downloadable file, and every update check failed with
+      # "signature verification failed". Confirmed by hand: verified the
+      # uploaded Amin_universal.app.tar.gz against latest.json's embedded
+      # signature with the same minisign-verify crate the updater uses —
+      # it failed; the freshly uploaded .sig asset (fetched directly, not
+      # through latest.json) verified fine and had a different, newer
+      # timestamp. Deleting the release before tauri-action runs means
+      # there is nothing stale left to merge — every field it writes,
+      # including the signature, comes from this run's own build.
+      - name: Delete the previous amin-preview release so latest.json can't inherit a stale signature
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete amin-preview --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+
       # Code signing + notarization: only actually happens once Mona adds
       # the six repo secrets below (Settings → Secrets and variables →
       # Actions) from her own Apple Developer Program account — see
