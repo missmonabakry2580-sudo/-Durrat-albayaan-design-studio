@@ -282,9 +282,25 @@ function App() {
       // "إرسال". During an open hands-free session (handsFreeSessionOpen)
       // the same event instead sends itself straight to the agent, since
       // the whole point of hands-free is not touching anything.
+      //
+      // Gated on `handsFreeEnabled` itself, not the more specific
+      // `handsFreeSessionOpenRef` — deliberately. AminVoice.swift's
+      // HandsFreeListener never forwards a kind-1 "final" at all during its
+      // passive wake-phrase-watching phase (see its own comment: "nothing
+      // here is a command"); a real `voice://final` while hands-free mode
+      // is on is therefore *already* guaranteed to be an actual command
+      // utterance, full stop. Requiring the separate "session open" event
+      // (kind 6, `voice://hands-free-listening`) to have been received and
+      // processed first added a race with no payoff: if that event's
+      // handler hadn't yet flipped the ref by the time this one fired —
+      // both delivered async over the same webview event bridge, with no
+      // guaranteed ordering between two separately dispatched events —
+      // the utterance landed in the input box and silently waited for
+      // Mona to press "إرسال" instead of sending itself, defeating hands-
+      // free mode's entire point.
       listen<string>("voice://final", (e) => {
         setAgentInput(e.payload);
-        if (handsFreeSessionOpenRef.current) handleSendToAgent(e.payload);
+        if (handsFreeEnabled) handleSendToAgent(e.payload);
       }),
       listen<string>("voice://error", (e) => {
         setVoiceError(e.payload);
