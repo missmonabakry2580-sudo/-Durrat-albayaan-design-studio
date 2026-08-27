@@ -170,6 +170,7 @@ function App() {
   const [briefBusy, setBriefBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingActionSummary | null>(null);
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const [voiceIdSaveStatus, setVoiceIdSaveStatus] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -346,7 +347,13 @@ function App() {
   }
 
   async function handleSaveElevenLabsVoiceId() {
-    await saveElevenLabsVoiceId(elevenLabsVoiceIdInput.trim());
+    setVoiceIdSaveStatus(null);
+    try {
+      await saveElevenLabsVoiceId(elevenLabsVoiceIdInput.trim());
+      setVoiceIdSaveStatus("تم الحفظ ✅");
+    } catch (e) {
+      setVoiceIdSaveStatus(`⚠️ ما اتحفظش: ${String(e)}`);
+    }
   }
 
   async function handleToggleHandsFree() {
@@ -1008,13 +1015,17 @@ function App() {
                           type="text"
                           placeholder="ElevenLabs Voice ID"
                           value={elevenLabsVoiceIdInput}
-                          onChange={(e) => setElevenLabsVoiceIdInput(e.currentTarget.value)}
+                          onChange={(e) => {
+                            setElevenLabsVoiceIdInput(e.currentTarget.value);
+                            setVoiceIdSaveStatus(null);
+                          }}
                           disabled={!inTauri}
                         />
                         <button onClick={handleSaveElevenLabsVoiceId} disabled={!inTauri}>
                           حفظ
                         </button>
                       </div>
+                      {voiceIdSaveStatus && <p className="text-muted">{voiceIdSaveStatus}</p>}
                     </>
                   )}
 
