@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "validate:facial-rig": "node scripts/facial-rig/validate-facial-rig.mjs",
+    "validate:facial-rig:selftest": "node scripts/facial-rig/make-test-fixture.mjs && node scripts/facial-rig/validate-facial-rig.mjs scripts/facial-rig/fixtures/complete.glb && ! node scripts/facial-rig/validate-facial-rig.mjs scripts/facial-rig/fixtures/incomplete.glb"
   },
   "dependencies": {
     "react": "^19.1.0",
