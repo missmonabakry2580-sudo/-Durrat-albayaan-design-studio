@@ -1084,6 +1084,48 @@ wired up the same way 3D Mode already is: swappable, same Amin Core.
 the new official photo, static — no blink, no lip movement yet. This is
 disclosed as incomplete, not presented as done.
 
+## 3D Mode shipped textureless on the real Mac — a CSP bug this sandbox
+## could never have caught (2026-08-28)
+
+Mona's first real test of 3D Mode on her actual Mac showed a ghost-white,
+faceless bust — correct geometry and morph targets, but every skin/eye/
+teeth color and normal map missing. It looked broken on sight ("ايه
+القرف ده"). Every render of this same model in this session up to that
+point (many screenshots, the blink-fix verification, all of it) looked
+correct — because every one of them ran against `npm run dev`'s plain
+Vite server, which enforces **no CSP at all**. Tauri only injects the
+real CSP (`tauri.conf.json`'s `app.security.csp`) into the actual
+packaged app. That gap meant nothing in this session's testing could
+ever have caught a CSP-only bug before she did — worth stating plainly,
+not glossed over, since it's the reason this shipped once already.
+
+**Root cause, confirmed rather than guessed:** `amin_facial_rig.glb`
+stores all 10 of its textures embedded (`bufferView`, not an external
+`uri`) — Meshy's normal export choice for a single self-contained file.
+To decode an embedded image, three.js's `GLTFLoader` always wraps it in
+a `Blob` and calls `URL.createObjectURL()`, then loads that `blob:` URL
+through `ImageBitmapLoader`, whose own source (`three/src/loaders/
+ImageBitmapLoader.js`) fetches it with plain `fetch()` — governed by
+CSP's `connect-src`, not `img-src`. The CSP added for 3D Mode never
+included `blob:` in `connect-src` (or `img-src`, for the older
+non-bitmap fallback three.js also has). Every texture request was
+silently blocked; the geometry itself doesn't go through this path
+(it's a single upfront GLB fetch off `'self'`), so the mesh rendered
+fine while every material stayed at its default (white, untextured).
+
+**Reproduced and fixed, not just reasoned about:** built the real
+production bundle (`npm run build`, the same output Tauri packages —
+not the dev server), served it statically, and injected the exact old
+CSP string as a `<meta>` tag via Playwright's request interception. The
+console showed ten explicit `Refused to connect to 'blob:...' ...
+connect-src` violations — one per texture — and the screenshot matched
+Mona's photo exactly: pale, faceless, eyelashes-only (the one material
+using a flat `baseColorFactor` instead of a texture, so unaffected).
+Adding `blob:` to both `connect-src` and `img-src` and re-running the
+identical test: zero CSP violations, full color/normal textures
+rendering correctly. Both screenshots exist as direct evidence, not an
+assumption that the fix works.
+
 ## Simli integration: Portrait Mode's real lip-sync engine (2026-08-28)
 
 Mona's condition before spending anything: prove the integration itself

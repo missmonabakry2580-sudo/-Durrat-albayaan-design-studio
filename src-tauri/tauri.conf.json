@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; connect-src 'self' https://api.simli.ai wss://api.simli.ai"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; connect-src 'self' blob: https://api.simli.ai wss://api.simli.ai"
     }
   },
   "bundle": {
