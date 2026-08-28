@@ -24,6 +24,14 @@ const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
 /// (Rachel, English) mangles Arabic and needs to be Mona's own choice
 /// from her ElevenLabs voice library, not guessed by this app.
 const ELEVENLABS_VOICE_ID_KEY: &str = "elevenlabs_voice_id";
+/// The one ElevenLabs pronunciation dictionary Amin uses — see
+/// elevenlabs::{create,add_rule_to}_pronunciation_dictionary and
+/// docs/ARCHITECTURE.md's pronunciation-dictionary section. Stored as a
+/// pair (dictionary id + its current version) rather than just the id —
+/// see PronunciationDictionary's own doc comment for why the version
+/// matters just as much.
+const ELEVENLABS_PRONUNCIATION_DICT_ID_KEY: &str = "elevenlabs_pronunciation_dict_id";
+const ELEVENLABS_PRONUNCIATION_DICT_VERSION_KEY: &str = "elevenlabs_pronunciation_dict_version";
 /// Optional — Portrait Mode's real-time talking avatar (see
 /// docs/ARCHITECTURE.md's "Visual modes" section and simli.rs). Stored the
 /// same way as the two keys above (local settings table, not the OS
@@ -322,6 +330,70 @@ pub fn save_elevenlabs_voice_id(voice_id: String, db: State<Db>) -> Result<(), S
     }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     set_setting(&conn, ELEVENLABS_VOICE_ID_KEY, voice_id)
+}
+
+/// The saved pronunciation-dictionary id, or empty if
+/// create_amin_pronunciation_dictionary has never been run — drives
+/// Settings' "create" vs. "already set up" wording.
+#[tauri::command]
+pub fn get_pronunciation_dictionary_id(db: State<Db>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_ID_KEY).unwrap_or_default())
+}
+
+/// Creates Amin's ElevenLabs pronunciation dictionary from
+/// elevenlabs::default_pronunciation_rules() (Mona's own real-world
+/// findings — see docs/ARCHITECTURE.md) and saves the resulting id +
+/// version. A real, live API call — needs her own ElevenLabs key already
+/// saved; there is no way to create this on her behalf without it, and
+/// no way to verify it actually improves pronunciation without her
+/// listening to the result (see that same doc section's honesty note on
+/// what could/couldn't be tested from this sandbox).
+#[tauri::command]
+pub async fn create_amin_pronunciation_dictionary(db: State<'_, Db>) -> Result<(), String> {
+    let key = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty())
+    };
+    let Some(key) = key else {
+        return Err("محتاجة تحطي مفتاح ElevenLabs الأول قبل ما تنشئي قاموس النطق".to_string());
+    };
+    let dict = elevenlabs::create_pronunciation_dictionary(
+        &key,
+        "Amin Arabic Pronunciation",
+        &elevenlabs::default_pronunciation_rules(),
+    )
+    .await?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_ID_KEY, &dict.id)?;
+    set_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_VERSION_KEY, &dict.version_id)
+}
+
+/// Adds one new word/correct-pronunciation pair to Amin's existing
+/// dictionary — the ongoing mechanism Mona asked for ("أي كلمة جديدة تُنطق
+/// غلط... نضيفها للقاموس نفسه بدل تغيير الصوت"), rather than a one-time
+/// fixed list. Updates the stored version_id to the new one — see
+/// PronunciationDictionary's doc comment for why an unclaimed old version
+/// would silently drop this new rule from every later request.
+#[tauri::command]
+pub async fn add_pronunciation_rule(word: String, correct_pronunciation: String, db: State<'_, Db>) -> Result<(), String> {
+    let (key, dictionary_id) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        (
+            get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
+            get_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_ID_KEY).filter(|v| !v.trim().is_empty()),
+        )
+    };
+    let Some(key) = key else {
+        return Err("محتاجة تحطي مفتاح ElevenLabs الأول".to_string());
+    };
+    let Some(dictionary_id) = dictionary_id else {
+        return Err("لسه مفيش قاموس نطق — أنشئيه الأول".to_string());
+    };
+    let rule = elevenlabs::PronunciationRule { string_to_replace: word, alias: correct_pronunciation };
+    let dict = elevenlabs::add_pronunciation_rules(&key, &dictionary_id, &[rule]).await?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_VERSION_KEY, &dict.version_id)
 }
 
 #[tauri::command]
@@ -825,6 +897,41 @@ pub fn stop_voice_capture(session: State<VoiceSession>) -> Result<(), String> {
     voice::stop_listening(session)
 }
 
+/// Loads the saved pronunciation dictionary (id + version, see
+/// elevenlabs::PronunciationDictionary), if Amin has one — `None` before
+/// create_amin_pronunciation_dictionary has ever been run.
+fn load_pronunciation_dictionary(conn: &rusqlite::Connection) -> Option<elevenlabs::PronunciationDictionary> {
+    let id = get_setting(conn, ELEVENLABS_PRONUNCIATION_DICT_ID_KEY).filter(|v| !v.trim().is_empty())?;
+    let version_id = get_setting(conn, ELEVENLABS_PRONUNCIATION_DICT_VERSION_KEY).filter(|v| !v.trim().is_empty())?;
+    Some(elevenlabs::PronunciationDictionary { id, version_id })
+}
+
+/// Developer Mode debug info (Mona's explicit request, 2026-08-28, item 8):
+/// original text / TTS text / pronunciation_dictionary_id / model_id /
+/// language_code for whichever engine actually spoke this reply. Fired on
+/// every speak_text call, on-device fallback included (with the
+/// ElevenLabs-only fields as `null`) — the frontend's Developer Mode panel
+/// decides whether to show it, not this function.
+fn emit_tts_debug(
+    app: &AppHandle,
+    original_text: &str,
+    tts_text: &str,
+    pronunciation_dictionary_id: Option<&str>,
+    model_id: Option<&str>,
+    language_code: Option<&str>,
+) {
+    let _ = app.emit(
+        "voice://tts-debug",
+        serde_json::json!({
+            "original_text": original_text,
+            "tts_text": tts_text,
+            "pronunciation_dictionary_id": pronunciation_dictionary_id,
+            "model_id": model_id,
+            "language_code": language_code,
+        }),
+    );
+}
+
 /// Speaks Amin's reply aloud. Prefers ElevenLabs (a more expressive,
 /// human-sounding voice Mona explicitly asked for) when she's added her
 /// own ElevenLabs key; otherwise falls back to the free, local, on-device
@@ -837,25 +944,41 @@ pub async fn speak_text(
     emotion: Option<String>,
     db: State<'_, Db>,
 ) -> Result<(), String> {
+    let original_text = text.clone();
     // Claude's replies are written for the chat UI, which renders markdown
     // (**bold**, bullets, links...) as formatting — a speech engine just
     // reads the punctuation aloud, which is what surfaced as the on-device
     // Arabic voice "breaking up letters" and mis-spelling everything. Only
     // the spoken copy is cleaned; the chat log keeps the original text.
     let text = agent::strip_markdown_for_speech(&text);
-    let text = agent::fix_pronunciation_for_speech(&text);
 
-    let (eleven_key, voice_id) = {
+    let (eleven_key, voice_id, pronunciation_dictionary) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
+            load_pronunciation_dictionary(&conn),
         )
     };
 
     let Some(key) = eleven_key else {
-        return voice::speak(app, &text);
+        // No ElevenLabs dictionary mechanism reaches the on-device engine
+        // (see docs/ARCHITECTURE.md's pronunciation-dictionary section) —
+        // this narrow, hand-written fix is the only protection this path
+        // has.
+        let on_device_text = agent::fix_pronunciation_for_speech(&text);
+        emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
+        return voice::speak(app, &on_device_text);
     };
+
+    emit_tts_debug(
+        &app,
+        &original_text,
+        &text,
+        pronunciation_dictionary.as_ref().map(|d| d.id.as_str()),
+        Some(elevenlabs::model_id()),
+        None, // language_code: never sent — see elevenlabs.rs's MODEL_ID audit comment.
+    );
 
     // The streaming WebSocket (audio arrives as ElevenLabs generates it,
     // rather than only after the whole file renders — see
@@ -866,10 +989,26 @@ pub async fn speak_text(
     // to the REST endpoint before giving up on ElevenLabs entirely avoids
     // a regression: something that worked over plain HTTPS shouldn't stop
     // working just because the WebSocket path had a bad day.
-    let audio = match elevenlabs::synthesize_streaming(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
+    let audio = match elevenlabs::synthesize_streaming(
+        &key,
+        &text,
+        voice_id.as_deref(),
+        emotion.as_deref(),
+        pronunciation_dictionary.as_ref(),
+    )
+    .await
+    {
         Ok(a) => a,
         Err(streaming_err) => {
-            match elevenlabs::synthesize(&key, &text, voice_id.as_deref(), emotion.as_deref()).await {
+            match elevenlabs::synthesize(
+                &key,
+                &text,
+                voice_id.as_deref(),
+                emotion.as_deref(),
+                pronunciation_dictionary.as_ref(),
+            )
+            .await
+            {
                 Ok(a) => a,
                 Err(e) => {
                     // Both ElevenLabs paths failed (bad key, quota,
@@ -879,7 +1018,9 @@ pub async fn speak_text(
                         "voice://error",
                         format!("ElevenLabs: {e} (streaming also failed: {streaming_err})"),
                     );
-                    return voice::speak(app, &text);
+                    let on_device_text = agent::fix_pronunciation_for_speech(&text);
+                    emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
+                    return voice::speak(app, &on_device_text);
                 }
             }
         }
@@ -979,14 +1120,18 @@ pub async fn synthesize_pcm_for_simli(
     emotion: Option<String>,
     db: State<'_, Db>,
 ) -> Result<Vec<u8>, String> {
+    // No local fix_pronunciation_for_speech step here (unlike speak_text's
+    // on-device fallback) — this path always goes through ElevenLabs, so
+    // the pronunciation dictionary loaded below is the single, real
+    // mechanism, not a second hand-written text substitution racing it.
     let text = agent::strip_markdown_for_speech(&text);
-    let text = agent::fix_pronunciation_for_speech(&text);
 
-    let (eleven_key, voice_id) = {
+    let (eleven_key, voice_id, pronunciation_dictionary) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
+            load_pronunciation_dictionary(&conn),
         )
     };
     let Some(key) = eleven_key else {
@@ -999,7 +1144,7 @@ pub async fn synthesize_pcm_for_simli(
             "Portrait Mode مع Simli محتاج مفتاح ElevenLabs متحط — الصوت المحلي (بدون ElevenLabs) مفيش منه بيانات صوت تتبعت لـ Simli".to_string(),
         );
     };
-    elevenlabs::synthesize_pcm16(&key, &text, voice_id.as_deref(), emotion.as_deref()).await
+    elevenlabs::synthesize_pcm16(&key, &text, voice_id.as_deref(), emotion.as_deref(), pronunciation_dictionary.as_ref()).await
 }
 
 #[derive(serde::Serialize)]

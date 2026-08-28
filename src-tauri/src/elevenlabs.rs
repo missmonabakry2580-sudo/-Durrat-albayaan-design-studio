@@ -67,6 +67,156 @@ const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
 /// to pick one on her behalf.
 const MODEL_ID: &str = "eleven_v3";
 
+/// The model_id every synthesis call actually sends — exposed so
+/// commands::speak_text's Developer Mode debug event reports the real
+/// value instead of a second, easily-drifting hardcoded copy.
+pub fn model_id() -> &'static str {
+    MODEL_ID
+}
+
+const PRONUNCIATION_DICTIONARIES_URL: &str = "https://api.elevenlabs.io/v1/pronunciation-dictionaries";
+
+/// A saved ElevenLabs pronunciation dictionary — see
+/// commands::{create,add_rule_to}_pronunciation_dictionary. `version_id`
+/// changes every time a rule is added (ElevenLabs versions the whole
+/// dictionary, not individual rules), which is why this is stored as a
+/// pair rather than just the dictionary id: a stale version_id still
+/// resolves (old versions stay accessible) but silently omits every rule
+/// added after it, so keeping the two in lockstep matters.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct PronunciationDictionary {
+    pub id: String,
+    pub version_id: String,
+}
+
+/// One rule for `create_pronunciation_dictionary`/`add_pronunciation_rules`.
+/// Alias-only (a plain-text substitution ElevenLabs then reads normally),
+/// not phoneme/IPA — Mona's own real-world finding ("التشكيل يحل أخطاء
+/// النطق في ElevenLabs" — diacritization fixes ElevenLabs' pronunciation
+/// errors) is exactly an alias-rule use case: replacing plain "منى" with
+/// the fully-vocalized "مُنَى" is a text substitution, not a phonemic
+/// instruction, and alias rules are the one rule type ElevenLabs documents
+/// with no model-specific restriction — unlike phoneme/IPA rules, which
+/// have no established Arabic precedent to build on here.
+pub struct PronunciationRule {
+    pub string_to_replace: String,
+    pub alias: String,
+}
+
+impl PronunciationRule {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "string_to_replace": self.string_to_replace,
+            "type": "alias",
+            "alias": self.alias,
+            // Word-boundary matching, not substring: without this, a rule
+            // for "منى" would also fire inside "يتمنى"/"تتمنى" ("to wish",
+            // unrelated root) — the exact bug this codebase's own
+            // agent::fix_pronunciation_for_speech already had to guard
+            // against by hand for the same word.
+            "word_boundaries": true,
+        })
+    }
+}
+
+/// Amin's own name-pronunciation rules, from Mona's real listening test —
+/// see docs/ARCHITECTURE.md's pronunciation-dictionary section for why
+/// alias rules (not phoneme/IPA) and why these specific six words.
+pub fn default_pronunciation_rules() -> Vec<PronunciationRule> {
+    [
+        ("منى", "مُنى"),
+        ("أمين", "أَمِين"),
+        ("درة البيان", "دُرَّةُ البَيَان"),
+        ("المعبيلة", "المَعْبِيلَة"),
+        ("عُمان", "عُمَان"),
+        ("متابعتك", "مُتابَعَتِكِ"),
+    ]
+    .into_iter()
+    .map(|(word, alias)| PronunciationRule {
+        string_to_replace: word.to_string(),
+        alias: alias.to_string(),
+    })
+    .collect()
+}
+
+/// Creates a new ElevenLabs pronunciation dictionary from `rules` — see
+/// docs/api-reference/pronunciation-dictionaries/create-from-rules.
+/// Returns the id/version_id pair to store (commands::
+/// create_amin_pronunciation_dictionary saves it as a setting) and attach
+/// to every later TTS request via `PronunciationDictionary`.
+pub async fn create_pronunciation_dictionary(
+    api_key: &str,
+    name: &str,
+    rules: &[PronunciationRule],
+) -> Result<PronunciationDictionary, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{PRONUNCIATION_DICTIONARIES_URL}/add-from-rules"))
+        .header("xi-api-key", api_key)
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "name": name,
+            "rules": rules.iter().map(PronunciationRule::to_json).collect::<Vec<_>>(),
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("couldn't reach ElevenLabs: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("ElevenLabs API error ({status}): {body}"));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("couldn't parse ElevenLabs response: {e} (body: {body})"))?;
+    let id = parsed["id"].as_str().ok_or("ElevenLabs response had no dictionary id")?;
+    let version_id = parsed["version_id"].as_str().ok_or("ElevenLabs response had no version_id")?;
+    Ok(PronunciationDictionary { id: id.to_string(), version_id: version_id.to_string() })
+}
+
+/// Adds `rules` to an already-created dictionary — see docs/api-reference/
+/// pronunciation-dictionaries/add-rules. Returns the NEW version_id, which
+/// must replace whatever was stored before (see `PronunciationDictionary`'s
+/// doc comment for why an old version_id silently omits the new rules
+/// rather than erroring).
+pub async fn add_pronunciation_rules(
+    api_key: &str,
+    dictionary_id: &str,
+    rules: &[PronunciationRule],
+) -> Result<PronunciationDictionary, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{PRONUNCIATION_DICTIONARIES_URL}/{dictionary_id}/add-rules"))
+        .header("xi-api-key", api_key)
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "rules": rules.iter().map(PronunciationRule::to_json).collect::<Vec<_>>(),
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("couldn't reach ElevenLabs: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("ElevenLabs API error ({status}): {body}"));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("couldn't parse ElevenLabs response: {e} (body: {body})"))?;
+    let id = parsed["id"].as_str().unwrap_or(dictionary_id);
+    let version_id = parsed["version_id"].as_str().ok_or("ElevenLabs response had no version_id")?;
+    Ok(PronunciationDictionary { id: id.to_string(), version_id: version_id.to_string() })
+}
+
+/// Builds the `pronunciation_dictionary_locators` array ElevenLabs expects
+/// on a TTS request — shared by all three synthesis paths below so the
+/// shape only needs to be right in one place.
+fn locators_json(dictionary: Option<&PronunciationDictionary>) -> Option<serde_json::Value> {
+    dictionary.map(|d| {
+        serde_json::json!([{ "pronunciation_dictionary_id": d.id, "version_id": d.version_id }])
+    })
+}
+
 /// Maps Claude's own `[[emotion:VALUE]]` tag (see agent::KNOWN_EMOTIONS,
 /// agent::extract_emotion) to ElevenLabs' per-request `voice_settings` —
 /// the concrete mechanism behind "a voice with actual emotional tone",
@@ -112,18 +262,23 @@ pub async fn synthesize(
     text: &str,
     voice_id: Option<&str>,
     emotion: Option<&str>,
+    pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
     let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
     let client = reqwest::Client::new();
+    let mut body = serde_json::json!({
+        "text": text,
+        "model_id": MODEL_ID,
+        "voice_settings": voice_settings_for_emotion(emotion),
+    });
+    if let Some(locators) = locators_json(pronunciation_dictionary) {
+        body["pronunciation_dictionary_locators"] = locators;
+    }
     let response = client
         .post(format!("{ELEVENLABS_TTS_URL}/{voice_id}"))
         .header("xi-api-key", api_key)
         .header("content-type", "application/json")
-        .json(&serde_json::json!({
-            "text": text,
-            "model_id": MODEL_ID,
-            "voice_settings": voice_settings_for_emotion(emotion),
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("couldn't reach ElevenLabs: {e}"))?;
@@ -154,18 +309,23 @@ pub async fn synthesize_pcm16(
     text: &str,
     voice_id: Option<&str>,
     emotion: Option<&str>,
+    pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
     let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
     let client = reqwest::Client::new();
+    let mut body = serde_json::json!({
+        "text": text,
+        "model_id": MODEL_ID,
+        "voice_settings": voice_settings_for_emotion(emotion),
+    });
+    if let Some(locators) = locators_json(pronunciation_dictionary) {
+        body["pronunciation_dictionary_locators"] = locators;
+    }
     let response = client
         .post(format!("{ELEVENLABS_TTS_URL}/{voice_id}?output_format=pcm_16000"))
         .header("xi-api-key", api_key)
         .header("content-type", "application/json")
-        .json(&serde_json::json!({
-            "text": text,
-            "model_id": MODEL_ID,
-            "voice_settings": voice_settings_for_emotion(emotion),
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("couldn't reach ElevenLabs: {e}"))?;
@@ -187,13 +347,21 @@ pub async fn synthesize_pcm16(
 /// establishes voice settings and generation config for the whole
 /// utterance. `text` must be non-empty per their docs even though no real
 /// text goes here yet — a single space is the documented convention.
-fn init_message(api_key: &str, emotion: Option<&str>) -> serde_json::Value {
-    serde_json::json!({
+fn init_message(
+    api_key: &str,
+    emotion: Option<&str>,
+    pronunciation_dictionary: Option<&PronunciationDictionary>,
+) -> serde_json::Value {
+    let mut msg = serde_json::json!({
         "text": " ",
         "voice_settings": voice_settings_for_emotion(emotion),
         "generation_config": { "chunk_length_schedule": [120, 160, 250, 290] },
         "xi-api-key": api_key,
-    })
+    });
+    if let Some(locators) = locators_json(pronunciation_dictionary) {
+        msg["pronunciation_dictionary_locators"] = locators;
+    }
+    msg
 }
 
 /// A chunk of the actual text to speak. `try_trigger_generation: true`
@@ -230,6 +398,7 @@ pub async fn synthesize_streaming(
     text: &str,
     voice_id: Option<&str>,
     emotion: Option<&str>,
+    pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
     let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
     let url = format!("{ELEVENLABS_WS_URL}/{voice_id}/stream-input?model_id={MODEL_ID}");
@@ -239,7 +408,7 @@ pub async fn synthesize_streaming(
         .map_err(|e| format!("couldn't open ElevenLabs streaming connection: {e}"))?;
     let (mut write, mut read) = ws_stream.split();
 
-    for msg in [init_message(api_key, emotion), text_message(text), close_message()] {
+    for msg in [init_message(api_key, emotion, pronunciation_dictionary), text_message(text), close_message()] {
         write
             .send(Message::Text(msg.to_string().into()))
             .await
@@ -312,10 +481,32 @@ mod tests {
 
     #[test]
     fn init_message_carries_the_api_key_and_voice_settings_not_text() {
-        let msg = init_message("secret-key", Some("calm"));
+        let msg = init_message("secret-key", Some("calm"), None);
         assert_eq!(msg["xi-api-key"], "secret-key");
         assert_eq!(msg["text"], " ");
         assert_eq!(msg["voice_settings"], voice_settings_for_emotion(Some("calm")));
+        assert!(msg.get("pronunciation_dictionary_locators").is_none());
+    }
+
+    #[test]
+    fn init_message_attaches_pronunciation_dictionary_locators_when_given() {
+        let dict = PronunciationDictionary { id: "dict1".to_string(), version_id: "v1".to_string() };
+        let msg = init_message("secret-key", None, Some(&dict));
+        assert_eq!(
+            msg["pronunciation_dictionary_locators"],
+            serde_json::json!([{ "pronunciation_dictionary_id": "dict1", "version_id": "v1" }])
+        );
+    }
+
+    #[test]
+    fn default_pronunciation_rules_use_word_boundaries_and_alias_type() {
+        let rules = default_pronunciation_rules();
+        assert!(rules.iter().any(|r| r.string_to_replace == "منى" && r.alias == "مُنى"));
+        for rule in &rules {
+            let json = rule.to_json();
+            assert_eq!(json["type"], "alias");
+            assert_eq!(json["word_boundaries"], true);
+        }
     }
 
     #[test]

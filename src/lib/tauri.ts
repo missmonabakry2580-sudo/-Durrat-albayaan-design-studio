@@ -54,6 +54,31 @@ export const getElevenLabsVoiceId = () => invoke<string>("get_elevenlabs_voice_i
 export const saveElevenLabsVoiceId = (voiceId: string) =>
   invoke<void>("save_elevenlabs_voice_id", { voiceId });
 
+/**
+ * Amin's ElevenLabs pronunciation dictionary (Mona's own real-world
+ * finding, 2026-08-28: full Arabic diacritization fixes ElevenLabs'
+ * pronunciation) — a real dictionary created via ElevenLabs' own API, not
+ * a text substitution in this app. See docs/ARCHITECTURE.md's
+ * pronunciation-dictionary section and elevenlabs.rs's
+ * default_pronunciation_rules for the built-in starting rules.
+ */
+export const getPronunciationDictionaryId = () => invoke<string>("get_pronunciation_dictionary_id");
+export const createAminPronunciationDictionary = () =>
+  invoke<void>("create_amin_pronunciation_dictionary");
+export const addPronunciationRule = (word: string, correctPronunciation: string) =>
+  invoke<void>("add_pronunciation_rule", { word, correctPronunciation });
+
+/** Fired by speak_text on every reply — see commands::emit_tts_debug.
+ * Powers Settings' "Developer Mode" panel; `null` fields mean the
+ * on-device (non-ElevenLabs) voice spoke this one. */
+export interface TtsDebugInfo {
+  original_text: string;
+  tts_text: string;
+  pronunciation_dictionary_id: string | null;
+  model_id: string | null;
+  language_code: string | null;
+}
+
 /** Optional — Portrait Mode's real-time talking avatar (see
  * docs/ARCHITECTURE.md "Visual modes"). Stored the same way as the two
  * keys above (local settings table, not the OS Keychain — a known,

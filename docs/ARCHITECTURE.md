@@ -1509,6 +1509,67 @@ fix this audit is confident in regardless of model**: Mona needs a real
 Arabic voice ID saved in Settings — this sandbox has no access to her
 ElevenLabs account's Voice Library to choose one for her.
 
+### A real ElevenLabs pronunciation dictionary, not text substitution (2026-08-28)
+
+Mona tested full Arabic diacritization (تشكيل) herself and found it fixes
+ElevenLabs' pronunciation — then explicitly asked for a real, permanent
+ElevenLabs Pronunciation Dictionary (created via their own API, with a
+real `pronunciation_dictionary_id`/`version_id` attached to every request)
+rather than "a temporary text replacement," with a way to keep adding
+words as new ones come up mispronounced.
+
+**Real API, checked against ElevenLabs' own docs, not guessed**:
+`POST /v1/pronunciation-dictionaries/add-from-rules` creates the
+dictionary; `POST /v1/pronunciation-dictionaries/{id}/add-rules` adds more
+rules to it later (returning a NEW `version_id` each time — the dictionary
+is versioned as a whole, not per-rule, so the stored version must be
+updated on every addition or new rules silently don't apply); every TTS
+request (REST, PCM, and the streaming WebSocket's init message — checked
+separately, since it's a different message shape) accepts
+`pronunciation_dictionary_locators: [{pronunciation_dictionary_id,
+version_id}]`.
+
+**Alias rules, not phoneme/IPA** — `elevenlabs::PronunciationRule` only
+supports the `alias` type (a plain-text substitution ElevenLabs then
+reads normally, with `word_boundaries: true` so a rule for "منى" doesn't
+also fire inside unrelated words like "يتمنى" — the exact bug
+`agent::fix_pronunciation_for_speech` already had to hand-guard against
+for the same word). This matches Mona's own finding exactly: diacritizing
+"منى" into "مُنى" is a text substitution, not a phonemic instruction, and
+alias rules are the one type ElevenLabs documents with no model-specific
+restriction — phoneme/IPA rules have no established Arabic precedent here
+to build on, and Mona's own instruction anticipated exactly this fallback
+("إذا فشل phoneme-based pronunciation للعربية، استخدم alias/substitution
+rules").
+
+**A real conflict this caught and resolved**: `fix_pronunciation_for_speech`
+already hand-fixed "منى" → "مُنَى" locally, before any ElevenLabs call. Left
+in place unconditionally, it would have silently broken the new
+dictionary's own "منى" rule — by the time the text reached ElevenLabs, the
+word would already be "مُنَى", not the plain "منى" the dictionary's
+`string_to_replace` looks for. Fixed by making that local fix apply only
+on the on-device fallback path (which has no dictionary mechanism at all
+and still needs it), never on text sent to ElevenLabs, where the
+dictionary is now the single source of truth — see `commands::speak_text`.
+
+**Developer Mode** (Settings toggle, `localStorage`-only — a per-viewer
+convenience, not a shared or secret setting): shows the last reply's
+original text, the actual text sent to TTS, `pronunciation_dictionary_id`,
+`model_id`, and `language_code` — fired by `commands::emit_tts_debug` on
+every `speak_text` call, on-device fallback included (with the
+ElevenLabs-only fields `null`), so it's meaningful regardless of which
+engine actually spoke.
+
+**What's verified vs. not — same standard as every other feature today**:
+`cargo test`/`tsc`/`npm run build` all pass, and the request/response
+shapes match ElevenLabs' documented schema exactly. **Not verified**:
+actually calling ElevenLabs' API to create the dictionary and hearing the
+five test sentences Mona specified — this sandbox has no ElevenLabs API
+key, and per her own explicit instruction, a successful API call is not
+proof of correct pronunciation. The real test needs her to click "أنشئي
+القاموس" in Settings on her own Mac, with her own key already saved, and
+listen.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

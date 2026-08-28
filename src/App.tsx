@@ -17,13 +17,16 @@ import {
   type FollowUp,
   type PendingActionSummary,
   type Task,
+  type TtsDebugInfo,
   type WorkspaceEntry,
+  addPronunciationRule,
   appInfo,
   clearAgentConversation,
   clearApiKey,
   clearElevenLabsKey,
   clearEnrolledSpeaker,
   clearSimliKey,
+  createAminPronunciationDictionary,
   createFollowUp,
   createTask,
   deleteWorkspaceFile,
@@ -33,6 +36,7 @@ import {
   getElevenLabsVoiceId,
   getHandsFreeSettings,
   getPendingAction,
+  getPronunciationDictionaryId,
   getSimliFaceId,
   hasApiKey,
   hasElevenLabsKey,
@@ -141,6 +145,18 @@ function App() {
   const [elevenLabsKeySaved, setElevenLabsKeySaved] = useState(false);
   const [elevenLabsKeyInput, setElevenLabsKeyInput] = useState("");
   const [elevenLabsVoiceIdInput, setElevenLabsVoiceIdInput] = useState("");
+  const [pronunciationDictId, setPronunciationDictId] = useState("");
+  const [dictBusy, setDictBusy] = useState(false);
+  const [dictStatus, setDictStatus] = useState<string | null>(null);
+  const [newRuleWord, setNewRuleWord] = useState("");
+  const [newRulePronunciation, setNewRulePronunciation] = useState("");
+  // Developer Mode: a per-viewer convenience toggle, not a secret or
+  // shared setting — localStorage is the right place for it (see
+  // src/lib/visual/visualMode.ts for the same reasoning on that toggle).
+  const [developerMode, setDeveloperMode] = useState(
+    () => localStorage.getItem("amin.developerMode") === "1",
+  );
+  const [ttsDebug, setTtsDebug] = useState<TtsDebugInfo | null>(null);
   const [simliKeySaved, setSimliKeySaved] = useState(false);
   const [simliKeyInput, setSimliKeyInput] = useState("");
   const [simliFaceIdInput, setSimliFaceIdInput] = useState("");
@@ -270,6 +286,7 @@ function App() {
       getElevenLabsVoiceId().then(setElevenLabsVoiceIdInput);
       getSimliFaceId().then(setSimliFaceIdInput);
       hasEnrolledSpeaker().then(setSpeakerEnrolled);
+      getPronunciationDictionaryId().then(setPronunciationDictId);
       // Silent on failure (e.g. offline, or the update endpoint has
       // nothing newer) — this is a background convenience check, not
       // something that should ever interrupt Mona with an error banner
@@ -421,6 +438,11 @@ function App() {
         setEnrollmentBusy(false);
         setEnrollmentStatus(`فشل التسجيل: ${e.payload}`);
       }),
+      // Developer Mode debug info (see commands::emit_tts_debug) — fired
+      // on every speak_text call regardless of whether Developer Mode is
+      // on, so turning it on mid-conversation immediately shows the next
+      // reply's real data instead of needing a restart.
+      listen<TtsDebugInfo>("voice://tts-debug", (e) => setTtsDebug(e.payload)),
     ];
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
@@ -527,6 +549,48 @@ function App() {
       setEnrollmentStatus("تم مسح بصمة الصوت.");
     } catch (e) {
       setEnrollmentStatus(`فشل المسح: ${String(e)}`);
+    }
+  }
+
+  async function handleCreatePronunciationDictionary() {
+    if (dictBusy) return;
+    setDictBusy(true);
+    setDictStatus(null);
+    try {
+      await createAminPronunciationDictionary();
+      const id = await getPronunciationDictionaryId();
+      setPronunciationDictId(id);
+      setDictStatus("تم إنشاء قاموس النطق بنجاح.");
+    } catch (e) {
+      setDictStatus(`فشل الإنشاء: ${String(e)}`);
+    } finally {
+      setDictBusy(false);
+    }
+  }
+
+  async function handleAddPronunciationRule() {
+    if (!newRuleWord.trim() || !newRulePronunciation.trim()) return;
+    setDictBusy(true);
+    setDictStatus(null);
+    try {
+      await addPronunciationRule(newRuleWord.trim(), newRulePronunciation.trim());
+      setDictStatus(`تمت إضافة "${newRuleWord.trim()}" للقاموس.`);
+      setNewRuleWord("");
+      setNewRulePronunciation("");
+    } catch (e) {
+      setDictStatus(`فشلت الإضافة: ${String(e)}`);
+    } finally {
+      setDictBusy(false);
+    }
+  }
+
+  function handleToggleDeveloperMode() {
+    const next = !developerMode;
+    setDeveloperMode(next);
+    try {
+      localStorage.setItem("amin.developerMode", next ? "1" : "0");
+    } catch {
+      // Best-effort per-viewer convenience — see this state's own comment.
     }
   }
 
@@ -1333,6 +1397,80 @@ function App() {
                       : "لسه مفيش بصمة صوت مسجّلة — أي حد يعرف عبارة الفتح يقدر يفتح جلسة حاليًا. دوسي \"سجّلي صوتك\" وقولي جملة قصيرة لمدة ٤ ثواني."}
                     {enrollmentStatus && <><br />{enrollmentStatus}</>}
                   </p>
+
+                  {elevenLabsKeySaved && (
+                    <>
+                      <div className="field-row">
+                        <span className="field-label">قاموس نطق أمين (ElevenLabs)</span>
+                        <span className={pronunciationDictId ? "badge badge-success" : "badge"}>
+                          {pronunciationDictId ? "متحط" : "مش متحط"}
+                        </span>
+                      </div>
+                      <p className="text-muted">
+                        قاموس حقيقي عند ElevenLabs (مش استبدال نص هنا) بيصحّح نطق كلمات زي "منى"
+                        و"أمين" و"درة البيان" بالتشكيل الصحيح. لازم يتحط الـ Voice ID العربي الأول.
+                      </p>
+                      <div className="field-row">
+                        <button onClick={handleCreatePronunciationDictionary} disabled={!inTauri || dictBusy}>
+                          {dictBusy ? "جاري..." : pronunciationDictId ? "إعادة الإنشاء" : "أنشئي القاموس"}
+                        </button>
+                      </div>
+                      {pronunciationDictId && (
+                        <div className="field-row">
+                          <input
+                            type="text"
+                            placeholder="كلمة بتتنطق غلط"
+                            value={newRuleWord}
+                            onChange={(e) => setNewRuleWord(e.currentTarget.value)}
+                            disabled={!inTauri}
+                          />
+                          <input
+                            type="text"
+                            placeholder="النطق الصح بالتشكيل"
+                            value={newRulePronunciation}
+                            onChange={(e) => setNewRulePronunciation(e.currentTarget.value)}
+                            disabled={!inTauri}
+                          />
+                          <button
+                            onClick={handleAddPronunciationRule}
+                            disabled={!inTauri || dictBusy || !newRuleWord.trim() || !newRulePronunciation.trim()}
+                          >
+                            إضافة للقاموس
+                          </button>
+                        </div>
+                      )}
+                      {dictStatus && <p className="text-muted">{dictStatus}</p>}
+                    </>
+                  )}
+
+                  <div className="field-row">
+                    <span className="field-label">وضع المطور (Developer Mode)</span>
+                    <button
+                      className={developerMode ? "chip chip-active" : "chip"}
+                      onClick={handleToggleDeveloperMode}
+                    >
+                      {developerMode ? "شغّال" : "متوقف"}
+                    </button>
+                  </div>
+                  {developerMode && (
+                    <p className="text-muted" style={{ textAlign: "left", direction: "ltr", fontFamily: "monospace" }}>
+                      {ttsDebug ? (
+                        <>
+                          Original text: {ttsDebug.original_text}
+                          <br />
+                          TTS text: {ttsDebug.tts_text}
+                          <br />
+                          pronunciation_dictionary_id: {ttsDebug.pronunciation_dictionary_id ?? "null"}
+                          <br />
+                          model_id: {ttsDebug.model_id ?? "null"}
+                          <br />
+                          language_code: {ttsDebug.language_code ?? "null"}
+                        </>
+                      ) : (
+                        "لسه مفيش رد اتقال — هيظهر هنا تفاصيل آخر رد صوتي."
+                      )}
+                    </p>
+                  )}
 
                   <div className="field-row">
                     <span className="field-label">مستوى الاستقلالية</span>
