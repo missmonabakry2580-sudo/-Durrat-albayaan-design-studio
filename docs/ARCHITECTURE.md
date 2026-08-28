@@ -2276,6 +2276,21 @@ Verified with the usual temporary facetest harness (Playwright, forced
 framing scale): a natural talking aperture at peak loudness, no gape,
 harness deleted before commit as always. Not verified on her Mac yet.
 
+## Diacritization was fusha-izing Egyptian speech (2026-08-28)
+
+Mona: "بينطق غلط جدا جدا". The `DIACRITIZATION_SYSTEM_PROMPT` literally
+demanded "بالنطق الفصيح الصحيح" — classical pronunciation — for all
+text, but Amin speaks Egyptian Arabic: fusha-izing dialect words
+(بِيَتَكَلَّمُ for بيتكلم, case endings on colloquial words) is itself a
+severe mispronunciation, a stilted newsreader reading of casual speech.
+Rewrote the prompt's core rule: diacritize each word as the text's own
+dialect actually pronounces it — Egyptian colloquial gets natural
+Egyptian harakat with no tanwin or case endings; only genuinely fusha
+text gets fusha treatment. Letter-preservation validation (previous
+entry) is unaffected — harakat choice is exactly the degree of freedom
+it deliberately leaves open. **Verified**: `cargo test` (114). Prompt-
+only; real pronunciation quality is only judgeable by ear on her Mac.
+
 ## The armed-state eyes overshot into a stare (2026-08-28)
 
 The morning's "boost expressions past 0.5 so they're visible" pass

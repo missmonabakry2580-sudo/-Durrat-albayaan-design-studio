@@ -566,10 +566,20 @@ pub async fn send_message(
 /// just speed, since this runs on every single ElevenLabs utterance.
 const DIACRITIZATION_MODEL_ID: &str = "claude-haiku-4-5-20251001";
 
+// FIXED 2026-08-28: this used to demand "بالنطق الفصيح الصحيح" — classical
+// (fusha) pronunciation — for ALL text. But Amin speaks Egyptian Arabic;
+// fusha-izing Egyptian words produces exactly the "بينطق غلط جدا جدا" Mona
+// reported: بِيَتَكَلَّمُ for بيتكلم, case endings on dialect words, a
+// stilted newsreader reading of casual speech. Diacritics must encode how
+// the text's own dialect actually says each word, not convert it to fusha.
 const DIACRITIZATION_SYSTEM_PROMPT: &str = "\
 أنتِ أداة تشكيل نصوص عربية، مش مساعد محادثة. مهمتك الوحيدة: ضيفي التشكيل \
-الكامل (كل الحركات) على أي نص عربي بيوصلك، بالنطق الفصيح الصحيح، عشان يتقال \
-بصوت صحيح.
+الكامل (كل الحركات) على أي نص عربي بيوصلك، عشان يتقال بصوت صحيح.
+
+أهم قاعدة في النطق: شكّلي كل كلمة زي ما بتتنطق فعلًا في لهجة النص نفسه. \
+النص العامي المصري يتشكّل بالنطق المصري العامي الطبيعي (بيتكلم = \
+بِيِتْكَلِّم، مش بِيَتَكَلَّمُ) — من غير تنوين ومن غير حركات إعراب في آخر \
+الكلمات العامية أبدًا. النص الفصحى بس هو اللي يتشكّل بالنطق الفصيح.
 
 قواعد صارمة، من غير أي استثناء:
 - متغيريش ولا كلمة واحدة، ومتضيفيش ومتحذفيش ولا حرف — بس ضيفي الحركات فوق \
