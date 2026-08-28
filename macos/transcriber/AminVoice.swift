@@ -595,20 +595,22 @@ private final class HandsFreeListener {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, !self.stopped else { return }
             let inputNode = self.audioEngine.inputNode
-            // Real barge-in needs the mic to not simply re-hear Amin's own
-            // voice coming out of the speakers as if Mona said it. This is
-            // the same acoustic echo cancellation VoIP apps use — it
-            // cancels the echo of whatever's playing through the output
-            // hardware, not just this engine's own output. Best-effort:
-            // non-fatal if the OS refuses it (hands-free still works, just
-            // leans more on isLikelySelfEcho's text comparison instead).
-            // Must happen before reading the input format below — enabling
-            // it can change the format the node actually delivers.
-            do {
-                try inputNode.setVoiceProcessingEnabled(true)
-            } catch {
-                self.emit(2, "تعذّر تفعيل إلغاء الصدى الصوتي: \(error.localizedDescription)")
-            }
+            // REVERTED 2026-08-28 — real bug found in the field: Mona
+            // reported having to speak unusually loudly for hands-free to
+            // hear her at all ("لازم اصرخ لحد ما يرد عليا") after this
+            // shipped. `setVoiceProcessingEnabled(true)` turns on Apple's
+            // VoIP-style pipeline (echo cancellation, but also automatic
+            // gain control and noise suppression tuned for close-talking
+            // phone-call audio) for the *entire* hands-free session, not
+            // just the brief windows where Amin's own voice is actually
+            // playing back — a real, plausible explanation for degraded
+            // recognition at normal conversational volume the rest of the
+            // time. Barge-in's real-time interruption now relies solely on
+            // isLikelySelfEcho's text comparison (see that method) instead
+            // of acoustic echo cancellation — a real, if less precise,
+            // fallback this code already anticipated, not a new gap. Being
+            // heard normally the other 99% of the time matters more than a
+            // barge-in feature Mona hadn't even confirmed working yet.
             let format = inputNode.outputFormat(forBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.currentRequest?.append(buffer)

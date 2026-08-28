@@ -869,17 +869,22 @@ human interruption works, instead of having to wait it out or hit a
 (`amin_voice_set_hands_free_muted`) with something that can tell "Amin
 hearing its own voice" apart from "Mona actually talking over it."
 
-**Two layers, because neither alone is trustworthy:**
+**Originally two layers; now one, after a real regression found in the
+field (2026-08-28):**
 
-1. **Acoustic echo cancellation.** `HandsFreeListener.openTap` now calls
+1. ~~**Acoustic echo cancellation.**~~ `HandsFreeListener.openTap` called
    `AVAudioInputNode.setVoiceProcessingEnabled(true)` before installing the
-   mic tap — the same VoIP-grade echo cancellation telephony apps use,
-   which cancels the echo of whatever's coming out of the output hardware,
-   not just this engine's own output (relevant since Amin's TTS plays
-   through two entirely different paths — `AVSpeechSynthesizer` on-device,
-   `afplay` for ElevenLabs — neither of which routes through this same
-   `AVAudioEngine`). Best-effort and non-fatal: if the OS refuses it,
-   hands-free still works, it just leans more on layer 2.
+   mic tap — the same VoIP-grade echo cancellation telephony apps use.
+   **Reverted**: Mona reported having to speak unusually loudly for
+   hands-free to hear her at all ("لازم اصرخ لحد ما يرد عليا") after this
+   shipped. The real problem: this turned on Apple's whole VoIP-style
+   pipeline — automatic gain control and noise suppression tuned for
+   close-talking phone-call audio, not just echo cancellation — for the
+   *entire* hands-free session, not only the brief windows Amin's own
+   voice was actually playing back. Degraded recognition at normal
+   conversational volume the other 99% of the time was too high a cost for
+   a barge-in feature she hadn't even confirmed working yet. Removed;
+   barge-in now relies solely on layer 2 below.
 2. **Text comparison.** `voice.rs`'s `set_hands_free_speaking` now carries
    the actual sentence Amin is about to say (previously just a mute
    flag), threaded through from `commands::speak_text` (ElevenLabs) and
@@ -904,17 +909,19 @@ Deliberately biased toward "assume it's an echo" on a tie — a missed
 barge-in just means Mona repeats herself; a false one makes Amin cut
 itself off having heard nothing, a stranger failure to explain.
 
-**What's real and what isn't yet:** the design is complete and the whole
-crate compiles/tests clean with it in (96 tests), but this is audio
-hardware behavior — echo cancellation quality, exact word-overlap
-threshold, whether 9's synchronous cross-language call chain behaves the
-way traced through on paper — that literally cannot be verified without a
-real Mac, a real microphone, and real speakers. This sandbox has none of
-the three. Mona needs to actually try interrupting Amin mid-sentence
-during a hands-free conversation and report what happens — including "it
-falsely thinks I'm interrupting when I'm not" and "it doesn't notice when
-I do," both of which are real possible outcomes, not just the success
-case.
+**What's real and what isn't yet:** the design compiles/tests clean, but
+this is audio hardware behavior — exact word-overlap threshold, whether
+9's synchronous cross-language call chain behaves the way traced through
+on paper — that literally cannot be verified without a real Mac, a real
+microphone, and real speakers. This sandbox has none of the three, which
+is exactly how layer 1 shipped with a real, user-facing regression
+undetected: it compiled and tested clean too. Mona needs to actually try
+interrupting Amin mid-sentence during a hands-free conversation and
+report what happens — including "it falsely thinks I'm interrupting when
+I'm not" and "it doesn't notice when I do," both real possible outcomes —
+*and*, separately, whether normal hands-free listening (not interrupting,
+just being heard at a normal conversational volume) still feels as
+sensitive as it did before this feature existed at all.
 
 ## Visual modes: 3D avatar and Portrait, one Amin Core (2026-08-28)
 
