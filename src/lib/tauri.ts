@@ -88,6 +88,15 @@ export const hasSimliKey = () => invoke<boolean>("has_simli_key");
 export const saveSimliKey = (key: string) => invoke<void>("save_simli_key", { key });
 export const clearSimliKey = () => invoke<void>("clear_simli_key");
 
+/** Optional — a GitHub Personal Access Token (issues:write on this repo is
+ * enough) letting Amin file a real backend failure as a GitHub issue on
+ * its own repo automatically (see src-tauri/src/error_report.rs). Mona's
+ * explicit request, 2026-08-28: "تواصل مباشر بين امين و بينك يبلغك
+ * الخطأ". Nothing is ever reported unless this is set. */
+export const hasGitHubToken = () => invoke<boolean>("has_github_token");
+export const saveGitHubToken = (token: string) => invoke<void>("save_github_token", { token });
+export const clearGitHubToken = () => invoke<void>("clear_github_token");
+
 /** Which Simli avatar (faceId) to animate — empty means the free preset
  * baked into commands.rs (SIMLI_DEFAULT_PRESET_FACE_ID). Set to a custom
  * face ID once Mona upgrades and builds one from amin-identity.jpg. */

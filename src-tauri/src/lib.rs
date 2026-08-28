@@ -7,6 +7,7 @@ mod commands;
 mod confirmation;
 mod db;
 mod elevenlabs;
+mod error_report;
 mod files;
 mod followups;
 mod memory;
@@ -175,6 +176,9 @@ pub fn run() {
             commands::save_simli_face_id,
             commands::start_simli_session,
             commands::synthesize_pcm_for_simli,
+            commands::has_github_token,
+            commands::save_github_token,
+            commands::clear_github_token,
             commands::get_autonomy_level,
             commands::set_autonomy_level,
             commands::is_halted,

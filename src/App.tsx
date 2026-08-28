@@ -26,6 +26,7 @@ import {
   clearElevenLabsKey,
   clearEnrolledSpeaker,
   clearSimliKey,
+  clearGitHubToken,
   createAminPronunciationDictionary,
   createFollowUp,
   createTask,
@@ -42,6 +43,7 @@ import {
   hasElevenLabsKey,
   hasEnrolledSpeaker,
   hasSimliKey,
+  hasGitHubToken,
   isHalted,
   listAuditLog,
   listDueFollowUps,
@@ -55,6 +57,7 @@ import {
   saveHandsFreePhrases,
   saveSimliFaceId,
   saveSimliKey,
+  saveGitHubToken,
   sendAgentMessage,
   setAutonomyLevel,
   setFollowUpStatus,
@@ -151,6 +154,8 @@ function App() {
   const [simliKeySaved, setSimliKeySaved] = useState(false);
   const [simliKeyInput, setSimliKeyInput] = useState("");
   const [simliFaceIdInput, setSimliFaceIdInput] = useState("");
+  const [githubTokenSaved, setGithubTokenSaved] = useState(false);
+  const [githubTokenInput, setGithubTokenInput] = useState("");
   const [lastEmotion, setLastEmotion] = useState<string | null>(null);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
   const [handsFreeBusy, setHandsFreeBusy] = useState(false);
@@ -229,12 +234,13 @@ function App() {
     // others — a single Promise.all would let one rejection blank out
     // everything, including the API key badge that has nothing to do with
     // it. Each piece of state updates independently instead.
-    const [i, hasKey, hasElevenKey, hasSimli, level, killed, log, taskList, files, dueList, pending] =
+    const [i, hasKey, hasElevenKey, hasSimli, hasGithub, level, killed, log, taskList, files, dueList, pending] =
       await Promise.allSettled([
         appInfo(),
         hasApiKey(),
         hasElevenLabsKey(),
         hasSimliKey(),
+        hasGitHubToken(),
         getAutonomyLevel(),
         isHalted(),
         listAuditLog(10),
@@ -247,6 +253,7 @@ function App() {
     if (hasKey.status === "fulfilled") setKeySaved(hasKey.value);
     if (hasElevenKey.status === "fulfilled") setElevenLabsKeySaved(hasElevenKey.value);
     if (hasSimli.status === "fulfilled") setSimliKeySaved(hasSimli.value);
+    if (hasGithub.status === "fulfilled") setGithubTokenSaved(hasGithub.value);
     if (level.status === "fulfilled") setAutonomy(level.value);
     if (killed.status === "fulfilled") setHalted(killed.value);
     if (log.status === "fulfilled") setAuditLog(log.value);
@@ -255,7 +262,7 @@ function App() {
     if (dueList.status === "fulfilled") setDueFollowUps(dueList.value);
     if (pending.status === "fulfilled") setPendingAction(pending.value);
 
-    const firstFailure = [i, hasKey, hasElevenKey, hasSimli, level, killed, log, taskList, files, dueList, pending].find(
+    const firstFailure = [i, hasKey, hasElevenKey, hasSimli, hasGithub, level, killed, log, taskList, files, dueList, pending].find(
       (r) => r.status === "rejected",
     );
     setError(firstFailure ? String((firstFailure as PromiseRejectedResult).reason) : null);
@@ -505,6 +512,18 @@ function App() {
 
   async function handleSaveSimliFaceId() {
     await saveSimliFaceId(simliFaceIdInput.trim());
+  }
+
+  async function handleSaveGitHubToken() {
+    if (!githubTokenInput.trim()) return;
+    await saveGitHubToken(githubTokenInput.trim());
+    setGithubTokenInput("");
+    await refresh();
+  }
+
+  async function handleClearGitHubToken() {
+    await clearGitHubToken();
+    await refresh();
   }
 
   async function handleToggleHandsFree() {
@@ -1275,6 +1294,34 @@ function App() {
                       </button>
                     </div>
                   )}
+
+                  <div className="field-row">
+                    <span className="field-label">الإبلاغ التلقائي عن الأخطاء</span>
+                    <span className={githubTokenSaved ? "badge badge-success" : "badge"}>
+                      {githubTokenSaved ? "متحط" : "مش متحط"}
+                    </span>
+                  </div>
+                  <p className="text-muted">
+                    اختياري — لو حطيتي مفتاح GitHub (Personal Access Token، صلاحية Issues بس
+                    محتاجة)، أمين هيفتح "issue" تلقائي على المستودع بتاعه لو حصل خطأ برمجي حقيقي
+                    (مش أخطاء عادية زي كلمة سر غلط) — ده بيوصلني بشكل شبه تلقائي عشان أقدر أصلحه من
+                    غير ما تحتاجي تاخدي screenshot وتوصفيه لي بنفسك في كل مرة.
+                  </p>
+                  <div className="field-row">
+                    <input
+                      type="password"
+                      placeholder="ghp_..."
+                      value={githubTokenInput}
+                      onChange={(e) => setGithubTokenInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                    <button onClick={handleSaveGitHubToken} disabled={!inTauri || !githubTokenInput.trim()}>
+                      حفظ
+                    </button>
+                    <button onClick={handleClearGitHubToken} disabled={!inTauri || !githubTokenSaved}>
+                      مسح
+                    </button>
+                  </div>
 
                   <div className="field-row">
                     <span className="field-label">الاستماع الحر (بدون لمس أي زرار)</span>

@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::brief::DeltaBrief;
 use crate::confirmation::{self, PendingAction, PendingConfirmation};
 use crate::db::Db;
+use crate::error_report;
 use crate::files::WorkspaceEntry;
 use crate::followups::FollowUp;
 use crate::policy::{self, AutonomyLevel, RiskTier};
@@ -45,6 +46,13 @@ const SIMLI_KEY_NAME: &str = "simli_api_key";
 /// (built from src/assets/amin-identity.jpg) once she upgrades. See
 /// simli.rs for why this is never hardcoded.
 const SIMLI_FACE_ID_KEY: &str = "simli_face_id";
+/// A GitHub Personal Access Token, `issues:write` scope on this repo is
+/// enough — used only by error_report::report to file an issue on a real
+/// backend failure (Mona's explicit request, 2026-08-28: "تواصل مباشر بين
+/// امين و بينك يبلغك الخطأ"). Entirely optional: nothing here ever runs,
+/// and no issue is ever filed, unless she's pasted a token in. Same
+/// storage/disclosure trade-off as every other key above.
+pub(crate) const GITHUB_TOKEN_KEY: &str = "github_token";
 
 /// Hands-free mode settings — see voice::start_hands_free and
 /// AminVoice.swift's `HandsFreeListener`. Off by default, every launch, on
@@ -79,7 +87,7 @@ fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()
     Ok(())
 }
 
-fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
+pub(crate) fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM settings WHERE key = ?1",
         [key],
@@ -296,6 +304,45 @@ pub fn clear_simli_key(db: State<Db>) -> Result<(), String> {
 pub fn get_simli_face_id(db: State<Db>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     Ok(get_setting(&conn, SIMLI_FACE_ID_KEY).unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn has_github_token(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, GITHUB_TOKEN_KEY)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn save_github_token(token: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, GITHUB_TOKEN_KEY, token.trim())?;
+    audit::record(
+        &conn,
+        "user",
+        "save_github_token",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn clear_github_token(db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [GITHUB_TOKEN_KEY])
+        .map_err(|e| e.to_string())?;
+    audit::record(
+        &conn,
+        "user",
+        "clear_github_token",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
@@ -532,16 +579,19 @@ pub async fn send_agent_message(
     let response = match agent::send_message(&api_key, &history, &tool_defs, &memory_block).await {
         Ok(r) => r,
         Err(e) => {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
-            let _ = audit::record(
-                &conn,
-                "amin",
-                "agent_message",
-                RiskTier::Auto,
-                audit::Decision::Blocked,
-                Some(&e),
-                None,
-            );
+            {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                let _ = audit::record(
+                    &conn,
+                    "amin",
+                    "agent_message",
+                    RiskTier::Auto,
+                    audit::Decision::Blocked,
+                    Some(&e),
+                    None,
+                );
+            }
+            error_report::report(&app, "agent_api", &e).await;
             return Err(e);
         }
     };
@@ -1026,10 +1076,9 @@ pub async fn speak_text(
                     // Both ElevenLabs paths failed (bad key, quota,
                     // network) — fall back to the on-device voice rather
                     // than staying silent.
-                    let _ = app.emit(
-                        "voice://error",
-                        format!("ElevenLabs: {e} (streaming also failed: {streaming_err})"),
-                    );
+                    let combined = format!("ElevenLabs: {e} (streaming also failed: {streaming_err})");
+                    let _ = app.emit("voice://error", combined.clone());
+                    error_report::report(&app, "elevenlabs_tts", &combined).await;
                     let on_device_text = agent::fix_pronunciation_for_speech(&text);
                     emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
                     return voice::speak(app, &on_device_text);

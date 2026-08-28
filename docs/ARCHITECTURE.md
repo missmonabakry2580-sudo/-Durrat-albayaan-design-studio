@@ -1991,6 +1991,53 @@ whether 0.25 is actually a good threshold for Mona's real voice — that
 still needs a real test on her Mac, same as before, just with a real
 number to read this time if it fails again.
 
+## Automatic error reporting to GitHub (2026-08-28)
+
+Mona: "أنا عايزاك تبني طريقه في الكود ان لما يكون في خطأ في النظام مبني
+يصير تواصل مباشر بين امين و بينك يبلغك الخطأ عشان تصلحه" (build a way so
+that when there's an error in the built system, there's direct
+communication between Amin and you [Claude] so you're told about the
+error and can fix it). Told her plainly what's actually buildable here:
+there is no standing server for the app to call into, so instant,
+literal Amin-to-Claude messaging isn't something this architecture can
+offer. What's real: `error_report::report` (new module) files a GitHub
+issue on Amin's own repo the moment a real backend failure happens,
+labeled `amin-auto-report`, entirely optional (nothing runs, no issue is
+ever filed, unless Mona pastes a GitHub token into Settings — new
+`github_token` setting, same save/clear/has pattern and same local-only
+storage disclosure as every other key). A new hourly Routine (this
+session, self-bound) checks for new issues with that label and works
+them: reads, diagnoses from the real error text in the body (never
+guesses), fixes and commits locally if a real fix is possible — still
+never pushes without Mona's explicit approval, the same standing rule
+every other change in this doc has followed — then comments and closes
+the issue.
+
+Deliberately conservative about what triggers a report — this is for
+real, actionable backend failures only (an Anthropic API call that failed,
+both ElevenLabs synthesis paths failing), never for expected/user-facing
+conditions (a badly-formatted key, a declined confirmation, a voice
+mismatch) that already show her a clear message directly and would just
+be noise here. A 1-hour in-process dedup window per failure category
+(`DEDUP_WINDOW`) stops a repeatedly-failing subsystem from flooding the
+repo with duplicate issues.
+
+**What's verified vs. not**: `cargo test` (112 passed, including new
+tests for the dedup window), `tsc`, `npm run build` all pass. Fixed one
+real bug found by the compiler, not by inspection: the first version held
+a `MutexGuard` across the `.await` inside `error_report::report`, which
+`tauri::generate_handler!` requires to be `Send` — wrapping the guard's
+scope in a block so it drops before the await fixed it; `cargo check`
+caught this immediately as a hard compile error, not a runtime surprise.
+**Not verified**: an actual GitHub API call creating a real issue (no
+token exists yet to test with), and whether the new hourly Routine
+actually retains GitHub tool access when it fires — it's a self-bound
+Routine (resumes this exact session, not a fresh restricted one), which
+should carry this session's existing GitHub access forward, but the
+Routine's own prompt was written to self-diagnose and tell Mona plainly
+if that assumption turns out wrong rather than silently doing nothing
+forever.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
