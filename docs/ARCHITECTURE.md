@@ -2258,6 +2258,24 @@ without a real Mac) — which is exactly why the echo grace period exists
 as a second, voiceprint-independent defense; and the 3s grace period
 itself is a first estimate, like the 1.2s silence threshold before it.
 
+## The speaking mouth gaped like a scream, not speech (2026-08-28)
+
+Another real screenshot from Mona's Mac mid-speech: jaw at full drop,
+tongue visible — "هي دي حركة الفم وقت الكلام؟؟". The jaw's audio-reactive
+ceiling was 0.55 of `jawOpen`, this rig's single largest blendshape
+(~35mm at 1.0), and the loudness mapping (`level * 1.7`, clamped)
+saturated at ordinary speech volume — so the mouth pinned at a full gape
+for any sustained loudness instead of fluttering. Notably the exact
+inverse of the brow/cheek lesson from earlier today: those needed
+boosting past 0.5 because their deltas are ~8mm; the jaw needed cutting
+for the same underlying reason. New mapping: `sqrt(level) * 1.1`
+(quiet syllables stay visible, loud ones stop slamming the cap) capped
+at 0.3 jaw, with `viseme_sil`'s counterweight rescaled to match.
+Verified with the usual temporary facetest harness (Playwright, forced
+`state=speaking` + `audioLevelBus` at 0.85, cropped/zoomed to real
+framing scale): a natural talking aperture at peak loudness, no gape,
+harness deleted before commit as always. Not verified on her Mac yet.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

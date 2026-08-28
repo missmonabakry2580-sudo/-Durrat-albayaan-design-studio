@@ -437,9 +437,18 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       }
 
       // --- Mouth: amplitude-reactive while speaking, closed otherwise ---
+      // RECALIBRATED 2026-08-28 from a real screenshot: at the previous
+      // 0.55 ceiling (jawOpen moves this rig's jaw ~35mm at 1.0, the
+      // single largest blendshape it has) any sustained loudness pinned
+      // the mouth at a full gape — tongue visible, more scream than
+      // speech. Unlike the brow/cheek expressions, which needed BOOSTING
+      // past 0.5 to read at all (their deltas are ~8mm), the jaw needs
+      // the opposite treatment for the same reason: real conversational
+      // mouths barely reach a third of a full jaw drop. sqrt() keeps
+      // quiet syllables visible without letting loud ones slam the cap.
       const level = isSpeaking ? getAudioLevel() : 0;
-      const targetJaw = isSpeaking ? Math.min(1, level * 1.7) * 0.55 : 0;
-      const targetSil = isSpeaking ? Math.max(0, 1 - targetJaw * 1.4) : 1;
+      const targetJaw = isSpeaking ? Math.min(1, Math.sqrt(level) * 1.1) * 0.3 : 0;
+      const targetSil = isSpeaking ? Math.max(0, 1 - targetJaw * 2.6) : 1;
       jaw.current = lerp(jaw.current, targetJaw, 1 - Math.pow(0.0005, dt));
       sil.current = lerp(sil.current, targetSil, 1 - Math.pow(0.0005, dt));
       setMorph(faceMeshes, "jawOpen", jaw.current);
