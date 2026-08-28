@@ -18,6 +18,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Real bug this caught: the version in tauri.conf.json stayed at
+      # 0.2.14 across five real, substantive commits (3D avatar mode,
+      # Portrait Mode's new photo, the Simli integration, a critical CSP
+      # fix) before Mona noticed none of them had actually reached her —
+      # Tauri's updater plugin compares semver against latest.json, not
+      # commit hashes, so "check for updates" correctly reported "already
+      # up to date" every single time even though the underlying app had
+      # completely changed. Fails the build loudly, before any of the
+      # expensive steps below run, rather than silently shipping a build
+      # nothing will ever offer as an update. A no-op on the very first
+      # release (no amin-preview tag yet) or once GH_TOKEN isn't set.
+      - name: Refuse to ship a build whose version didn't change
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          THIS_VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          VERSION_CHECK_DIR="$RUNNER_TEMP/version-check"
+          rm -rf "$VERSION_CHECK_DIR" && mkdir -p "$VERSION_CHECK_DIR"
+          gh release download amin-preview --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$VERSION_CHECK_DIR" 2>/dev/null || true
+          if [ ! -s "$VERSION_CHECK_DIR/latest.json" ]; then
+            echo "No published latest.json yet (first release) — nothing to compare against."
+            exit 0
+          fi
+          PUBLISHED_VERSION="$(node -p "require('$VERSION_CHECK_DIR/latest.json').version" 2>/dev/null || echo "")"
+          if [ "$THIS_VERSION" = "$PUBLISHED_VERSION" ]; then
+            echo "::error::tauri.conf.json's version ($THIS_VERSION) matches the already-published release — the in-app updater compares version numbers, not commits, so nothing would ever offer this build as an update. Bump the version (package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json) before pushing."
+            exit 1
+          fi
+          echo "Version check OK: $PUBLISHED_VERSION -> $THIS_VERSION"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20

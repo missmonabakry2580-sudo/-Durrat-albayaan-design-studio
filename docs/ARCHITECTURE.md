@@ -353,6 +353,32 @@ update button" if that's not expected. Settings also has an explicit
 Mona can confirm that for herself on demand instead of just trusting a
 silent background check.
 
+### A real, silent failure of this whole mechanism (2026-08-28)
+
+`tauri-plugin-updater`'s `check()` decides "is there an update" purely by
+comparing semver strings — `tauri.conf.json`'s `version` against
+`latest.json`'s — never by commit hash or build timestamp. `version`
+stayed at `0.2.14` across five real, substantive pushes (3D avatar mode,
+Portrait Mode's new photo, the Simli integration, and the critical CSP
+texture fix above) because nothing enforced bumping it. Every one of
+those builds compiled and published correctly, but every "تحقّقي من
+التحديثات الآن" click and every launch-time check honestly, correctly
+reported "already up to date" — because as far as semver is concerned,
+nothing had changed. Mona was stuck on an old binary with no signal
+anything was wrong; this is very likely why several fixes across this
+whole session (not just today's) never visibly reached her.
+
+Fixed two ways, not just bumped once:
+1. Version bumped to `0.2.15` (`package.json`, `src-tauri/Cargo.toml`,
+   `src-tauri/tauri.conf.json` — all three, kept in sync as always).
+2. A new CI step, **"Refuse to ship a build whose version didn't
+   change"**, runs first, before any of the expensive build steps: it
+   downloads the currently-published `latest.json`, compares its
+   `version` against this push's `tauri.conf.json`, and fails the whole
+   job loudly (`::error::`) if they match — rather than silently
+   shipping a build the updater will never offer. A one-time fix without
+   this guard is just next week's repeat of the same bug.
+
 ## Realtime voice: the architecture decision, and why it isn't ElevenAgents
 
 Mona's real ask isn't "Amin can speak" — it's a natural back-and-forth
