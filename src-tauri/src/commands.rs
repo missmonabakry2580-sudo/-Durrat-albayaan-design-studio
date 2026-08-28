@@ -806,17 +806,19 @@ pub async fn speak_text(
     };
 
     // ElevenLabs playback doesn't go through the native engine's callback
-    // (on_voice_event), unlike the on-device path — mute/unmute hands-free
-    // mode directly here so Amin still never transcribes its own voice
-    // back at itself (see AminVoice.swift's SELF-HEARING note).
-    voice::set_hands_free_muted(true);
-    let _ = app.emit("voice://speaking-started", "");
+    // (on_voice_event), unlike the on-device path — tell hands-free mode
+    // what's being said directly here, same as that callback would, so
+    // HandsFreeListener can still tell its own echoed voice apart from a
+    // real barge-in (see AminVoice.swift's SELF-HEARING note and
+    // isLikelySelfEcho).
+    voice::set_hands_free_speaking(Some(&text));
+    let _ = app.emit("voice://speaking-started", text.clone());
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
         if let Err(e) = elevenlabs::play(&audio) {
             let _ = app_for_thread.emit("voice://error", e);
         }
-        voice::set_hands_free_muted(false);
+        voice::set_hands_free_speaking(None);
         let _ = app_for_thread.emit("voice://speaking-finished", "");
     });
     Ok(())

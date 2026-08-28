@@ -302,6 +302,16 @@ function App() {
         setAgentInput(e.payload);
         if (handsFreeEnabled) handleSendToAgent(e.payload);
       }),
+      // Real barge-in: Mona started talking over Amin's own reply.
+      // AminVoice.swift already told Rust to stop the playback before this
+      // event even arrives (see voice.rs's on_voice_event, kind 9) — the
+      // resulting "voice://speaking-finished" resets aminState on its own,
+      // so this only needs to treat the heard text as her next command,
+      // same as a normal final while a hands-free session is open.
+      listen<string>("voice://hands-free-barge-in", (e) => {
+        setAgentInput(e.payload);
+        if (handsFreeEnabled) handleSendToAgent(e.payload);
+      }),
       listen<string>("voice://error", (e) => {
         setVoiceError(e.payload);
         setIsListening(false);

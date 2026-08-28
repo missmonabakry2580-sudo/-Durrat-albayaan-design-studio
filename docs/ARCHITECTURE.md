@@ -834,6 +834,62 @@ change) — Mona should confirm the 15-minute timeout actually fires and
 stops the mic, and that a relaunch genuinely shows hands-free off with no
 stale "on" state anywhere.
 
+## Real-time barge-in: interrupting Amin mid-reply (2026-08-28)
+
+Mona asked for real-time voice conversation — specifically, being able to
+talk over Amin while it's replying during a hands-free session, the way a
+human interruption works, instead of having to wait it out or hit a
+"stop speaking" button. This replaces the old blanket mute
+(`amin_voice_set_hands_free_muted`) with something that can tell "Amin
+hearing its own voice" apart from "Mona actually talking over it."
+
+**Two layers, because neither alone is trustworthy:**
+
+1. **Acoustic echo cancellation.** `HandsFreeListener.openTap` now calls
+   `AVAudioInputNode.setVoiceProcessingEnabled(true)` before installing the
+   mic tap — the same VoIP-grade echo cancellation telephony apps use,
+   which cancels the echo of whatever's coming out of the output hardware,
+   not just this engine's own output (relevant since Amin's TTS plays
+   through two entirely different paths — `AVSpeechSynthesizer` on-device,
+   `afplay` for ElevenLabs — neither of which routes through this same
+   `AVAudioEngine`). Best-effort and non-fatal: if the OS refuses it,
+   hands-free still works, it just leans more on layer 2.
+2. **Text comparison.** `voice.rs`'s `set_hands_free_speaking` now carries
+   the actual sentence Amin is about to say (previously just a mute
+   flag), threaded through from `commands::speak_text` (ElevenLabs) and
+   `AminVoice.swift`'s own `SpeechDelegate.didStart` (on-device, via kind
+   3's text — previously always null). `HandsFreeListener.isLikelySelfEcho`
+   compares each recognized utterance against that sentence — exact
+   containment or >60% word overlap — and discards it as an echo exactly
+   like the old mute did. A clearly different utterance is a real
+   barge-in: it emits a new kind (9) instead, and — this is the part that
+   makes it feel instant rather than laggy — `voice.rs`'s `on_voice_event`
+   calls `stop_speaking()` synchronously, *before* even emitting the
+   frontend event, so playback stops in the same call stack as the
+   recognition callback that detected the interruption. The frontend's
+   `voice://hands-free-barge-in` listener then treats the heard text as
+   her next command, identically to a normal final while a session is
+   open; `voice://speaking-finished` fires on its own as a side effect of
+   the forced stop (`AVSpeechSynthesizerDelegate.didCancel` / the killed
+   `afplay` process both still reach it), so aminState resets without any
+   extra plumbing.
+
+Deliberately biased toward "assume it's an echo" on a tie — a missed
+barge-in just means Mona repeats herself; a false one makes Amin cut
+itself off having heard nothing, a stranger failure to explain.
+
+**What's real and what isn't yet:** the design is complete and the whole
+crate compiles/tests clean with it in (96 tests), but this is audio
+hardware behavior — echo cancellation quality, exact word-overlap
+threshold, whether 9's synchronous cross-language call chain behaves the
+way traced through on paper — that literally cannot be verified without a
+real Mac, a real microphone, and real speakers. This sandbox has none of
+the three. Mona needs to actually try interrupting Amin mid-sentence
+during a hands-free conversation and report what happens — including "it
+falsely thinks I'm interrupting when I'm not" and "it doesn't notice when
+I do," both of which are real possible outcomes, not just the success
+case.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

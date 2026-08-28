@@ -51,9 +51,13 @@ impl Default for HandsFreeSession {
 
 /// `kind` as passed by `AminVoice.swift`'s C callback: 0 = partial
 /// transcript, 1 = final transcript, 2 = error (recognition side); 3 =
-/// speech started, 4 = speech finished (speak side); 5 = hands-free armed
-/// (passively watching for the wake phrase), 6 = wake phrase heard — a
-/// command session opened, 7 = the close phrase ended the command session.
+/// speech started (text is the sentence Amin is about to speak — see
+/// `set_hands_free_speaking`), 4 = speech finished (text always null); 5 =
+/// hands-free armed (passively watching for the wake phrase), 6 = wake
+/// phrase heard — a command session opened, 7 = the close phrase ended the
+/// command session, 8 = hands-free timed out from inactivity, 9 = a real
+/// barge-in — Mona started talking over Amin's own reply (text is what she
+/// said).
 type VoiceCallback = unsafe extern "C" fn(c_int, *const c_char);
 type StartFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
 type StopFn = unsafe extern "C" fn();
@@ -61,7 +65,7 @@ type SpeakFn = unsafe extern "C" fn(*const c_char, VoiceCallback) -> c_int;
 type StopSpeakingFn = unsafe extern "C" fn();
 type StartHandsFreeFn = unsafe extern "C" fn(*const c_char, *const c_char, VoiceCallback) -> c_int;
 type StopHandsFreeFn = unsafe extern "C" fn();
-type SetHandsFreeMutedFn = unsafe extern "C" fn(c_int);
+type SetHandsFreeSpeakingFn = unsafe extern "C" fn(*const c_char);
 
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
@@ -133,16 +137,26 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         // now rather than holding onto it.
         unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned()
     };
-    // Amin's own voice must never be transcribed back at itself while
-    // hands-free mode is running — see the SELF-HEARING note in
-    // AminVoice.swift. This covers the on-device TTS path; the ElevenLabs
-    // path (commands::speak_text) doesn't go through this callback at all
+    // Amin's own voice must never be blindly acted on while hands-free mode
+    // is running — see the SELF-HEARING note in AminVoice.swift. This
+    // covers the on-device TTS path; the ElevenLabs path
+    // (commands::speak_text) doesn't go through this callback at all
     // (playback happens over `afplay`, not the native engine), so it calls
-    // `set_hands_free_muted` directly instead.
+    // `set_hands_free_speaking` directly instead. Passing the actual text
+    // (not just a mute flag) is what lets `HandsFreeListener` tell a real
+    // barge-in apart from hearing its own reply — see its
+    // `isLikelySelfEcho`.
     if kind == 3 {
-        set_hands_free_muted(true);
+        set_hands_free_speaking(Some(&text));
     } else if kind == 4 {
-        set_hands_free_muted(false);
+        set_hands_free_speaking(None);
+    } else if kind == 9 {
+        // A genuine barge-in: stop Amin's own playback immediately, before
+        // even notifying the frontend — every millisecond here is a
+        // millisecond it keeps talking over her. The ElevenLabs path's
+        // afplay process and the on-device AVSpeechSynthesizer are both
+        // covered by this same call (see stop_speaking's doc comment).
+        let _ = stop_speaking();
     }
 
     let _ = match kind {
@@ -161,6 +175,7 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         // job, by calling the normal set_hands_free_mode(false) command —
         // the same already-correct stop path a manual toggle-off uses.
         8 => app.emit("voice://hands-free-timeout", text),
+        9 => app.emit("voice://hands-free-barge-in", text),
         _ => app.emit("voice://error", text),
     };
 }
@@ -236,6 +251,11 @@ pub fn speak(app: AppHandle, text: &str) -> Result<(), String> {
 
 /// Stops any in-progress speech immediately — whichever voice is actually
 /// speaking, on-device or ElevenLabs. A no-op if nothing is speaking.
+/// Also clears hands-free's "Amin is currently saying X" state — without
+/// this, a manual stop mid-sentence would leave `HandsFreeListener`
+/// comparing new speech against a reply that no longer exists, until the
+/// on-device path's own kind-4 callback happened to arrive (which a forced
+/// stop can race).
 pub fn stop_speaking() -> Result<(), String> {
     if let Some(lib) = LIBRARY.get() {
         unsafe {
@@ -248,6 +268,7 @@ pub fn stop_speaking() -> Result<(), String> {
     if let Some(pid) = pid {
         let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
     }
+    set_hands_free_speaking(None);
     Ok(())
 }
 
@@ -286,18 +307,27 @@ pub fn start_hands_free(
     Ok(())
 }
 
-/// Mutes/unmutes hands-free mode's own recognition results without
-/// stopping anything — called around every `speak_text` (both the
-/// on-device path, via `on_voice_event`'s kind 3/4, and the ElevenLabs
-/// path directly) so Amin's own voice is never transcribed back at
-/// itself. A silent no-op if hands-free mode isn't running or the engine
-/// was never loaded — this is a best-effort safety measure, not something
-/// that should ever fail loudly and interrupt actually speaking the reply.
-pub fn set_hands_free_muted(muted: bool) {
+/// Tells hands-free mode what Amin is currently saying (`Some(text)`) or
+/// that it's finished (`None`) — called around every `speak_text` (both
+/// the on-device path, via `on_voice_event`'s kind 3/4, and the ElevenLabs
+/// path directly). `HandsFreeListener` uses this to tell its own echoed
+/// voice apart from Mona genuinely talking over it (a real barge-in) —
+/// see AminVoice.swift's `isLikelySelfEcho`. A silent no-op if hands-free
+/// mode isn't running or the engine was never loaded — this is a
+/// best-effort safety measure, not something that should ever fail loudly
+/// and interrupt actually speaking the reply.
+pub fn set_hands_free_speaking(text: Option<&str>) {
     if let Some(lib) = LIBRARY.get() {
         unsafe {
-            if let Ok(f) = lib.get::<SetHandsFreeMutedFn>(b"amin_voice_set_hands_free_muted\0") {
-                f(if muted { 1 } else { 0 });
+            if let Ok(f) = lib.get::<SetHandsFreeSpeakingFn>(b"amin_voice_set_hands_free_speaking\0") {
+                match text {
+                    Some(t) => {
+                        if let Ok(c_text) = std::ffi::CString::new(t) {
+                            f(c_text.as_ptr());
+                        }
+                    }
+                    None => f(std::ptr::null()),
+                }
             }
         }
     }

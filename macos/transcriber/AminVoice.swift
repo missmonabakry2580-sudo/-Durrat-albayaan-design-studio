@@ -31,10 +31,11 @@
 //   amin_voice_stop_speaking()
 //   amin_voice_start_hands_free(wakePhrase, closePhrase, callback) -> Int32
 //   amin_voice_stop_hands_free()
-//   amin_voice_set_hands_free_muted(muted: Int32)
+//   amin_voice_set_hands_free_speaking(text: UnsafePointer<CChar>?)
 // `callback` is `@convention(c) (Int32, UnsafePointer<CChar>?) -> Void`:
 // kind 0 = partial transcript, 1 = final transcript, 2 = error (recognition
-// side); kind 3 = speech started, 4 = speech finished (speak side, text is
+// side); kind 3 = speech started (text is the sentence about to be spoken —
+// see `amin_voice_set_hands_free_speaking`), 4 = speech finished (text
 // always null); kind 5 = hands-free armed (passively watching for the wake
 // phrase, text is always null), 6 = wake phrase heard — a command session
 // just opened (text always null), 7 = the close phrase ended the command
@@ -43,9 +44,12 @@
 // passiveModeTimeoutSeconds of no wake phrase (text always null; the audio
 // engine is still technically running at this instant — see armPassive's
 // comment for why the actual teardown happens on the Rust/frontend side
-// instead of here). The string is a NUL-terminated UTF-8 C string valid
-// only for the duration of the call — the Rust side must copy it before
-// returning.
+// instead of here), 9 = a real barge-in — Mona started talking over Amin's
+// own reply (text is what she said; see HandsFreeListener's
+// isLikelySelfEcho and armPassive/listenForCommand for why this fires
+// instead of the recognition being discarded as an echo). The string is a
+// NUL-terminated UTF-8 C string valid only for the duration of the call —
+// the Rust side must copy it before returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -68,18 +72,29 @@
 // a session. Voice-print/speaker verification (the actual fix for that) is
 // a separate, not-yet-built phase — see docs/SECURITY.md.
 //
-// SELF-HEARING: the microphone stays live while Amin talks, so without
-// muting it would happily transcribe its own TTS voice coming out of the
-// speakers — best case a wasted round trip, worst case Amin accidentally
-// hearing its own reply contain the close phrase and closing the session
-// on itself. `amin_voice_set_hands_free_muted` is voice.rs's fix: it's
-// called around every speak_text call (both the on-device and ElevenLabs
-// paths) so recognition results are discarded, not acted on, for as long
-// as Amin is actually speaking. This is a mute, not a pause — the audio
-// engine and recognition task keep running underneath so nothing needs
-// restarting when unmuted. It does not solve acoustic echo generally (a
-// loud enough reply could still register as background noise); it solves
-// the specific case that matters here, Amin reacting to its own words.
+// SELF-HEARING / BARGE-IN: the microphone stays live while Amin talks, so
+// without some defense it would happily transcribe its own TTS voice
+// coming out of the speakers — best case a wasted round trip, worst case
+// Amin accidentally hearing its own reply contain the close phrase and
+// closing the session on itself. Two layers, not one:
+//
+//   1. `openTap` enables `AVAudioInputNode.setVoiceProcessingEnabled`
+//      (Apple's VoIP-grade acoustic echo cancellation) on the mic input,
+//      which cancels the echo of whatever's coming out of the output
+//      hardware — best-effort: non-fatal if the OS refuses it, and not
+//      guaranteed to fully cancel every audio path.
+//   2. `amin_voice_set_hands_free_speaking` (voice.rs's fix, called around
+//      every speak_text call, both the on-device and ElevenLabs paths)
+//      tells `HandsFreeListener` the actual sentence Amin is saying, not
+//      just a mute flag. `isLikelySelfEcho` compares each recognized
+//      utterance against that sentence: a close match (still leaking
+//      through despite AEC) is discarded exactly like the old blanket
+//      mute; a clearly different utterance is a real barge-in — Mona
+//      talking over it on purpose — which stops playback (kind 9, handled
+//      Rust-side in `on_voice_event`) and gets treated as her next command
+//      instead of silently dropped. The audio engine and recognition task
+//      keep running underneath the whole time; nothing needs restarting
+//      when Amin stops talking (real or interrupted).
 
 import Foundation
 import Speech
@@ -142,12 +157,14 @@ public func amin_voice_stop_hands_free() {
     activeHandsFree = nil
 }
 
-/// See the SELF-HEARING note above — called by voice.rs around every
-/// speak_text call so Amin doesn't transcribe its own voice. A no-op if
-/// hands-free mode isn't running.
-@_cdecl("amin_voice_set_hands_free_muted")
-public func amin_voice_set_hands_free_muted(_ muted: Int32) {
-    activeHandsFree?.setMuted(muted != 0)
+/// See the SELF-HEARING / BARGE-IN note above — called by voice.rs around
+/// every speak_text call with the sentence Amin is about to say (or `nil`/
+/// empty once it's done) so `HandsFreeListener` can tell its own echo
+/// apart from a real barge-in instead of just muting everything. A no-op
+/// if hands-free mode isn't running.
+@_cdecl("amin_voice_set_hands_free_speaking")
+public func amin_voice_set_hands_free_speaking(_ text: UnsafePointer<CChar>?) {
+    activeHandsFree?.setSpeakingText(text.map { String(cString: $0) })
 }
 
 /// Text-to-speech for Amin's own replies (Mona asked for spoken output as
@@ -155,10 +172,12 @@ public func amin_voice_set_hands_free_muted(_ muted: Int32) {
 /// AVSpeechSynthesizer — on-device, no new API key or vendor, matching the
 /// same "voice stays local" choice already made for speech recognition.
 /// `text` must be a NUL-terminated UTF-8 C string. The callback receives
-/// kind 3 when speech starts and kind 4 when it ends (text is always null
-/// for these) — src-tauri/src/voice.rs maps those to
+/// kind 3 (carrying that same text) when speech starts and kind 4 (text
+/// always null) when it ends — src-tauri/src/voice.rs maps those to
 /// voice://speaking-started / voice://speaking-finished so the frontend
-/// can track Amin's actual speaking state instead of guessing a duration.
+/// can track Amin's actual speaking state instead of guessing a duration,
+/// and also forwards kind 3's text into `set_hands_free_speaking` — see
+/// this file's SELF-HEARING / BARGE-IN note.
 private let speechSynthesizer = AVSpeechSynthesizer()
 private var speechDelegate: SpeechDelegate?
 
@@ -188,7 +207,8 @@ private func bestArabicVoice() -> AVSpeechSynthesisVoice? {
 
 @_cdecl("amin_voice_speak")
 public func amin_voice_speak(_ text: UnsafePointer<CChar>, _ callback: @escaping AminVoiceCallback) -> Int32 {
-    let utterance = AVSpeechUtterance(string: String(cString: text))
+    let textString = String(cString: text)
+    let utterance = AVSpeechUtterance(string: textString)
     // English words mixed into an Arabic reply will still be read with an
     // Arabic accent regardless of voice quality tier — the same single-
     // locale limitation already disclosed for speech *recognition* above,
@@ -196,7 +216,9 @@ public func amin_voice_speak(_ text: UnsafePointer<CChar>, _ callback: @escaping
     utterance.voice = bestArabicVoice()
         ?? AVSpeechSynthesisVoice(language: "ar-SA")
         ?? AVSpeechSynthesisVoice(language: "en-US")
-    let delegate = SpeechDelegate(callback: callback)
+    // `textString` is threaded through so the kind-3 callback carries the
+    // actual sentence, not null — see amin_voice_set_hands_free_speaking.
+    let delegate = SpeechDelegate(text: textString, callback: callback)
     speechDelegate = delegate
     speechSynthesizer.delegate = delegate
     speechSynthesizer.speak(utterance)
@@ -209,11 +231,15 @@ public func amin_voice_stop_speaking() {
 }
 
 private final class SpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    private let text: String
     private let callback: AminVoiceCallback
-    init(callback: @escaping AminVoiceCallback) { self.callback = callback }
+    init(text: String, callback: @escaping AminVoiceCallback) {
+        self.text = text
+        self.callback = callback
+    }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        callback(3, nil)
+        text.withCString { callback(3, $0) }
     }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         callback(4, nil)
@@ -423,10 +449,13 @@ private final class HandsFreeListener {
     private var currentTask: SFSpeechRecognitionTask?
     private var mode: Mode = .passive
     private var stopped = false
-    /// See the SELF-HEARING note in this file's header — set true for as
-    /// long as Amin's own voice is playing, so its own words never get
-    /// treated as a wake phrase, a command, or the close phrase.
-    private var muted = false
+    /// See the SELF-HEARING / BARGE-IN note in this file's header. Holds
+    /// the sentence Amin is currently speaking, or `nil` when it isn't
+    /// speaking. Non-nil doesn't mean "ignore everything" the way the old
+    /// blanket mute did — `isLikelySelfEcho` compares each recognized
+    /// utterance against this text to tell an echo of it apart from Mona
+    /// genuinely talking over it.
+    private var currentlySpeakingText: String?
 
     /// When continuous passive (wake-phrase-only) listening last began, or
     /// `nil` while an active command session is open. Found in the field
@@ -444,8 +473,8 @@ private final class HandsFreeListener {
 
     private enum Mode: Equatable { case passive, active }
 
-    func setMuted(_ value: Bool) {
-        muted = value
+    func setSpeakingText(_ text: String?) {
+        currentlySpeakingText = (text?.isEmpty == false) ? text : nil
     }
 
     init(wakePhrase: String, closePhrase: String, callback: @escaping AminVoiceCallback) {
@@ -488,6 +517,29 @@ private final class HandsFreeListener {
         let cut = min(normalizedText.distance(from: normalizedText.startIndex, to: range.lowerBound), trimmed.count)
         let idx = trimmed.index(trimmed.startIndex, offsetBy: cut)
         return String(trimmed[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True if `heard` is very likely Amin's own TTS voice leaking back
+    /// through the mic despite `openTap`'s echo cancellation, rather than
+    /// Mona actually talking over it. Not exact-match: real speech
+    /// recognition of echo-cancelled, speaker-reflected audio won't
+    /// transcribe identically to Amin's own sentence even when it IS an
+    /// echo, so containment alone would under-catch — a word-overlap ratio
+    /// is the fallback for that case. Deliberately biased toward "treat as
+    /// echo" on a tie: a missed barge-in just means Mona repeats herself
+    /// (harmless, familiar); a false barge-in makes Amin cut itself off
+    /// having heard nothing, which is a stranger, more confusing failure.
+    private func isLikelySelfEcho(_ heard: String) -> Bool {
+        guard let speaking = currentlySpeakingText, !speaking.isEmpty else { return false }
+        let heardNorm = normalize(heard)
+        if heardNorm.isEmpty { return true }
+        let speakingNorm = normalize(speaking)
+        if speakingNorm.contains(heardNorm) { return true }
+        let heardWords = Set(heardNorm.split(separator: " "))
+        guard !heardWords.isEmpty else { return true }
+        let speakingWords = Set(speakingNorm.split(separator: " "))
+        let overlap = heardWords.intersection(speakingWords).count
+        return Double(overlap) / Double(heardWords.count) > 0.6
     }
 
     func start() {
@@ -543,6 +595,20 @@ private final class HandsFreeListener {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, !self.stopped else { return }
             let inputNode = self.audioEngine.inputNode
+            // Real barge-in needs the mic to not simply re-hear Amin's own
+            // voice coming out of the speakers as if Mona said it. This is
+            // the same acoustic echo cancellation VoIP apps use — it
+            // cancels the echo of whatever's playing through the output
+            // hardware, not just this engine's own output. Best-effort:
+            // non-fatal if the OS refuses it (hands-free still works, just
+            // leans more on isLikelySelfEcho's text comparison instead).
+            // Must happen before reading the input format below — enabling
+            // it can change the format the node actually delivers.
+            do {
+                try inputNode.setVoiceProcessingEnabled(true)
+            } catch {
+                self.emit(2, "تعذّر تفعيل إلغاء الصدى الصوتي: \(error.localizedDescription)")
+            }
             let format = inputNode.outputFormat(forBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.currentRequest?.append(buffer)
@@ -588,8 +654,18 @@ private final class HandsFreeListener {
         emit(5)
         runRecognition(recognizer: recognizer, onDeviceOnly: true) { [weak self] text, isFinal in
             guard let self = self else { return }
-            if self.muted {
-                if isFinal { self.armPassive(recognizer: recognizer) }
+            if self.currentlySpeakingText != nil {
+                if self.isLikelySelfEcho(text) {
+                    if isFinal { self.armPassive(recognizer: recognizer) }
+                    return
+                }
+                // Amin is talking (a proactive reply, not inside an open
+                // session) and this doesn't look like its own echo — treat
+                // it as Mona actually trying to get its attention.
+                if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.emit(9, text)
+                    self.openActiveSession(recognizer: recognizer)
+                }
                 return
             }
             if self.heard(self.wakePhrase, in: text) {
@@ -626,8 +702,20 @@ private final class HandsFreeListener {
         // phase above hard-requires on-device.
         runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
             guard let self = self else { return }
-            if self.muted {
-                if isFinal { self.listenForCommand(recognizer: recognizer) }
+            if self.currentlySpeakingText != nil {
+                if self.isLikelySelfEcho(text) {
+                    if isFinal { self.listenForCommand(recognizer: recognizer) }
+                    return
+                }
+                // A real barge-in: Mona started talking over Amin's own
+                // reply. Emitting kind 9 (rather than a normal kind-1
+                // final) lets the Rust side stop playback immediately,
+                // before the frontend even sees the text, instead of
+                // waiting for a fresh stop_speaking round trip afterward.
+                if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.emit(9, text)
+                    self.listenForCommand(recognizer: recognizer)
+                }
                 return
             }
             // Gated to isFinal — checking the close phrase against every
