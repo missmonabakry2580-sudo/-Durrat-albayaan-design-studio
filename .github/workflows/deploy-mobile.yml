@@ -1,0 +1,45 @@
+# Publishes mobile/ (أمين نسخة الهاتف — a self-contained static web app,
+# see mobile/index.html's header comment) to GitHub Pages, so Mona can open
+# it on her phone at
+#   https://missmonabakry2580-sudo.github.io/-Durrat-albayaan-design-studio/
+# and add it to her home screen. No build step on purpose: the page is one
+# hand-written HTML file, so what ships is exactly what's in the repo.
+#
+# configure-pages runs with enablement: true so the very first run turns
+# GitHub Pages on for this repo by itself (public repo, GITHUB_TOKEN has
+# pages: write below) — no manual Settings step for Mona.
+name: Deploy Amin Mobile (GitHub Pages)
+
+on:
+  push:
+    branches: [claude/amin-project-6wwufr]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/deploy-mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: mobile
+      - id: deployment
+        uses: actions/deploy-pages@v4

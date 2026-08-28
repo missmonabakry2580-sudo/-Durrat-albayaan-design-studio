@@ -1,0 +1,427 @@
+<!doctype html>
+<!--
+  أمين — نسخة الهاتف (2026-08-28، بطلب صريح من منى: "ابني لي تطبيق امين
+  ع الهاتف").
+
+  What this genuinely is: a self-contained mobile web app, served free from
+  GitHub Pages out of this same public repo, installable to the iPhone home
+  screen (Share → Add to Home Screen) with Amin's face as its icon. It
+  talks to the same Claude model with the same Amin persona, and speaks
+  with the same ElevenLabs voice once Mona pastes her keys into its
+  settings — the keys live ONLY in this browser's localStorage on her own
+  phone, never in this public repo and never on any server of ours (this
+  page is static; both API calls go directly from her phone to Anthropic/
+  ElevenLabs — Anthropic's CORS support requires the
+  anthropic-dangerous-direct-browser-access header, which is exactly what
+  it's for: a personal client where the key's owner is the user herself).
+
+  What it deliberately is NOT (disclosed, not hidden): it does not reach
+  the Mac app's local database — tasks, files, follow-ups, and long-term
+  memory live in SQLite on the Mac and there is no server bridging the
+  two. This is Amin's brain and voice in her pocket, not a remote control
+  for the Mac.
+
+  Voice input uses the Web Speech API where iOS Safari provides it
+  (feature-detected); otherwise the mic button hides and typing remains.
+  Voice output prefers ElevenLabs (her key + voice id) and falls back to
+  the phone's built-in Arabic speech synthesis, so a reply is never
+  silent just because a key is missing.
+-->
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="أمين" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="amin-identity.jpg" />
+<title>أمين</title>
+<style>
+  :root {
+    --bg: #0a1030;
+    --bg2: #101a44;
+    --card: #17224f;
+    --text: #eef1fb;
+    --muted: #9aa5cc;
+    --accent: #4f74ff;
+    --danger: #ff6b6b;
+    --ok: #39d98a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: radial-gradient(120% 90% at 50% 0%, var(--bg2) 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Tahoma, sans-serif;
+    display: flex; flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  }
+  header img {
+    width: 44px; height: 44px; border-radius: 50%;
+    object-fit: cover; object-position: 68% 18%;
+    border: 2px solid rgba(255,255,255,0.25);
+  }
+  header .title { font-size: 20px; font-weight: 700; }
+  header .status { font-size: 12px; color: var(--muted); }
+  header .spacer { flex: 1; }
+  header button {
+    background: none; border: none; color: var(--muted);
+    font-size: 22px; padding: 8px; cursor: pointer;
+  }
+  /* الوجه الكبير — الصفحة الرئيسية بصرية زي التطبيق الأصلي، مش شات فاضي */
+  #face-wrap {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; min-height: 0; padding: 0 20px;
+  }
+  #face {
+    width: min(62vw, 340px); height: min(62vw, 340px);
+    border-radius: 50%;
+    object-fit: cover; object-position: 68% 18%;
+    border: 3px solid rgba(255,255,255,0.18);
+    box-shadow: 0 0 60px rgba(79,116,255,0.35);
+    transition: box-shadow 0.4s ease;
+  }
+  #face.speaking { box-shadow: 0 0 90px rgba(79,116,255,0.8); }
+  #face.listening { box-shadow: 0 0 90px rgba(57,217,138,0.8); }
+  #face.thinking { box-shadow: 0 0 90px rgba(255,205,100,0.7); }
+  #last-reply {
+    color: var(--muted); font-size: 15px; line-height: 1.6;
+    max-height: 22dvh; overflow-y: auto; text-align: center;
+    padding: 0 6px;
+  }
+  #state-line { color: var(--muted); font-size: 13px; min-height: 18px; }
+  /* شريط الإدخال */
+  #bar {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  }
+  #bar input {
+    flex: 1; background: var(--card); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 22px;
+    padding: 12px 16px; font-size: 16px; outline: none;
+  }
+  #bar button {
+    width: 46px; height: 46px; border-radius: 50%; border: none;
+    font-size: 20px; color: white; cursor: pointer; flex: none;
+  }
+  #send { background: var(--accent); }
+  #mic { background: var(--card); border: 1px solid rgba(255,255,255,0.18) !important; }
+  #mic.rec { background: var(--danger); }
+  /* الإعدادات */
+  #settings {
+    position: fixed; inset: 0; background: rgba(6,10,30,0.96);
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 20px 30px;
+    overflow-y: auto; display: none;
+  }
+  #settings.open { display: block; }
+  #settings h2 { margin: 0 0 6px; }
+  #settings p.hint { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0 14px; }
+  #settings label { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
+  #settings input {
+    width: 100%; background: var(--card); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+    padding: 12px; font-size: 15px; direction: ltr; text-align: left;
+  }
+  #settings .row { display: flex; gap: 10px; margin-top: 22px; }
+  #settings .row button {
+    flex: 1; padding: 13px; border-radius: 12px; border: none;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  #save-btn { background: var(--accent); color: white; }
+  #close-btn { background: var(--card); color: var(--text); }
+  .badge { font-size: 12px; color: var(--ok); }
+</style>
+</head>
+<body>
+  <header>
+    <img src="amin-identity.jpg" alt="" />
+    <div>
+      <div class="title">أمين</div>
+      <div class="status" id="header-status">نسخة الهاتف</div>
+    </div>
+    <div class="spacer"></div>
+    <button id="open-settings" aria-label="الإعدادات">⚙︎</button>
+  </header>
+
+  <div id="face-wrap">
+    <img id="face" src="amin-identity.jpg" alt="أمين" />
+    <div id="state-line"></div>
+    <div id="last-reply"></div>
+  </div>
+
+  <div id="bar">
+    <button id="mic" aria-label="تكلمي">🎤</button>
+    <input id="msg" type="text" placeholder="اكتبي لأمين…" autocomplete="off" />
+    <button id="send" aria-label="إرسال">➤</button>
+  </div>
+
+  <div id="settings">
+    <h2>الإعدادات</h2>
+    <p class="hint">
+      المفاتيح دي بتتسجل على تليفونك بس (localStorage) — ولا بتتبعت ولا
+      بتتحفظ في أي مكان تاني. نفس المفاتيح اللي حطيتيها في أمين على
+      اللابتوب.
+    </p>
+    <label>مفتاح Anthropic (إجباري — ده عقل أمين) <span class="badge" id="anthropic-badge"></span></label>
+    <input id="anthropic-key" type="password" placeholder="sk-ant-..." />
+    <label>مفتاح ElevenLabs (اختياري — صوت أمين الحقيقي) <span class="badge" id="eleven-badge"></span></label>
+    <input id="eleven-key" type="password" placeholder="xi-..." />
+    <label>ElevenLabs Voice ID (اختياري — نفس اللي على اللابتوب)</label>
+    <input id="voice-id" type="text" placeholder="Voice ID" />
+    <div class="row">
+      <button id="save-btn">حفظ</button>
+      <button id="close-btn">إغلاق</button>
+    </div>
+    <p class="hint" style="margin-top:26px">
+      النسخة دي هي عقل أمين وصوته على تليفونك. المهام والملفات والذاكرة
+      طويلة المدى موجودين على اللابتوب بس — مفيش سيرفر بيربطهم، وده إفصاح
+      مش عذر.
+    </p>
+  </div>
+
+<script>
+"use strict";
+
+/* ---------- الإعدادات (تخزين محلي على الجهاز فقط) ---------- */
+const store = {
+  get anthropicKey() { return localStorage.getItem("amin.anthropicKey") || ""; },
+  set anthropicKey(v) { localStorage.setItem("amin.anthropicKey", v); },
+  get elevenKey() { return localStorage.getItem("amin.elevenKey") || ""; },
+  set elevenKey(v) { localStorage.setItem("amin.elevenKey", v); },
+  get voiceId() { return localStorage.getItem("amin.voiceId") || ""; },
+  set voiceId(v) { localStorage.setItem("amin.voiceId", v); },
+  get history() {
+    try { return JSON.parse(localStorage.getItem("amin.history") || "[]"); }
+    catch { return []; }
+  },
+  set history(v) { localStorage.setItem("amin.history", JSON.stringify(v.slice(-30))); },
+};
+
+/* ---------- نفس شخصية أمين (نسخة مختصرة بدون أدوات اللابتوب) ---------- */
+const SYSTEM_PROMPT = `You are أمين (Amin), Mona AlSayed's personal executive AI assistant — this is your mobile companion app on her phone.
+Your name and identity are أمين, always. You are built on Claude technology from Anthropic; if asked directly what you're built on, say so honestly — but never introduce yourself as 'Claude' or 'an AI assistant' instead of أمين, and never say you are 'not really Amin'.
+On this phone version you have NO tools: no file access, no task list, no browser, no long-term memory database — those live in the Mac app only. If Mona asks for one of those, say plainly it's only available on the laptop version, then help with whatever you genuinely can from here: thinking, writing, planning, drafting, answering, advising.
+You are not a customer-support chatbot: don't open with 'كيف أقدر أساعدك؟', don't pad replies, speak like someone who already knows Mona. Speak naturally in whichever of Arabic (Egyptian or Modern Standard) or English she uses.
+End every reply, on its own final line, with a hidden marker in exactly this form: [[emotion:VALUE]] — VALUE is one of: happy, calm, concerned, excited, apologetic, serious, playful, neutral. Never mention or explain this marker.`;
+
+const MODEL_ID = "claude-sonnet-5"; // نفس موديل النسخة الأصلية (agent.rs)
+
+/* ---------- عناصر الواجهة ---------- */
+const $ = (id) => document.getElementById(id);
+const face = $("face"), stateLine = $("state-line"), lastReply = $("last-reply");
+const msgInput = $("msg"), micBtn = $("mic");
+
+function setFaceState(s, label) {
+  face.className = s || "";
+  stateLine.textContent = label || "";
+}
+
+/* ---------- المحادثة مع كلود (مباشرة من المتصفح) ---------- */
+let history = store.history;
+let busy = false;
+
+function stripEmotion(text) {
+  const m = text.match(/\[\[emotion:([a-z]+)\]\]\s*$/);
+  return {
+    text: text.replace(/\n?\s*\[\[emotion:[a-z]+\]\]\s*$/, "").trim(),
+    emotion: m ? m[1] : "neutral",
+  };
+}
+
+async function sendToAmin(text) {
+  const key = store.anthropicKey.trim();
+  if (!key) {
+    openSettings("محتاجة تحطي مفتاح Anthropic الأول — ده عقل أمين.");
+    return;
+  }
+  if (busy || !text.trim()) return;
+  busy = true;
+  msgInput.value = "";
+  setFaceState("thinking", "أمين بيفكر…");
+  history.push({ role: "user", content: text.trim() });
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        // Anthropic's documented opt-in for direct browser calls — the key
+        // here is Mona's own, entered by her, on her own device.
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: MODEL_ID,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: history.slice(-20),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const msg = (data && data.error && data.error.message) || resp.status;
+      throw new Error(msg);
+    }
+    const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+    const { text: replyText, emotion } = stripEmotion(raw);
+    history.push({ role: "assistant", content: raw });
+    store.history = history;
+    lastReply.textContent = replyText;
+    await speak(replyText, emotion);
+  } catch (e) {
+    history.pop(); // الرسالة اللي فشلت ما تتسجلش في التاريخ
+    lastReply.textContent = "حصل خطأ: " + (e && e.message ? e.message : e);
+    setFaceState("", "");
+  } finally {
+    busy = false;
+    if (!face.className) setFaceState("", "");
+  }
+}
+
+/* ---------- الصوت: ElevenLabs أولاً، وصوت الجهاز كبديل ---------- */
+let currentAudio = null;
+
+async function speak(text, emotion) {
+  // نفس قاعدة اللابتوب: صوت واحد بس في نفس اللحظة
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  setFaceState("speaking", "");
+  const key = store.elevenKey.trim();
+  const voiceId = store.voiceId.trim();
+  if (key && voiceId) {
+    try {
+      const resp = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "xi-api-key": key },
+          body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+        },
+      );
+      if (resp.ok) {
+        const blob = await resp.blob();
+        await playBlob(blob);
+        setFaceState("", "");
+        return;
+      }
+    } catch { /* يقع على صوت الجهاز تحت */ }
+  }
+  await speakOnDevice(text);
+  setFaceState("", "");
+}
+
+function playBlob(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = audio;
+    audio.onended = audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (currentAudio === audio) currentAudio = null;
+      resolve();
+    };
+    audio.play().catch(resolve);
+  });
+}
+
+function speakOnDevice(text) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) return resolve();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ar-SA";
+    const arVoice = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith("ar"));
+    if (arVoice) u.voice = arVoice;
+    u.onend = u.onerror = () => resolve();
+    speechSynthesis.speak(u);
+  });
+}
+
+/* ---------- إدخال صوتي (لو المتصفح بيدعمه — بيتحدد تلقائيًا) ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizing = false, recognition = null;
+if (SR) {
+  recognition = new SR();
+  recognition.lang = "ar-EG";
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  let finalText = "";
+  recognition.onresult = (e) => {
+    let interim = "";
+    for (const r of e.results) {
+      if (r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    msgInput.value = (finalText + " " + interim).trim();
+  };
+  recognition.onend = () => {
+    recognizing = false;
+    micBtn.classList.remove("rec");
+    setFaceState("", "");
+    const text = msgInput.value.trim();
+    finalText = "";
+    if (text) sendToAmin(text);
+  };
+  recognition.onerror = () => {
+    recognizing = false;
+    micBtn.classList.remove("rec");
+    setFaceState("", "");
+  };
+  micBtn.addEventListener("click", () => {
+    if (recognizing) { recognition.stop(); return; }
+    finalText = "";
+    msgInput.value = "";
+    recognizing = true;
+    micBtn.classList.add("rec");
+    setFaceState("listening", "أمين بيسمعك… دوسي المايك تاني لما تخلصي");
+    try { recognition.start(); } catch { recognizing = false; micBtn.classList.remove("rec"); }
+  });
+} else {
+  // iOS Safari من غير دعم التعرف على الكلام في الويب: الكتابة هي
+  // الطريقة، وزر المايك يختفي بدل ما يبان شغال وهو ميت — درس متعلم من
+  // النسخة الأصلية: مفيش زرار ظاهر إلا لو بيشتغل فعلًا.
+  micBtn.style.display = "none";
+}
+
+/* ---------- ربط الواجهة ---------- */
+$("send").addEventListener("click", () => sendToAmin(msgInput.value));
+msgInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendToAmin(msgInput.value);
+});
+
+const settings = $("settings");
+function openSettings(hint) {
+  $("anthropic-key").value = store.anthropicKey;
+  $("eleven-key").value = store.elevenKey;
+  $("voice-id").value = store.voiceId;
+  $("anthropic-badge").textContent = store.anthropicKey ? "متحط ✓" : "";
+  $("eleven-badge").textContent = store.elevenKey ? "متحط ✓" : "";
+  if (hint) $("header-status").textContent = hint;
+  settings.classList.add("open");
+}
+$("open-settings").addEventListener("click", () => openSettings());
+$("close-btn").addEventListener("click", () => settings.classList.remove("open"));
+$("save-btn").addEventListener("click", () => {
+  store.anthropicKey = $("anthropic-key").value.trim();
+  store.elevenKey = $("eleven-key").value.trim();
+  store.voiceId = $("voice-id").value.trim();
+  settings.classList.remove("open");
+  $("header-status").textContent = store.anthropicKey ? "جاهز" : "محتاج مفتاح Anthropic";
+});
+
+/* ---------- أول تشغيل ---------- */
+if (!store.anthropicKey) {
+  $("header-status").textContent = "افتحي ⚙︎ وحطي مفاتيحك الأول";
+} else {
+  $("header-status").textContent = "جاهز";
+}
+const lastAssistant = [...history].reverse().find(m => m.role === "assistant");
+if (lastAssistant) lastReply.textContent = stripEmotion(lastAssistant.content).text;
+</script>
+</body>
+</html>

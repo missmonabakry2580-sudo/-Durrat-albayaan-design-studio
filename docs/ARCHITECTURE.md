@@ -2395,6 +2395,38 @@ real Mac: the verified-flow timeout, the protected-words instruction
 actually being followed by the diacritization model, and the re-arm
 paths under real Speech-framework errors.
 
+## أمين on the phone (2026-08-28)
+
+Mona, verbatim: "ابني لي تطبيق امين ع الهااااااااتف... نفذ الأوامر بلا
+نقاش". Built the honest, immediately-shippable version: `mobile/` — a
+single self-contained static web page (no build step, no framework)
+published to GitHub Pages by `.github/workflows/deploy-mobile.yml`
+(`configure-pages` with `enablement: true` turns Pages on by itself on
+first run; public repo, so Pages is free). She opens the URL on her
+iPhone, adds it to the home screen (real icon, standalone display via
+the manifest + apple-touch-icon), pastes her Anthropic key (and
+optionally ElevenLabs key + voice id) into its settings — stored in
+localStorage on her phone only, never in this public repo — and has
+Amin's brain (same `claude-sonnet-5`, same persona incl. the identity
+hardening, same hidden `[[emotion:...]]` protocol) and voice
+(ElevenLabs direct from the browser, device speech synthesis as the
+fallback) in her pocket. Anthropic browser calls use the documented
+`anthropic-dangerous-direct-browser-access` opt-in — appropriate here
+because the key's owner *is* the user. Voice input feature-detects
+`SpeechRecognition` and hides the mic button when the browser lacks it
+(no dead buttons — the alt+A lesson from this same day).
+
+Disclosed limits, in the page's own settings screen, not buried here:
+no server bridges the phone and the Mac, so tasks/files/follow-ups/
+long-term memory remain laptop-only. This is a companion, not a remote
+control — and it says so.
+
+**Verified**: YAML/JSON/JS all machine-checked; rendered at iPhone
+viewport via Playwright (home + settings screenshots, zero page
+errors). **Not verified**: the live Pages deployment (first run also
+has to self-enable Pages) and real API calls from a real phone — both
+only observable after this push.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
