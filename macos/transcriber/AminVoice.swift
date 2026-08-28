@@ -47,9 +47,12 @@
 // instead of here), 9 = a real barge-in — Mona started talking over Amin's
 // own reply (text is what she said; see HandsFreeListener's
 // isLikelySelfEcho and armPassive/listenForCommand for why this fires
-// instead of the recognition being discarded as an echo). The string is a
-// NUL-terminated UTF-8 C string valid only for the duration of the call —
-// the Rust side must copy it before returning.
+// instead of the recognition being discarded as an echo). 10 = the wake
+// phrase was heard but rejected because the enrolled voiceprint didn't
+// match (text always null; see VoicePrint.swift). 11 = speaker enrollment
+// succeeded (text always null). 12 = speaker enrollment failed (text is
+// why). The string is a NUL-terminated UTF-8 C string valid only for the
+// duration of the call — the Rust side must copy it before returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -95,6 +98,21 @@
 //      instead of silently dropped. The audio engine and recognition task
 //      keep running underneath the whole time; nothing needs restarting
 //      when Amin stops talking (real or interrupted).
+//
+// VOICE-BIOMETRIC SPEAKER VERIFICATION (VoicePrint.swift): a spoken wake
+// phrase is a shared secret, not an identity check — anyone in earshot who
+// knows it could open a session, which is exactly the gap Mona flagged
+// ("بصمة الصوت... اريده يتعرف ع صوتي"). `HandsFreeListener` now keeps a
+// rolling 3-second buffer of the raw mic audio (`RollingPCMBuffer`,
+// resampled to the 16kHz mono ECAPA-TDNN expects) alongside the existing
+// speech-recognition tap, and — the moment the wake phrase is heard —
+// checks that buffer against Mona's enrolled voiceprint
+// (`VoicePrintEngine.verify`) before opening a session. A mismatch is
+// treated exactly like not having heard the wake phrase at all (kind 10,
+// stays passive); nothing enrolled yet, or the model failing to load for
+// any reason, fails OPEN (behaves like before this feature existed) rather
+// than silently locking Mona out of her own app — see `verify`'s doc
+// comment.
 
 import Foundation
 import Speech
@@ -471,6 +489,13 @@ private final class HandsFreeListener {
     private var passiveModeStartedAt: Date?
     private let passiveModeTimeoutSeconds: TimeInterval = 15 * 60
 
+    /// See this file's VOICE-BIOMETRIC SPEAKER VERIFICATION header note and
+    /// VoicePrint.swift. Fed continuously from the same tap `openTap`
+    /// installs for speech recognition; read at the moment the wake phrase
+    /// is heard.
+    private let voiceBuffer = RollingPCMBuffer()
+    private var voiceResampler: AudioResampler?
+
     private enum Mode: Equatable { case passive, active }
 
     func setSpeakingText(_ text: String?) {
@@ -612,8 +637,13 @@ private final class HandsFreeListener {
             // heard normally the other 99% of the time matters more than a
             // barge-in feature Mona hadn't even confirmed working yet.
             let format = inputNode.outputFormat(forBus: 0)
+            self.voiceResampler = AudioResampler(from: format)
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-                self?.currentRequest?.append(buffer)
+                guard let self = self else { return }
+                self.currentRequest?.append(buffer)
+                if let converted = self.voiceResampler?.resample(buffer) {
+                    self.voiceBuffer.append(converted)
+                }
             }
             do {
                 self.audioEngine.prepare()
@@ -671,8 +701,20 @@ private final class HandsFreeListener {
                 return
             }
             if self.heard(self.wakePhrase, in: text) {
-                self.openActiveSession(recognizer: recognizer)
-            } else if isFinal {
+                if VoicePrintEngine.shared.verify(samples: self.voiceBuffer.snapshot()) {
+                    self.openActiveSession(recognizer: recognizer)
+                    return
+                }
+                // Enrolled voiceprint didn't match whoever just said the
+                // wake phrase — treat exactly like not having heard it.
+                // Only re-arm at isFinal (not every partial) so a still-
+                // growing transcript that keeps containing the phrase
+                // doesn't keep tearing down and restarting recognition.
+                self.emit(10)
+                if isFinal { self.armPassive(recognizer: recognizer) }
+                return
+            }
+            if isFinal {
                 self.armPassive(recognizer: recognizer)
             }
         }

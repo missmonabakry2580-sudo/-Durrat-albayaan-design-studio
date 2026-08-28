@@ -22,6 +22,10 @@ dist-ssr
 # disposable, regenerated on demand, not real Amin assets.
 scripts/facial-rig/fixtures/
 
+# Python bytecode cache from running scripts/voiceprint's conversion script.
+__pycache__/
+*.pyc
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -898,6 +898,30 @@ pub fn stop_speaking() -> Result<(), String> {
     voice::stop_speaking()
 }
 
+/// Starts recording Mona's voiceprint enrollment (~4 seconds of speech —
+/// see VoicePrint.swift's `SpeakerEnrollmentRecorder`). Result arrives
+/// asynchronously as `voice://speaker-enrolled` / `voice://speaker-
+/// enrollment-failed`, not as this command's return value, since it takes
+/// several seconds and the frontend needs to show live progress either way.
+#[tauri::command]
+pub fn start_speaker_enrollment(app: AppHandle) -> Result<(), String> {
+    voice::enroll_speaker(app)
+}
+
+/// Whether a voiceprint is already enrolled — drives Settings' "record my
+/// voice" vs. "re-record" wording.
+#[tauri::command]
+pub fn has_enrolled_speaker(app: AppHandle) -> bool {
+    voice::has_enrolled_speaker(app)
+}
+
+/// Deletes the enrolled voiceprint. Hands-free mode goes back to opening on
+/// any wake phrase (no speaker check) until Mona enrolls again.
+#[tauri::command]
+pub fn clear_enrolled_speaker(app: AppHandle) -> Result<(), String> {
+    voice::clear_enrolled_speaker(app)
+}
+
 /// A free, shared preset face ("Doctor" — one of Simli's own published
 /// example faces, see docs.simli.com/api-reference/preset-faces) — used
 /// only while Mona proves the Simli integration itself works, per her own

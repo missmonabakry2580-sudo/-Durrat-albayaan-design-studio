@@ -1275,6 +1275,89 @@ requirement, honored rather than worked around. The one, single test
 this needs from her: paste a free Simli API key into Settings, open
 Portrait Mode, and let Amin say one thing.
 
+## Voice-biometric speaker verification: closing the "anyone who knows the
+## wake phrase" gap (2026-08-28)
+
+The Phase 1 design notes above ("Speaker voice recognition") called for
+this from the start; it's built now, in a narrower first form than that
+note originally sketched — see "What this is not yet" below for the gap.
+Mona's own words for why it mattered: **"بصمة الصوت... اريده يتعرف ع صوتي
+مش اجلس اصرخ لحد ما يرد عليا"** (the voice fingerprint — I want it to
+recognize MY voice, not sit and scream until it responds). Hands-free
+mode's wake phrase was, and without this still would be, a shared secret:
+anyone in earshot who knows it can open a command session (see
+AminVoice.swift's HANDS-FREE MODE note and docs/SECURITY.md). This adds the
+actual identity check underneath it.
+
+**How it works.** `scripts/voiceprint/convert_ecapa_to_coreml.py` converts
+speechbrain's pretrained `speechbrain/spkrec-ecapa-voxceleb` (ECAPA-TDNN, a
+standard open speaker-embedding model — not something trained on Mona's
+voice, since no real Mona audio exists in this sandbox to train on) into a
+CoreML `.mlpackage`, bundled as a Tauri resource. `VoicePrint.swift` (new,
+compiled into the same dylib as `AminVoice.swift` — see
+macos/transcriber/README.md) loads it and turns 3 seconds of 16kHz mono
+audio into a 192-dim embedding. Mona enrolls once from Settings (~4 seconds
+of speech, `SpeakerEnrollmentRecorder`), storing that embedding locally at
+`~/Library/Application Support/Amin/voiceprint.json` — never synced,
+never sent anywhere. From then on, `HandsFreeListener` keeps a rolling
+3-second buffer of raw mic audio (`RollingPCMBuffer`, fed alongside the
+existing speech-recognition tap) and, the instant the wake phrase is heard,
+computes a fresh embedding from that buffer and compares it by cosine
+similarity to the enrolled one before opening a session — a mismatch is
+treated exactly like not having heard the wake phrase at all (a new kind-10
+event, `voice://hands-free-voice-rejected`).
+
+**A real bug found and fixed during conversion, not just "it worked."**
+Tracing speechbrain's own `mean_var_norm`/`length_to_mask` code for CoreML
+export failed outright (`TypeError: only 0-dimensional arrays can be
+converted to Python scalars`) — its length-masking logic calls `len()`/
+`torch.as_tensor()` on tensors in ways coremltools' PyTorch frontend can't
+lower to a static graph. Two independent fixes were needed: inlining
+`mean_var_norm`'s actual math (a per-utterance mean subtraction, confirmed
+`std_norm=False` in the pretrained hyperparameters) instead of calling the
+module, and monkeypatching `length_to_mask` everywhere speechbrain's
+ECAPA-TDNN blocks import it, to use `.shape[0]`/`.to()` instead of the
+untraceable calls — numerically identical for tensor inputs, which is all
+any call site here ever passes. Both fixes were checked against
+speechbrain's own reference output for the same input before trusting
+them (max abs diff **0.0**, not "close enough") — see the script's inline
+assertion, which refuses to save a model if that check fails.
+
+**What's verified vs. not — same standard as every other feature in this
+document.** Verified, in the Python sandbox that did the conversion: the
+model's own numbers are exactly right. NOT verified — no macOS, no Xcode,
+no microphone here, the same limitation disclosed for every other
+Swift/AVFoundation feature in this codebase: that this Swift code actually
+loads and runs the bundled `.mlpackage` on a real Mac, that real microphone
+audio through `AVAudioConverter` produces embeddings resembling what the
+conversion script exercised with synthetic input, and — the number nobody
+can set from a sandbox — whether `VoicePrintEngine.matchThreshold` (`0.45`,
+a literature-derived placeholder, not a measured one) actually separates
+Mona's voice from someone else's on her real hardware. **The first real
+test needed from her:** enroll once in Settings, then try the wake phrase
+herself (should open) and, ideally, have someone else try it (should stay
+silent) — report exactly what happened so the threshold can be tuned from
+real data instead of a guess.
+
+**Fails open, deliberately.** If nothing is enrolled yet, or the model
+fails to load for any reason, `VoicePrintEngine.verify` returns `true` —
+hands-free behaves exactly like it did before this feature existed (opens
+on any wake phrase). A voice-security feature that can lock Mona out of
+her own app on a model-loading hiccup would be a worse failure than the
+gap it closes.
+
+**What this is not yet**, so the Phase 1 design note above isn't
+misread as fully delivered: this still requires the wake phrase — it
+gates who can use it, it doesn't replace it with ambient, wake-word-free
+presence detection ("pick her voice out of a room with other people
+talking"). That's the harder, not-yet-built version of the original
+design note; this is the narrower, shippable-now step that closes the
+actual complaint (a stranger who knows the phrase can't open a session).
+Also single-sample enrollment (one ~4-second recording, not several
+averaged utterances) — a reasonable v1 given there's no way to iterate on
+recording quality without a real Mac in the loop, but a likely first
+improvement once real accuracy data comes back.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

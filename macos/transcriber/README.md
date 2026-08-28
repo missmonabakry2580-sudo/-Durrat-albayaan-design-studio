@@ -29,11 +29,17 @@ architectures and lipo-combines them into one universal dylib:
 ```bash
 cd macos/transcriber
 swiftc -O -target arm64-apple-macosx13.0 -emit-library -parse-as-library \
-  -module-name AminVoice AminVoice.swift -o libaminvoice-arm64.dylib
+  -module-name AminVoice AminVoice.swift VoicePrint.swift -o libaminvoice-arm64.dylib
 swiftc -O -target x86_64-apple-macosx13.0 -emit-library -parse-as-library \
-  -module-name AminVoice AminVoice.swift -o libaminvoice-x86_64.dylib
+  -module-name AminVoice AminVoice.swift VoicePrint.swift -o libaminvoice-x86_64.dylib
 lipo -create libaminvoice-arm64.dylib libaminvoice-x86_64.dylib -output libaminvoice.dylib
 ```
+
+`VoicePrint.swift` (speaker verification, added 2026-08-28) compiles into
+the same dylib as one extra source file passed to the same `swiftc`
+invocation — both files are one Swift module, not two separate libraries,
+so `HandsFreeListener` (in `AminVoice.swift`) can call `VoicePrintEngine`
+directly.
 
 The result is placed at `src-tauri/libaminvoice.dylib`, which
 `tauri.conf.json`'s `bundle.resources` picks up and bundles into the
@@ -88,6 +94,39 @@ above is confirmed working:
 4. Try the mic button and `alt+A` while hands-free mode is on — both
    should refuse with a clear error (see `commands::start_voice_capture`'s
    guard) rather than fighting the hands-free engine for the microphone.
+
+## Voice biometrics (speaker verification)
+
+`VoicePrint.swift` adds a real identity check on top of the wake phrase:
+Mona enrolls once (`amin_voice_enroll_speaker`, ~4 seconds of speech), which
+computes a 192-dim speaker embedding via a CoreML-converted ECAPA-TDNN model
+(`speechbrain/spkrec-ecapa-voxceleb`, converted by
+`scripts/voiceprint/convert_ecapa_to_coreml.py`) and stores it locally at
+`~/Library/Application Support/Amin/voiceprint.json`. From then on,
+`HandsFreeListener` computes a fresh embedding from the 3 seconds of audio
+around every wake-phrase detection and compares it by cosine similarity
+before opening a session — a mismatch is treated exactly like not having
+heard the wake phrase at all.
+
+**What's verified vs. not**, same honesty standard as the rest of this
+file: the model's own numbers were checked in the Python sandbox that
+converted it (traced/inlined output matches speechbrain's own reference
+output exactly, 0.0 max abs diff, for the same input). What's NOT verified
+— no macOS, no Xcode, no microphone here — is that this Swift code loads
+and runs the bundled `.mlpackage` correctly, that real mic audio through
+`AVAudioConverter` produces embeddings resembling what the conversion
+script exercised with synthetic input, and above all the match threshold
+(`VoicePrintEngine.matchThreshold`, currently `0.45`): it's a placeholder
+from published ECAPA-TDNN/cosine literature, not a number measured against
+Mona's actual voice. The first real test is what calibrates it — enroll,
+then try the wake phrase herself and have someone else try it; report
+exactly what happened (accepted/rejected, for whom) so the threshold can be
+adjusted from real data instead of guesswork.
+
+If nothing is enrolled yet, or the model fails to load for any reason,
+`verify()` fails **open** — hands-free behaves like it did before this
+feature existed (opens on any wake phrase) rather than silently locking
+Mona out of her own app.
 
 ## Known limitations to revisit, not silently work around
 

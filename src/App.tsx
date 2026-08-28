@@ -22,6 +22,7 @@ import {
   clearAgentConversation,
   clearApiKey,
   clearElevenLabsKey,
+  clearEnrolledSpeaker,
   clearSimliKey,
   createFollowUp,
   createTask,
@@ -35,6 +36,7 @@ import {
   getSimliFaceId,
   hasApiKey,
   hasElevenLabsKey,
+  hasEnrolledSpeaker,
   hasSimliKey,
   isHalted,
   listAuditLog,
@@ -57,6 +59,7 @@ import {
   setKillSwitch,
   setTaskStatus,
   speakText,
+  startSpeakerEnrollment,
   startVoiceCapture,
   stopSpeaking,
   stopVoiceCapture,
@@ -146,6 +149,9 @@ function App() {
   const [handsFreeBusy, setHandsFreeBusy] = useState(false);
   const [wakePhraseInput, setWakePhraseInput] = useState("");
   const [closePhraseInput, setClosePhraseInput] = useState("");
+  const [speakerEnrolled, setSpeakerEnrolled] = useState(false);
+  const [enrollmentBusy, setEnrollmentBusy] = useState(false);
+  const [enrollmentStatus, setEnrollmentStatus] = useState<string | null>(null);
   const [handsFreeSessionOpen, setHandsFreeSessionOpenState] = useState(false);
   // Mirrors handsFreeSessionOpen for synchronous reads from event handlers.
   // React (StrictMode especially) may invoke a functional state updater
@@ -263,6 +269,7 @@ function App() {
       });
       getElevenLabsVoiceId().then(setElevenLabsVoiceIdInput);
       getSimliFaceId().then(setSimliFaceIdInput);
+      hasEnrolledSpeaker().then(setSpeakerEnrolled);
       // Silent on failure (e.g. offline, or the update endpoint has
       // nothing newer) — this is a background convenience check, not
       // something that should ever interrupt Mona with an error banner
@@ -396,6 +403,24 @@ function App() {
         setAminState((s) => (s === "armed" || s === "listening" ? "idle" : s));
         setVoiceError("تم إيقاف الاستماع الحر تلقائيًا بعد ١٥ دقيقة من غير استخدام، حفاظًا على خصوصيتك.");
       }),
+      // Voice-biometric speaker verification (see
+      // macos/transcriber/VoicePrint.swift) — the wake phrase was heard,
+      // but the voice didn't match Mona's enrolled voiceprint, so
+      // HandsFreeListener stayed passive instead of opening a session.
+      // Purely informational here; nothing to open/close in the UI since
+      // no session ever started.
+      listen("voice://hands-free-voice-rejected", () => {
+        setVoiceError("سمعت عبارة الفتح لكن الصوت مش متطابق مع بصمتك الصوتية المسجّلة.");
+      }),
+      listen("voice://speaker-enrolled", () => {
+        setEnrollmentBusy(false);
+        setSpeakerEnrolled(true);
+        setEnrollmentStatus("تم تسجيل بصمة صوتك بنجاح.");
+      }),
+      listen<string>("voice://speaker-enrollment-failed", (e) => {
+        setEnrollmentBusy(false);
+        setEnrollmentStatus(`فشل التسجيل: ${e.payload}`);
+      }),
     ];
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
@@ -477,6 +502,31 @@ function App() {
       await saveHandsFreePhrases(wakePhraseInput.trim(), closePhraseInput.trim());
     } catch (e) {
       setVoiceError(String(e));
+    }
+  }
+
+  async function handleEnrollSpeaker() {
+    if (enrollmentBusy) return;
+    setEnrollmentBusy(true);
+    setEnrollmentStatus("سجّلي جملة قصيرة الآن... (٤ ثواني)");
+    try {
+      await startSpeakerEnrollment();
+      // Actual success/failure arrives asynchronously via
+      // voice://speaker-enrolled / voice://speaker-enrollment-failed
+      // (listened to above) — this call only confirms recording *started*.
+    } catch (e) {
+      setEnrollmentBusy(false);
+      setEnrollmentStatus(`فشل بدء التسجيل: ${String(e)}`);
+    }
+  }
+
+  async function handleClearEnrollment() {
+    try {
+      await clearEnrolledSpeaker();
+      setSpeakerEnrolled(false);
+      setEnrollmentStatus("تم مسح بصمة الصوت.");
+    } catch (e) {
+      setEnrollmentStatus(`فشل المسح: ${String(e)}`);
     }
   }
 
@@ -1265,6 +1315,24 @@ function App() {
                       حفظ
                     </button>
                   </div>
+
+                  <div className="field-row">
+                    <span className="field-label">بصمة الصوت (يفتح الاستماع الحر بصوتك بس)</span>
+                    <button onClick={handleEnrollSpeaker} disabled={!inTauri || enrollmentBusy}>
+                      {enrollmentBusy ? "بيسجّل..." : speakerEnrolled ? "إعادة التسجيل" : "سجّلي صوتك"}
+                    </button>
+                    {speakerEnrolled && (
+                      <button onClick={handleClearEnrollment} disabled={!inTauri || enrollmentBusy}>
+                        مسح
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-muted">
+                    {speakerEnrolled
+                      ? "بصمة صوتك مسجّلة — عبارة الفتح لازم تتقال بصوتك عشان تفتح جلسة."
+                      : "لسه مفيش بصمة صوت مسجّلة — أي حد يعرف عبارة الفتح يقدر يفتح جلسة حاليًا. دوسي \"سجّلي صوتك\" وقولي جملة قصيرة لمدة ٤ ثواني."}
+                    {enrollmentStatus && <><br />{enrollmentStatus}</>}
+                  </p>
 
                   <div className="field-row">
                     <span className="field-label">مستوى الاستقلالية</span>

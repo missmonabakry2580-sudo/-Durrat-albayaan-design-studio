@@ -60,22 +60,28 @@ jobs:
         run: npm ci
 
       # Compiles macos/transcriber/AminVoice.swift (Speech/AVFoundation
-      # push-to-talk engine — see src-tauri/src/voice.rs) as a universal
-      # dylib and places it where tauri.conf.json's bundle.resources
-      # expects it. Amin's Rust binary loads this in-process via
-      # dlopen/dlsym at runtime (see macos/transcriber/README.md for why
-      # it's a dylib, not a spawned helper process). If it fails, a
-      # placeholder that reports a clear in-app error is bundled instead,
-      # so a Swift build problem never breaks Amin's whole release. Check
-      # this step's log first if voice doesn't work.
+      # push-to-talk engine — see src-tauri/src/voice.rs) together with
+      # VoicePrint.swift (CoreML speaker-verification — see voice.rs and
+      # VoicePrint.swift's own header) as one universal dylib, and places it
+      # where tauri.conf.json's bundle.resources expects it. Both files
+      # compile as a single module (swiftc's multi-file mode, not two
+      # separate libraries) so HandsFreeListener can call VoicePrintEngine
+      # directly with no module boundary. Amin's Rust binary loads the
+      # result in-process via dlopen/dlsym at runtime (see
+      # macos/transcriber/README.md for why it's a dylib, not a spawned
+      # helper process). If it fails, a placeholder that reports a clear
+      # in-app error is bundled instead, so a Swift build problem never
+      # breaks Amin's whole release. Check this step's log first if voice
+      # doesn't work.
       - name: Build the voice engine
         run: |
           cd macos/transcriber
           DEST="$GITHUB_WORKSPACE/src-tauri/libaminvoice.dylib"
+          SOURCES="AminVoice.swift VoicePrint.swift"
           if swiftc -O -target arm64-apple-macosx13.0 -emit-library -parse-as-library \
-               -module-name AminVoice AminVoice.swift -o libaminvoice-arm64.dylib \
+               -module-name AminVoice $SOURCES -o libaminvoice-arm64.dylib \
             && swiftc -O -target x86_64-apple-macosx13.0 -emit-library -parse-as-library \
-               -module-name AminVoice AminVoice.swift -o libaminvoice-x86_64.dylib \
+               -module-name AminVoice $SOURCES -o libaminvoice-x86_64.dylib \
             && lipo -create libaminvoice-arm64.dylib libaminvoice-x86_64.dylib -output "$DEST"; then
             echo "Voice engine compiled successfully (universal dylib)."
           else

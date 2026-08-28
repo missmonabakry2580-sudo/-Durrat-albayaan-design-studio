@@ -121,6 +121,18 @@ export const speakText = (text: string, emotion?: string | null) =>
   invoke<void>("speak_text", { text, emotion: emotion ?? null });
 export const stopSpeaking = () => invoke<void>("stop_speaking");
 
+/**
+ * Voice-biometric speaker enrollment (see
+ * macos/transcriber/VoicePrint.swift) — records ~4 seconds of speech and
+ * stores a local voiceprint so hands-free mode's wake phrase only opens a
+ * session for Mona, not anyone who says it. Result arrives as
+ * `voice://speaker-enrolled` / `voice://speaker-enrollment-failed` events,
+ * not this call's return value — it resolves once recording *starts*.
+ */
+export const startSpeakerEnrollment = () => invoke<void>("start_speaker_enrollment");
+export const hasEnrolledSpeaker = () => invoke<boolean>("has_enrolled_speaker");
+export const clearEnrolledSpeaker = () => invoke<void>("clear_enrolled_speaker");
+
 export interface HandsFreeSettings {
   enabled: boolean;
   wake_phrase: string;

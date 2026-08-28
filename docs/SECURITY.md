@@ -197,10 +197,24 @@ people in it — so the contract is explicit and non-negotiable:
 - **Local processing only.** Voice matching runs entirely on-device. No
   audio, enrolled or otherwise, is ever sent to a server for this feature.
 - **A voice print, not a recording.** What's persisted is a mathematical
-  embedding derived from enrollment audio, stored like any other secret
-  (Keychain, not the SQLite database in plaintext) — not the raw audio
-  itself. Enrollment audio is processed into the embedding and then
-  discarded.
+  embedding derived from enrollment audio — not the raw audio itself.
+  Enrollment audio is processed into the embedding and then discarded.
+  **Storage location, updated 2026-08-28 when this actually shipped:**
+  originally written above as "Keychain, not the SQLite database in
+  plaintext," matching the plan for every other secret in this app. That
+  plan hit a real, already-reproduced wall — see `src-tauri/src/secrets.rs`'s
+  header: the `keyring` crate's macOS Keychain backend reliably reported
+  `NoEntry` immediately after a successful write, on a real signed build,
+  with no fix found short of a second Mac to debug further on. Mona
+  knowingly accepted local-disk storage for the Anthropic/ElevenLabs/Simli
+  keys rather than stay blocked on that; the voiceprint embedding
+  (`macos/transcriber/VoicePrint.swift`) follows the same already-accepted
+  trade-off rather than gambling on Swift's own `Security` framework
+  hitting the identical failure mode untested. It's stored as a local JSON
+  file at `~/Library/Application Support/Amin/voiceprint.json` — never
+  synced, never sent anywhere, readable only by whoever has access to
+  Mona's own user account on her own Mac, same exposure as the SQLite
+  settings table already holding her other keys.
 - **Non-matching audio is discarded immediately.** Audio that doesn't
   match Mona's voice print is dropped on the spot — not stored, not
   transcribed, not analyzed, not logged beyond perhaps a bare

@@ -57,7 +57,10 @@ impl Default for HandsFreeSession {
 /// phrase heard — a command session opened, 7 = the close phrase ended the
 /// command session, 8 = hands-free timed out from inactivity, 9 = a real
 /// barge-in — Mona started talking over Amin's own reply (text is what she
-/// said).
+/// said), 10 = the wake phrase was heard but rejected — the enrolled
+/// voiceprint didn't match whoever said it (see VoicePrint.swift), 11 =
+/// speaker enrollment succeeded, 12 = speaker enrollment failed (text is
+/// why).
 type VoiceCallback = unsafe extern "C" fn(c_int, *const c_char);
 type StartFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
 type StopFn = unsafe extern "C" fn();
@@ -66,6 +69,10 @@ type StopSpeakingFn = unsafe extern "C" fn();
 type StartHandsFreeFn = unsafe extern "C" fn(*const c_char, *const c_char, VoiceCallback) -> c_int;
 type StopHandsFreeFn = unsafe extern "C" fn();
 type SetHandsFreeSpeakingFn = unsafe extern "C" fn(*const c_char);
+type SetVoiceprintModelPathFn = unsafe extern "C" fn(*const c_char);
+type HasEnrolledSpeakerFn = unsafe extern "C" fn() -> c_int;
+type ClearEnrolledSpeakerFn = unsafe extern "C" fn();
+type EnrollSpeakerFn = unsafe extern "C" fn(VoiceCallback) -> c_int;
 
 /// The loaded voice engine, once found — loaded at most once per run, then
 /// reused for every push-to-talk session.
@@ -117,6 +124,17 @@ fn engine_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Where the converted ECAPA-TDNN speaker-verification model is bundled —
+/// see VoicePrint.swift's header and scripts/voiceprint/convert_ecapa_to_coreml.py.
+/// Resolved the same way as `engine_path` (a Tauri resource, not a
+/// Bundle.main-relative guess made from inside the dylib) and handed to
+/// Swift once via `amin_voice_set_voiceprint_model_path`.
+fn voiceprint_model_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve("ECAPA_TDNN.mlpackage", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| e.to_string())
+}
+
 fn engine(app: &AppHandle) -> Result<&'static Library, String> {
     if let Some(lib) = LIBRARY.get() {
         return Ok(lib);
@@ -139,7 +157,25 @@ fn engine(app: &AppHandle) -> Result<&'static Library, String> {
     // Someone else may have raced us and already set it; either way,
     // LIBRARY now holds a library, which is all the caller needs.
     let _ = LIBRARY.set(lib);
-    Ok(LIBRARY.get().expect("just set above"))
+    let lib = LIBRARY.get().expect("just set above");
+
+    // Best-effort: if the model isn't bundled or the path can't be
+    // resolved, VoicePrintEngine.verify simply fails open (see its doc
+    // comment) — never worth failing the whole engine load over.
+    if let Ok(model_path) = voiceprint_model_path(app) {
+        if model_path.exists() {
+            if let Some(path_str) = model_path.to_str() {
+                unsafe {
+                    if let Ok(set_path) = lib.get::<SetVoiceprintModelPathFn>(b"amin_voice_set_voiceprint_model_path\0") {
+                        if let Ok(c_path) = std::ffi::CString::new(path_str) {
+                            set_path(c_path.as_ptr());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(lib)
 }
 
 /// Forwards a partial/final/error event from the (in-process) voice engine
@@ -194,6 +230,9 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         // the same already-correct stop path a manual toggle-off uses.
         8 => app.emit("voice://hands-free-timeout", text),
         9 => app.emit("voice://hands-free-barge-in", text),
+        10 => app.emit("voice://hands-free-voice-rejected", text),
+        11 => app.emit("voice://speaker-enrolled", text),
+        12 => app.emit("voice://speaker-enrollment-failed", text),
         _ => app.emit("voice://error", text),
     };
 }
@@ -369,5 +408,52 @@ pub fn stop_hands_free(session: tauri::State<'_, HandsFreeSession>) -> Result<()
     }
 
     *active = false;
+    Ok(())
+}
+
+/// Records ~4 seconds of Mona's speech and stores its voiceprint — see
+/// VoicePrint.swift's `SpeakerEnrollmentRecorder`. Result arrives
+/// asynchronously as `voice://speaker-enrolled` / `voice://speaker-
+/// enrollment-failed` through the same `on_voice_event` dispatcher every
+/// other voice callback uses (kinds 11/12).
+pub fn enroll_speaker(app: AppHandle) -> Result<(), String> {
+    let _ = APP_HANDLE.set(app.clone());
+    let lib = engine(&app)?;
+    let rc = unsafe {
+        let enroll: Symbol<EnrollSpeakerFn> = lib
+            .get(b"amin_voice_enroll_speaker\0")
+            .map_err(|e| format!("voice engine is missing amin_voice_enroll_speaker: {e}"))?;
+        enroll(on_voice_event)
+    };
+    if rc != 0 {
+        return Err(format!("speaker enrollment failed to start (code {rc})"));
+    }
+    Ok(())
+}
+
+/// Whether a voiceprint is currently enrolled. Loads the engine on demand
+/// (Settings can call this before any voice feature has run yet) — returns
+/// `false`, not an error, if the engine isn't built/loadable, matching
+/// `VoicePrintEngine.verify`'s own fail-open stance.
+pub fn has_enrolled_speaker(app: AppHandle) -> bool {
+    let Ok(lib) = engine(&app) else { return false };
+    unsafe {
+        match lib.get::<HasEnrolledSpeakerFn>(b"amin_voice_has_enrolled_speaker\0") {
+            Ok(f) => f() != 0,
+            Err(_) => false,
+        }
+    }
+}
+
+/// Deletes the enrolled voiceprint, if any — hands-free mode goes back to
+/// opening on any wake phrase (the pre-voiceprint behavior) until Mona
+/// enrolls again.
+pub fn clear_enrolled_speaker(app: AppHandle) -> Result<(), String> {
+    let lib = engine(&app)?;
+    unsafe {
+        if let Ok(clear) = lib.get::<ClearEnrolledSpeakerFn>(b"amin_voice_clear_enrolled_speaker\0") {
+            clear();
+        }
+    }
     Ok(())
 }
