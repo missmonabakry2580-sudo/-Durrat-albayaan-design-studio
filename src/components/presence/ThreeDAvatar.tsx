@@ -92,8 +92,16 @@ const STATE_EXPRESSIONS: Record<AminState, ExpressionTargets> = {
   // looking completely unchanged when armed, which this alone could fully
   // explain regardless of whether listening itself was working. Pushed
   // into the same visible range every other calibrated expression uses.
-  armed: { browInnerUp: 0.55, eyeWideLeft: 0.5, eyeWideRight: 0.5 },
-  listening: { browInnerUp: 0.65, eyeWideLeft: 0.6, eyeWideRight: 0.6 },
+  // RE-REVISED 2026-08-28, same day: the 0.5-0.6 eyeWide values from the
+  // morning's "make it visible" pass overshot badly on the OTHER axis —
+  // a real screenshot from Mona showed a bug-eyed sideways stare ("ايه
+  // شكله ده"), because eyeWide's displacement on this rig is large (like
+  // jawOpen, unlike the ~8mm smile shapes), so 0.5+ bares the whites.
+  // Not every blendshape needs the small-delta boost: brows carry
+  // "attentive" and CAN sit high; eye-widening reads as startled past a
+  // low threshold and must stay subtle.
+  armed: { browInnerUp: 0.5, eyeWideLeft: 0.15, eyeWideRight: 0.15 },
+  listening: { browInnerUp: 0.6, eyeWideLeft: 0.22, eyeWideRight: 0.22 },
   thinking: { browInnerUp: 0.5, browDownLeft: 0.3 },
   planning: { browInnerUp: 0.4, browDownLeft: 0.25 },
   executing: { browDownLeft: 0.35, browDownRight: 0.35 },

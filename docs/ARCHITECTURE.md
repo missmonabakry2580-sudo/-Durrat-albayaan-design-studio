@@ -2276,6 +2276,20 @@ Verified with the usual temporary facetest harness (Playwright, forced
 framing scale): a natural talking aperture at peak loudness, no gape,
 harness deleted before commit as always. Not verified on her Mac yet.
 
+## The armed-state eyes overshot into a stare (2026-08-28)
+
+The morning's "boost expressions past 0.5 so they're visible" pass
+applied that rule to `eyeWideLeft/Right` in the armed/listening states —
+and a real screenshot from Mona ("ايه شكله ده") showed why that was
+wrong: eye-widening on this rig has a large displacement (like jawOpen,
+unlike the ~8mm smile shapes), so 0.5-0.6 bares the whites, and combined
+with the idle gaze wander it read as a bug-eyed sideways stare. The
+small-delta boost rule is per-blendshape, not global. Cut eyeWide to
+0.15/0.22 (armed/listening), kept brows at 0.5/0.6 — attentiveness reads
+through brows; eye-widening turns "startled" past a low threshold.
+Verified both states via the facetest harness (cropped/zoomed): calm,
+attentive, no stare. Harness deleted before commit as always.
+
 ## Amin denying being Amin (2026-08-28)
 
 While the self-conversation-loop fixes sat locally awaiting Mona's push
