@@ -2038,6 +2038,47 @@ Routine's own prompt was written to self-diagnose and tell Mona plainly
 if that assumption turns out wrong rather than silently doing nothing
 forever.
 
+## Hands-free never responded — a hard-coded on-device-only requirement (2026-08-28)
+
+Mona, after enrolling her voiceprint and updating to the phrase-free
+hands-free flow: "ناديته مليون مره لحد دلوقتي ولا مره رد عليا" (I've
+called it a million times so far, not once has it responded) — total
+failure, not a tuning problem.
+
+Found the real cause by reading `HandsFreeListener.start()` next to
+`Transcriber.start()` (push-to-talk) side by side: hands-free had a hard
+guard — `recognizer.supportsOnDeviceRecognition` — that push-to-talk
+never had. `supportsOnDeviceRecognition` is `false` whenever the Arabic
+(ar-EG) offline dictation language pack isn't downloaded on the Mac in
+question, which macOS does not make obvious and Mona would have had no
+way to notice. When that guard failed, `start()` returned immediately
+with a `voice://error` event and never opened the audio engine at all —
+no tap, no listening, nothing could ever have been heard, no matter how
+many times she spoke. This explains a 100% failure rate independent of
+wake phrase, voiceprint, volume, or anything else tried so far.
+
+Push-to-talk's `Transcriber.start()` already had the right pattern:
+pass `recognizer.supportsOnDeviceRecognition` through to
+`req.requiresOnDeviceRecognition` and let the Speech framework fall back
+to server-based recognition when on-device isn't available, instead of
+refusing to start. `HandsFreeListener.start()` now does the same —
+dropped the hard guard, kept only the `recognizer != nil` check (a
+locale genuinely unsupported at all, a different and much rarer
+failure).
+
+**What's verified vs. not**: `cargo test` (112 passed) and `tsc` pass;
+brace/paren counts checked by hand since there's no `swiftc` in this
+sandbox — same limitation as every other Swift change in this doc, same
+mitigation (download and inspect the real dylib after this ships).
+**Not verified**: whether her Mac actually lacks the on-device Arabic
+language pack (the mechanism this fix addresses) or whether hands-free
+was failing for some other, still-hidden reason — this is the most
+plausible cause found by inspection, not a confirmed diagnosis from a
+log on her machine. If hands-free still doesn't respond after this
+update, the next step is getting real data from her Mac (a Developer
+Mode log line, or asking her to check System Settings → Keyboard →
+Dictation for Arabic) rather than guessing again.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

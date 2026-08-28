@@ -601,8 +601,23 @@ private final class HandsFreeListener {
     }
 
     func start() {
-        guard let recognizer = recognizer, recognizer.supportsOnDeviceRecognition else {
-            emit(2, "hands-free mode needs on-device speech recognition, which isn't available here")
+        // REAL BUG found 2026-08-28: this used to also require
+        // `recognizer.supportsOnDeviceRecognition`, which is false whenever
+        // the Arabic (ar-EG) offline dictation language pack isn't
+        // downloaded on the Mac in question — a state Mona has no way to
+        // notice or diagnose herself, since it fails silently before the
+        // audio engine even starts (no tap, no listening, nothing to hear
+        // her say). That single guard meant hands-free could never work at
+        // all on a Mac without that language pack, no matter how many times
+        // she tried — while push-to-talk (`Transcriber.start`, above) never
+        // had this requirement: it just passes
+        // `recognizer.supportsOnDeviceRecognition` through to
+        // `requiresOnDeviceRecognition` and lets the Speech framework fall
+        // back to server-based recognition when on-device isn't available,
+        // exactly like `runRecognition` below already does. Hands-free now
+        // does the same instead of refusing to start.
+        guard let recognizer = recognizer else {
+            emit(2, "hands-free mode needs Arabic speech recognition, which isn't available here")
             return
         }
         switch SFSpeechRecognizer.authorizationStatus() {
