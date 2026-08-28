@@ -1646,6 +1646,69 @@ proof of correct pronunciation. The real test needs her to click "أنشئي
 القاموس" in Settings on her own Mac, with her own key already saved, and
 listen.
 
+## Automatic Arabic diacritization for speech (2026-08-28)
+
+Real feedback from Mona after the pronunciation dictionary shipped: she
+rejected the whole "listen for a bad word, then type it into a form"
+model outright — "أنا عايزه النطق يبقى بالتشكيل من نفسه مش يحتاج اني
+اسمع" (I want the pronunciation diacritized on its own, not needing me to
+listen). She's right that a hand-maintained list of known-bad words is
+fundamentally reactive: it only ever covers the exact words someone
+already noticed. The actual root cause is more general than any list —
+plain Arabic text is genuinely ambiguous (the same written letters can be
+several different words depending on vowels no one writes down), and
+that ambiguity is what a TTS engine is guessing at on every single
+sentence, not just the six names already in the dictionary.
+
+The fix: `agent::diacritize_arabic_text` sends the text to Claude (a
+separate, minimal call — `claude-haiku-4-5-20251001`, no tools, no
+conversation history, chosen for speed since this is a mechanical
+rewrite, not reasoning) with a system prompt that asks for full
+diacritics with hard constraints (never add/remove/change a word or
+letter, leave English/numbers/punctuation untouched, reply with the
+diacritized text alone). `commands::speak_text` and
+`commands::synthesize_pcm_for_simli` both run this on the
+markdown-stripped text right before handing it to ElevenLabs — after the
+`eleven_key` check, so it only runs when ElevenLabs is actually going to
+speak the result, and only when Mona's Anthropic key is saved. Failure
+(no key, network error, malformed response) falls back to speaking the
+plain undiacritized text rather than blocking speech — this is a quality
+improvement, not something that should ever be able to make Amin go
+silent.
+
+The ElevenLabs pronunciation dictionary from the previous section is
+**not replaced** — it stays wired in exactly as before, alongside this.
+Once a word is genuinely diacritized correctly, the dictionary's rule for
+it becomes redundant but harmless (`word_boundaries: true` matching on
+the plain word just won't fire against already-diacritized text). The
+dictionary earns its place as the manual override for whatever the
+diacritizer gets wrong on its own — unusual proper nouns especially
+("المعبيلة", "درة البيان") that a general model has no way to already
+know how Mona's own family/school actually pronounces.
+
+Going forward, the path this doc actually wants Mona to use for a new
+bad word is: tell Claude (in conversation, not the Settings form) — the
+words get added to `elevenlabs::default_pronunciation_rules()` in code,
+shipped in an update, and she presses "إعادة الإنشاء" once. The manual
+"إضافة للقاموس" form in Settings stays as a fallback for when she wants
+to add one herself without waiting for a build, not the primary path.
+
+**What's verified vs. not**: `cargo test`/`tsc`/`npm run build` all pass;
+new unit tests cover the token-budget formula and response-extraction
+logic (`diacritization_token_budget_scales_with_length_but_never_below_the_floor`,
+`extracts_the_diacritized_text_from_a_plain_reply`,
+`skips_a_leading_thinking_block_to_find_the_diacritized_text`,
+`an_empty_or_missing_text_block_is_an_error_not_a_blank_utterance`).
+**Not verified**: an actual live call to the Anthropic API producing
+correctly diacritized Arabic, or the resulting audio actually sounding
+right — this sandbox has no live key to call with, and per Mona's own
+standing instruction, no amount of passing tests substitutes for her
+actually hearing it. The real test is Developer Mode's debug panel (see
+above): after this update, the `tts_text` field there should show fully
+diacritized Arabic for any reply, not just the six known words — that is
+the concrete, visible thing to check for on her own Mac, separate from
+whether the audio itself sounds right.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

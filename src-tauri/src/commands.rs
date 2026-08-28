@@ -952,12 +952,13 @@ pub async fn speak_text(
     // the spoken copy is cleaned; the chat log keeps the original text.
     let text = agent::strip_markdown_for_speech(&text);
 
-    let (eleven_key, voice_id, pronunciation_dictionary) = {
+    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
             load_pronunciation_dictionary(&conn),
+            get_setting(&conn, ANTHROPIC_KEY_NAME).filter(|v| !v.trim().is_empty()),
         )
     };
 
@@ -969,6 +970,17 @@ pub async fn speak_text(
         let on_device_text = agent::fix_pronunciation_for_speech(&text);
         emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
         return voice::speak(app, &on_device_text);
+    };
+
+    // Automatic full diacritization (see agent::diacritize_arabic_text) —
+    // the general-case fix for ElevenLabs mispronunciation Mona asked for,
+    // so she never has to hear a bad word and report it by hand for it to
+    // get fixed. Best-effort: no Anthropic key, a network error, or a
+    // malformed response all fall back to speaking the plain text rather
+    // than blocking speech on this extra call.
+    let text = match &anthropic_key {
+        Some(k) => agent::diacritize_arabic_text(k, &text).await.unwrap_or(text),
+        None => text,
     };
 
     emit_tts_debug(
@@ -1126,12 +1138,13 @@ pub async fn synthesize_pcm_for_simli(
     // mechanism, not a second hand-written text substitution racing it.
     let text = agent::strip_markdown_for_speech(&text);
 
-    let (eleven_key, voice_id, pronunciation_dictionary) = {
+    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
             load_pronunciation_dictionary(&conn),
+            get_setting(&conn, ANTHROPIC_KEY_NAME).filter(|v| !v.trim().is_empty()),
         )
     };
     let Some(key) = eleven_key else {
@@ -1143,6 +1156,12 @@ pub async fn synthesize_pcm_for_simli(
         return Err(
             "Portrait Mode مع Simli محتاج مفتاح ElevenLabs متحط — الصوت المحلي (بدون ElevenLabs) مفيش منه بيانات صوت تتبعت لـ Simli".to_string(),
         );
+    };
+    // Same automatic full diacritization as speak_text — one Amin voice,
+    // one pronunciation fix, regardless of which visual mode is showing.
+    let text = match &anthropic_key {
+        Some(k) => agent::diacritize_arabic_text(k, &text).await.unwrap_or(text),
+        None => text,
     };
     elevenlabs::synthesize_pcm16(&key, &text, voice_id.as_deref(), emotion.as_deref(), pronunciation_dictionary.as_ref()).await
 }

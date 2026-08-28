@@ -549,6 +549,103 @@ pub async fn send_message(
     serde_json::from_str(&raw).map_err(|e| format!("couldn't parse the Anthropic API response: {e}"))
 }
 
+/// Fast, cheap model for a mechanical rewrite task — no reasoning needed,
+/// just speed, since this runs on every single ElevenLabs utterance.
+const DIACRITIZATION_MODEL_ID: &str = "claude-haiku-4-5-20251001";
+
+const DIACRITIZATION_SYSTEM_PROMPT: &str = "\
+أنتِ أداة تشكيل نصوص عربية، مش مساعد محادثة. مهمتك الوحيدة: ضيفي التشكيل \
+الكامل (كل الحركات) على أي نص عربي بيوصلك، بالنطق الفصيح الصحيح، عشان يتقال \
+بصوت صحيح.
+
+قواعد صارمة، من غير أي استثناء:
+- متغيريش ولا كلمة واحدة، ومتضيفيش ومتحذفيش ولا حرف — بس ضيفي الحركات فوق \
+الحروف الموجودة بالظبط زي ما هي.
+- أي كلمة أو رقم أو رمز إنجليزي سيبيه من غير تشكيل زي ما هو.
+- علامات الترقيم (النقطة، الفاصلة، علامة الاستفهام...) سيبيها زي ما هي بالظبط \
+في نفس مكانها.
+- ردّي بالنص المشكّل بس. من غير أي مقدمة، ومن غير شرح، ومن غير علامات اقتباس \
+حواليه.";
+
+/// Restores Arabic diacritics (تشكيل) on `text` right before it's spoken —
+/// undiacritized Arabic is genuinely ambiguous (the same written letters can
+/// be several different words depending on vowels nobody writes down), which
+/// turned out to be the real, general-case source of Mona's ElevenLabs
+/// mispronunciation reports, not just the handful of proper nouns the
+/// pronunciation dictionary (elevenlabs.rs) already covers by name. This
+/// runs on every utterance instead of waiting for her to notice and report
+/// one more bad word; the dictionary stays in place alongside it as a manual
+/// override for whatever this still gets wrong (unusual place names
+/// especially — "المعبيلة", "درة البيان" — which is exactly the kind of
+/// thing a general diacritizer has no way to know).
+///
+/// A separate, minimal Claude call — not the main conversation, no tools, no
+/// history — so a slow or failed diacritization can never affect the actual
+/// reply Mona already saw in the chat log, only how it's read aloud. Callers
+/// must treat an `Err` as "speak the undiacritized text instead", never as a
+/// reason to stay silent.
+/// Diacritics roughly double a word's character count at most; 4x plus a
+/// fixed floor comfortably covers even very short inputs. Pure so the
+/// budget itself is unit-testable without a network call.
+fn diacritization_max_tokens(text: &str) -> u32 {
+    ((text.chars().count() as u32) * 4).max(256)
+}
+
+/// Pulls the diacritized text out of Claude's response content blocks —
+/// separated from the network call so the extraction logic (first text
+/// block, trimmed, never an empty string) is unit-testable on a
+/// hand-built `Vec<ContentBlock>` instead of only via a live API call.
+fn extract_diacritized_text(content: Vec<ContentBlock>) -> Result<String, String> {
+    content
+        .into_iter()
+        .find_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.trim().to_string()),
+            _ => None,
+        })
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "الموديل مرجعش نص مشكّل".to_string())
+}
+
+pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let history = [ChatMessage::user_text(text)];
+    let body = AnthropicRequest {
+        model: DIACRITIZATION_MODEL_ID,
+        max_tokens: diacritization_max_tokens(text),
+        system: DIACRITIZATION_SYSTEM_PROMPT,
+        messages: &history,
+        tools: &[],
+    };
+
+    let response = client
+        .post(ANTHROPIC_API_URL)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("couldn't reach the Anthropic API for diacritization: {e}"))?;
+
+    let status = response.status();
+    let raw = response
+        .text()
+        .await
+        .map_err(|e| format!("couldn't read the diacritization response: {e}"))?;
+
+    if !status.is_success() {
+        let message = serde_json::from_str::<AnthropicErrorBody>(&raw)
+            .map(|b| b.error.message)
+            .unwrap_or(raw);
+        return Err(format!("Anthropic API error ({status}): {message}"));
+    }
+
+    let parsed: AnthropicResponse =
+        serde_json::from_str(&raw).map_err(|e| format!("couldn't parse the diacritization response: {e}"))?;
+
+    extract_diacritized_text(parsed.content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,6 +665,39 @@ mod tests {
     #[test]
     fn no_facts_produces_no_memory_block() {
         assert_eq!(memory_prompt_block(&[]), "");
+    }
+
+    #[test]
+    fn diacritization_token_budget_scales_with_length_but_never_below_the_floor() {
+        assert_eq!(diacritization_max_tokens(""), 256);
+        assert_eq!(diacritization_max_tokens("منى"), 256);
+        let long = "كلمة ".repeat(100);
+        assert_eq!(diacritization_max_tokens(&long), (long.chars().count() as u32) * 4);
+    }
+
+    #[test]
+    fn extracts_the_diacritized_text_from_a_plain_reply() {
+        let content = vec![ContentBlock::Text {
+            text: "  مُنَى أَمِين  ".to_string(),
+        }];
+        assert_eq!(extract_diacritized_text(content).unwrap(), "مُنَى أَمِين");
+    }
+
+    #[test]
+    fn skips_a_leading_thinking_block_to_find_the_diacritized_text() {
+        let content = vec![
+            ContentBlock::Other,
+            ContentBlock::Text {
+                text: "مُنَى".to_string(),
+            },
+        ];
+        assert_eq!(extract_diacritized_text(content).unwrap(), "مُنَى");
+    }
+
+    #[test]
+    fn an_empty_or_missing_text_block_is_an_error_not_a_blank_utterance() {
+        assert!(extract_diacritized_text(vec![]).is_err());
+        assert!(extract_diacritized_text(vec![ContentBlock::Text { text: "   ".to_string() }]).is_err());
     }
 
     #[test]
