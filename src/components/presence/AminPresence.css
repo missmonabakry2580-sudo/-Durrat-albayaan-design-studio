@@ -16,14 +16,6 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  /* Real complaint from a real Mac screenshot (2026-08-28): "شريط الإدخال
-     راكب على المشهد... يصطدم بالشخصية" (the input bar collides with the
-     character) — dead center in the full-bleed presence layer put Amin's
-     collar/tie directly behind the command bar at normal window heights,
-     with no real gap between them. Shifting the whole presence up gives
-     the command bar genuine background to sit on instead of overlapping
-     content-rich parts of the character. */
-  transform: translateY(-8%);
 }
 
 .amin-presence-glow {
@@ -90,15 +82,16 @@
   }
 }
 
-/* 3D Mode: the canvas needs its own clipping (a <canvas> isn't naturally
-   circular like the masked <img> above) — blend mode is already "normal"
-   on the shared base rule, so only the clip is added here. The edge-
-   feather mask and glow/pulse chrome stay identical to Portrait Mode, so
-   switching modes changes only what's inside the frame. */
-.amin-presence-portrait-3d {
-  overflow: hidden;
-  border-radius: 50%;
-}
+/* 3D Mode. Real complaint from a real Mac screenshot (2026-08-28): a hard
+   circular clip here, on top of the soft radial mask-image already on the
+   shared base rule, cut a geometric circle straight through Amin's
+   shoulders — exactly the "PNG cutout pasted on wallpaper" look Mona
+   named. The canvas already renders with a transparent clear color (see
+   ThreeDAvatar.tsx's WebGLRenderer setup), so there's no rectangular
+   canvas edge to hide in the first place — removing the hard clip and
+   widening the shared mask-image's ellipse (below) is what actually lets
+   the character's real silhouette fade into the background instead of
+   being cut by an unrelated shape. */
 .amin-presence-portrait-3d canvas {
   display: block;
 }

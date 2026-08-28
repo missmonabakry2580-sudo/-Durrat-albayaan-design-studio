@@ -1473,9 +1473,9 @@ you destroy the shape like that). Cropping around a bad pose was never
 going to hold at every window size a real Mac might use; the actual fix is
 posing the body correctly, not hiding more of it.
 
-`ThreeDAvatar.tsx` now rotates the `LeftArm`/`RightArm` bones 90° around Z
-right after the model loads — a one-time static pose correction, not part
-of the per-frame idle animation — bringing both arms down from the rig's
+`ThreeDAvatar.tsx` now rotates the `LeftArm`/`RightArm` bones 90° right
+after the model loads — a one-time static pose correction, not part of
+the per-frame idle animation — bringing both arms down from the rig's
 T-pose to a natural at-the-sides stance. Confirmed with Playwright
 screenshots across three aspect ratios, including a deliberately extreme
 1800×650 chosen to stress-test wider-than-tested windows: a clean shoulder
@@ -1483,6 +1483,57 @@ silhouette with no visible artifact at any of them, not just the one this
 was first checked against — the same lesson as the camera-framing fix
 itself, applied this time before shipping rather than after another
 screenshot.
+
+**Correction, same day, found before it reached her this time**: the
+first version of this fix rotated around each bone's local **Z** axis.
+That shipped, and only got caught by pulling the camera back to a
+full-body diagnostic view and actually looking — Mixamo bone-local axes
+don't line up with world axes, and local-Z actually swung both forearms
+to cross in front at the waist, not down to the sides (would have read as
+a different, equally wrong pose once framing revealed more of the torso).
+Local **X**, same rotation sign for both arms, is what a full-body
+screenshot confirmed brings both arms down naturally, hands resting near
+the hips. Recorded here so a future pose adjustment starts from the
+verified axis instead of re-deriving it — this rig's bone-local frames
+aren't documented anywhere else in this codebase.
+
+### Removed the hard circular clip that was cutting through the shoulders (2026-08-28)
+
+Mona's next round of feedback, itemized in detail, named the actual
+remaining cause of a "PNG cutout pasted on wallpaper" look: `.amin-
+presence-portrait-3d` applied `overflow: hidden; border-radius: 50%` on
+top of the shared base rule's own soft radial `mask-image` — a hard
+geometric circle clipping straight through the character's real
+silhouette, in addition to (not instead of) the soft fade already meant to
+handle edge feathering. The canvas already renders with a transparent
+clear color (see the `WebGLRenderer` setup), so there was no rectangular
+canvas edge that needed hiding in the first place. Removed the hard clip
+entirely; the existing mask-image on the shared rule is what actually
+produces a natural fade at the frame's edges now.
+
+Also reverted a same-day change that didn't hold up: shifting the whole
+`.amin-presence` layer via `transform: translateY(-8%)` (meant to create
+clearance above the command bar) made the character read as smaller and
+further from center once combined with the corrected arm pose and the
+removed circular clip — exactly what the next round of feedback described
+("الشخصية الآن صغيرة وغارقة داخل الخلفية... فراغ فوقه"). The camera's own
+framing (hairline-to-collar, headWorldPos-centered, no extra offset) turned
+out to need no artificial vertical shift once the two real bugs underneath
+it (bad arm pose, hard circular clip) were actually fixed — confirmed with
+Playwright screenshots across three aspect ratios (narrow-tall, the
+original landscape, and wide-short) with the input bar sitting on dark
+jacket fabric rather than visually competing with it.
+
+Separately confirmed with a real, if crude, test rather than assumed: two
+screenshots of the idle 3D avatar four seconds apart show ~53,000 changed
+pixels (mean diff 1.7, max 147) — the blink/gaze/head-sway idle loop is
+genuinely running, not a frozen frame, addressing "هذا ليس تمثالًا" (this
+isn't a statue) for the idle state specifically. Not yet re-verified after
+this round's changes: mouth-sync during an actual spoken reply, and
+anything Simli/Portrait-Mode-audio-related — those need a real spoken
+utterance and, for Portrait Mode, a real Mac (this sandbox's browser can't
+reach Simli's WebRTC endpoint at all, a limitation already documented
+above, independent of any code change here).
 
 ## ElevenLabs Arabic pronunciation audit (2026-08-28)
 

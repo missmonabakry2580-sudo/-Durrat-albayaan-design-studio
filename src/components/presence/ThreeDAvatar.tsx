@@ -163,27 +163,30 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
         // ليك جسم كامل ليه انت دمرت الشكل كده" — I built you a full body,
         // why did you destroy the shape): this rig's rest pose is a T-pose
         // (arms out to the sides), and it ships with no idle-standing
-        // animation to fix that. The camera-framing fix earlier the same
-        // day only hid this at the aspect ratios it happened to be tested
-        // at — a wider window (much closer to a real MacBook's) still
-        // pulled the outstretched arms into frame as the odd dark
-        // triangular shapes she circled. Cropping around the problem was
-        // never going to hold at every window size; posing it properly
-        // does. Rotating LeftArm/RightArm 90° around Z brings both arms
-        // down to a natural at-the-sides pose — confirmed with Playwright
-        // screenshots across three aspect ratios (including a deliberately
-        // extreme 1800×650) showing a clean shoulder silhouette with no
-        // artifacts at any of them, not just the one this was first tested
-        // against.
+        // animation to fix that. Cropping around it was never going to
+        // hold at every window size; posing it properly does.
+        //
+        // Axis/angle found by direct inspection, not guessed twice: a first
+        // attempt rotated around each bone's LOCAL Z axis, which (Mixamo
+        // bone-local axes don't line up with world axes) actually swung
+        // both forearms to cross in front at the waist — confirmed by
+        // temporarily pulling the camera back to a full-body view and
+        // screenshotting the actual result rather than assuming the first
+        // guess was right. Local X by 90°, same sign for both arms, is
+        // what actually brings them down to a natural at-the-sides stance
+        // (verified the same way — full-body screenshot showing both hands
+        // resting near the hips). Re-confirmed at three bust-crop aspect
+        // ratios afterward (including a deliberately extreme 1800×650)
+        // with no artifacts at any of them.
         const leftArm = root.getObjectByName("LeftArm");
         const rightArm = root.getObjectByName("RightArm");
         const armDropAngle = Math.PI / 2;
         if (leftArm) {
-          leftArm.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), armDropAngle));
+          leftArm.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), armDropAngle));
         }
         if (rightArm) {
           rightArm.quaternion.multiply(
-            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -armDropAngle),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), armDropAngle),
           );
         }
 
