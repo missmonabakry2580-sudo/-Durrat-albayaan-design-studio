@@ -911,6 +911,24 @@ private final class HandsFreeListener {
     /// handler so a late callback from a task we've already moved past
     /// (e.g. one `armPassive`/`openActiveSession` superseded) is ignored
     /// instead of re-triggering a phase transition a second time.
+    ///
+    /// REAL BUG found 2026-08-28, from real diagnostic data (Developer
+    /// Mode's new "last partial heard" field, added specifically to answer
+    /// this): on a real Mac, hands-free correctly transcribed everything
+    /// Mona said — the exact words showed up as partials — but
+    /// `result.isFinal` never arrived at all, so the final-only code in
+    /// `armPassive`/`runVerifiedListening`/`listenForCommand` (the
+    /// voiceprint check, sending the command, everything) was simply never
+    /// reached. This recognition task runs continuously across an entire
+    /// hands-free session (never calling `endAudio()` per utterance the
+    /// way a one-shot dictation UI would), and Apple's own silence-based
+    /// finalization can't be relied on to ever fire in that shape — this
+    /// was a real, reproducible failure, not a hypothetical edge case.
+    /// Detects the same "she stopped talking" signal manually instead of
+    /// trusting the framework for it: if `silenceTimeout` passes with no
+    /// new partial, the last partial is treated as final ourselves.
+    private let silenceTimeout: TimeInterval = 1.2
+
     private func runRecognition(
         recognizer: SFSpeechRecognizer,
         onDeviceOnly: Bool,
@@ -922,10 +940,42 @@ private final class HandsFreeListener {
         currentRequest = req
 
         var task: SFSpeechRecognitionTask?
+        var lastPartialText = ""
+        var finished = false
+        var silenceTimer: DispatchWorkItem?
+
+        func fireFinal(_ text: String) {
+            guard !finished else { return }
+            finished = true
+            silenceTimer?.cancel()
+            // The real task never reports isFinal on its own in this
+            // shape (that's the whole bug) — cancel it explicitly so it
+            // doesn't keep running, unheard, in the background forever.
+            // A no-op if it happens to have already completed for real.
+            task?.cancel()
+            onUpdate(text, true)
+        }
+
+        func scheduleSilenceFinal() {
+            silenceTimer?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, !self.stopped, self.currentTask === task else { return }
+                fireFinal(lastPartialText)
+            }
+            silenceTimer = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + silenceTimeout, execute: work)
+        }
+
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
-            guard let self = self, !self.stopped, self.currentTask === task else { return }
+            guard let self = self, !self.stopped, self.currentTask === task, !finished else { return }
             if let result = result {
-                onUpdate(result.bestTranscription.formattedString, result.isFinal)
+                lastPartialText = result.bestTranscription.formattedString
+                if result.isFinal {
+                    fireFinal(lastPartialText)
+                } else {
+                    onUpdate(lastPartialText, false)
+                    scheduleSilenceFinal()
+                }
             }
             if let error = error {
                 self.emit(2, error.localizedDescription)

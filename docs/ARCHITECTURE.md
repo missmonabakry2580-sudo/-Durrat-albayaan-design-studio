@@ -2165,6 +2165,49 @@ verified**: which of the three cases above is actually happening — this
 change exists specifically to answer that from real data on her Mac
 instead of another guess.
 
+## Found it: hands-free's recognition task never actually finalized (2026-08-28)
+
+The Developer Mode diagnostic (previous entry) answered the question
+immediately: Mona's real words showed up verbatim as the last partial
+heard, with no rejection ever recorded either. That rules out both
+"recognition isn't hearing her" and "the voiceprint keeps rejecting
+her" — the only thing left is that `result.isFinal` from
+`SFSpeechRecognizer` simply never arrived, so the entire final-only code
+path (`armPassive`/`runVerifiedListening`/`listenForCommand`'s
+voiceprint check and command dispatch) was never reached, for any
+utterance, ever.
+
+The real difference from push-to-talk (which works): `Transcriber`
+(push-to-talk) calls `request.endAudio()` the moment the key is
+released, which reliably tells Apple's recognizer the utterance is over
+and a real `isFinal` follows. Hands-free's `openTap` keeps one
+continuous audio engine running across the whole session and never
+calls `endAudio()` per utterance — there's no natural moment to call it,
+since nothing tells the code when Mona stops talking except the
+recognizer's own silence detection, which turned out not to fire in
+this shape on a real Mac.
+
+Fixed in `runRecognition` (used by all three hands-free listening
+methods, not `Transcriber`, which is unaffected and still relies on its
+own real `endAudio()`): track the last partial transcript and the time
+it last changed; if 1.2 seconds pass with nothing new, treat that last
+partial as final ourselves and cancel the now-redundant real task
+(which would otherwise keep running unheard in the background forever,
+since it was never going to finalize on its own). This replaces trusting
+Apple's finalization for a never-ending recognition task with detecting
+the same signal — she stopped talking — directly.
+
+**What's verified vs. not**: `cargo build`/`cargo test` (112 passed) and
+`tsc` pass; brace/paren-balance checked by hand (no `swiftc` in this
+sandbox, same limitation as every other Swift change here — real
+confirmation needs the published dylib, same discipline as always).
+1.2 seconds is a first guess at the silence threshold, not a measured
+value — too short would cut off a mid-sentence pause as if she'd
+finished; too long would feel sluggish. **Not verified**: the actual
+value on a real Mac, and whether the diagnosed cause is complete (it
+explains the exact symptom observed, but a real device may still surface
+something this reasoning didn't anticipate).
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
