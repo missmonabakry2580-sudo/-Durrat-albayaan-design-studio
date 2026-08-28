@@ -1788,6 +1788,34 @@ once) is unconditionally correct regardless of what caused the second
 call, but whether the underlying double-invoke can still happen at the
 React layer is a separate, still-open question worth watching for.
 
+## Portrait Mode's static image was cropping into the hair on real window shapes (2026-08-28)
+
+Mona, from a real Mac screenshot: "محتاجة تضبط راسه المقصوصة دي من فوق"
+(need you to fix this head that's cropped from the top). Real, and a
+plain CSS bug in `.amin-presence-portrait`'s `object-position` — the
+vertical value (42%) still cropped into the source photo's hairline once
+her actual window's aspect ratio squeezed the presence panel short
+enough. Checked the source photo directly rather than guessing: hair
+starts about 12% down the 1254×1254 square, so 42% left far less margin
+than it looked like it should. Lowered to 18%, verified at three
+deliberately extreme aspect ratios (1600×600, 1400×480, 1280×800) via
+Playwright screenshots — full headroom stays visible at all three, none
+crop into the hair.
+
+**This is Portrait Mode's *static* image specifically** — worth being
+explicit about, since Mona's same message also expected the facial
+expression and mouth-sync work from the 3D-mode fix (see the section
+above) to already apply here too. It doesn't, and can't by construction:
+Portrait Mode shows either Simli's live video (real lip-sync, from
+Simli's own service, once a session actually connects) or, whenever
+Simli isn't connected, this same flat photograph — which cannot move at
+all, expression or mouth, because it's an image, not a 3D model. That's
+the existing designed fallback (see `PortraitAvatar.tsx`), not a
+regression from this session's 3D-mode work. Until her Simli session
+connects successfully, Portrait Mode will keep showing a still image;
+3D Mode is the only visual mode the new expression/mouth-sync/audio-
+overlap fixes apply to.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

@@ -54,8 +54,23 @@
      window is ever resized taller than it is wide. In that case it biases
      the crop to protect the name lockup on the artwork's right side
      ("أمين"/"Amin") rather than splitting the loss evenly with the
-     character's face on the left. */
-  object-position: 68% 42%;
+     character's face on the left.
+     Vertical 18% (not the old 42%, and not 50% center): a real Mac
+     screenshot (2026-08-28, Mona: "محتاجة تضبط راسه المقصوصة دي من فوق")
+     showed the top of the head/hair cropped off in her actual window
+     shape. The source photo itself has real headroom — hair starts
+     around 12% down the 1254×1254 square (checked directly against the
+     file, not assumed) — so 42% was still cropping into that margin at
+     her window's aspect ratio. 18% keeps the crop's top edge safely
+     above the hairline (see the maths: top-crop fraction of the scaled
+     image is (1 - containerHeight/scaledHeight) × this value, which
+     only exceeds the ~12% hairline once the container is squeezed below
+     roughly a third of the cover-scaled image's height — far shorter
+     than this app's presence panel is ever likely to get) while still
+     leaning toward center rather than pinning fully to the top, which
+     would waste that same margin as empty background above the head in
+     an ordinary window shape. */
+  object-position: 68% 18%;
   /* Normal blend, not screen: this is a real opaque photograph (updated
      2026-08-28 to Mona's chosen photorealistic portrait, replacing the
      earlier translucent wireframe artwork that screen-blending was
