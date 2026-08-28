@@ -91,8 +91,14 @@ Amin action is never silently riding on a session the user didn't grant it.
 Isolation is not a capability restriction: the isolated window can do
 anything a normal browser window can (any URL, any site interaction a
 webview supports) — the only difference from Mona's personal browser is
-separate cookies/session storage. Opening a URL is `ConfirmHighRisk` — see
-§16.
+separate cookies/session storage. Concretely, this means `open_browser_url`
+(navigate), `read_page_content` (URL/title/visible text + a numbered list
+of clickable/fillable elements), `click_page_element`, and `fill_page_field`
+(the latter two addressed by the plain integer id `read_page_content` just
+returned — never a caller-supplied CSS selector, which is what keeps the
+JS spliced into each call injection-safe). All four are `ConfirmHighRisk`
+— see §16. §6 governs what a page's own returned text/labels may and may
+not do: data to read, never instructions to follow.
 
 ## 5. OTP and CAPTCHA come to the user
 

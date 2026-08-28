@@ -15,15 +15,16 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::db::Db;
     use crate::policy::RiskTier;
     use crate::{audit, confirmation, memory, tasks, tools};
     use rusqlite::Connection;
     use serde_json::json;
 
-    fn test_db() -> Connection {
+    fn test_db() -> Db {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../schema.sql")).unwrap();
-        conn
+        Db(std::sync::Mutex::new(conn))
     }
 
     fn audit_rows(conn: &Connection) -> Vec<(String, String)> {
@@ -42,9 +43,9 @@ mod tests {
     /// the real tool execute — mirroring commands.rs's
     /// send_agent_message/resolve_pending_action split without needing a
     /// live Tauri window or network call.
-    #[test]
-    fn a_high_risk_action_only_runs_after_real_approval_and_is_fully_audited() {
-        let conn = test_db();
+    #[tokio::test]
+    async fn a_high_risk_action_only_runs_after_real_approval_and_is_fully_audited() {
+        let db = test_db();
         let app = tauri::test::mock_app();
 
         let action = confirmation::PendingAction {
@@ -54,26 +55,29 @@ mod tests {
             proposed_at: chrono::Utc::now(),
         };
         let description = tools::describe(&action.name, &action.input);
-        audit::record(
-            &conn,
-            "amin",
-            &action.name,
-            RiskTier::ConfirmHighRisk,
-            audit::Decision::Proposed,
-            Some(&description),
-            None,
-        )
-        .unwrap();
+        {
+            let conn = db.0.lock().unwrap();
+            audit::record(
+                &conn,
+                "amin",
+                &action.name,
+                RiskTier::ConfirmHighRisk,
+                audit::Decision::Proposed,
+                Some(&description),
+                None,
+            )
+            .unwrap();
 
-        // Proposed, not executed — the task list must still be empty.
-        assert!(tasks::list(&conn, None).unwrap().is_empty());
+            // Proposed, not executed — the task list must still be empty.
+            assert!(tasks::list(&conn, None).unwrap().is_empty());
+        }
 
         // An ambiguous reply must not be read as approval.
         assert!(matches!(
             confirmation::interpret("مش عارفة بصراحة"),
             confirmation::Reply::Unclear
         ));
-        assert!(tasks::list(&conn, None).unwrap().is_empty());
+        assert!(tasks::list(&db.0.lock().unwrap(), None).unwrap().is_empty());
 
         // Mona approves for real, in her own words.
         assert!(matches!(
@@ -83,39 +87,46 @@ mod tests {
         assert!(!confirmation::is_expired(&action, chrono::Utc::now()));
 
         // Only now does the real tool run.
-        let result = tools::execute(app.handle(), &conn, &action.name, &action.input).unwrap();
-        audit::record(
-            &conn,
-            "user",
-            &action.name,
-            RiskTier::ConfirmHighRisk,
-            audit::Decision::Executed,
-            Some(&description),
-            None,
-        )
-        .unwrap();
-
-        // Verification Layer: "تم" only ever describes a result checked
-        // here, not one merely planned.
+        let result = tools::execute(app.handle(), &db, &action.name, &action.input)
+            .await
+            .unwrap();
         let created_id = result["id"].as_str().unwrap().to_string();
-        let stored = tasks::list(&conn, None).unwrap();
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].id, created_id);
-        assert_eq!(stored[0].priority.as_deref(), Some("high"));
+        {
+            let conn = db.0.lock().unwrap();
+            audit::record(
+                &conn,
+                "user",
+                &action.name,
+                RiskTier::ConfirmHighRisk,
+                audit::Decision::Executed,
+                Some(&description),
+                None,
+            )
+            .unwrap();
 
-        // The audit trail carries the whole story — nothing silently
-        // skipped the wait.
-        assert_eq!(
-            audit_rows(&conn),
-            vec![
-                ("create_task".to_string(), "proposed".to_string()),
-                ("create_task".to_string(), "executed".to_string()),
-            ]
-        );
+            // Verification Layer: "تم" only ever describes a result checked
+            // here, not one merely planned.
+            let stored = tasks::list(&conn, None).unwrap();
+            assert_eq!(stored.len(), 1);
+            assert_eq!(stored[0].id, created_id);
+            assert_eq!(stored[0].priority.as_deref(), Some("high"));
+
+            // The audit trail carries the whole story — nothing silently
+            // skipped the wait.
+            assert_eq!(
+                audit_rows(&conn),
+                vec![
+                    ("create_task".to_string(), "proposed".to_string()),
+                    ("create_task".to_string(), "executed".to_string()),
+                ]
+            );
+        }
 
         // Morning Brief's own tool reads the same real row back, not a
         // separate, possibly-stale copy of the truth.
-        let overview = tools::execute(app.handle(), &conn, "get_daily_overview", &json!({})).unwrap();
+        let overview = tools::execute(app.handle(), &db, "get_daily_overview", &json!({}))
+            .await
+            .unwrap();
         assert_eq!(overview["open_tasks"].as_array().unwrap().len(), 1);
     }
 
@@ -123,7 +134,8 @@ mod tests {
     /// audit log must say so plainly.
     #[test]
     fn a_declined_high_risk_action_never_executes() {
-        let conn = test_db();
+        let db = test_db();
+        let conn = db.0.lock().unwrap();
         let action = confirmation::PendingAction {
             tool_use_id: "toolu_test2".to_string(),
             name: "create_task".to_string(),
@@ -173,7 +185,8 @@ mod tests {
     /// word that was really about something else.
     #[test]
     fn a_stale_pending_action_expires_instead_of_executing() {
-        let conn = test_db();
+        let db = test_db();
+        let conn = db.0.lock().unwrap();
         let stale = confirmation::PendingAction {
             tool_use_id: "toolu_test3".to_string(),
             name: "create_task".to_string(),
@@ -194,20 +207,23 @@ mod tests {
     /// Real Memory + real Task rows, read back together through the same
     /// tool the Morning Brief actually calls — proves get_daily_overview
     /// reflects genuine state, not a fixture standing in for it.
-    #[test]
-    fn morning_brief_reflects_real_tasks_and_memory_together() {
-        let conn = test_db();
+    #[tokio::test]
+    async fn morning_brief_reflects_real_tasks_and_memory_together() {
+        let db = test_db();
         let app = tauri::test::mock_app();
         tools::execute(
             app.handle(),
-            &conn,
+            &db,
             "create_task",
             &json!({ "title": "متابعة تسجيل أحمد", "priority": "high" }),
         )
+        .await
         .unwrap();
-        memory::remember(&conn, "person", "اسم ابن منى", "أحمد").unwrap();
+        memory::remember(&db.0.lock().unwrap(), "person", "اسم ابن منى", "أحمد").unwrap();
 
-        let overview = tools::execute(app.handle(), &conn, "get_daily_overview", &json!({})).unwrap();
+        let overview = tools::execute(app.handle(), &db, "get_daily_overview", &json!({}))
+            .await
+            .unwrap();
         assert_eq!(overview["open_tasks"][0]["title"], "متابعة تسجيل أحمد");
         assert_eq!(overview["remembered_facts"][0]["value"], "أحمد");
     }

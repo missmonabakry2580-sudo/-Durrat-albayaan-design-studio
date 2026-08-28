@@ -482,17 +482,18 @@ pub async fn send_agent_message(
     }
 
     // Auto / TrustedDelegation: safe to run immediately — still logged,
-    // and still narrated back rather than executed silently.
-    let exec_result = {
+    // and still narrated back rather than executed silently. `execute` locks
+    // the DB itself only where it needs it, never across an `.await` — see
+    // its doc comment — so it's called here without holding a guard first.
+    let exec_result = tools::execute(&app, &db, &tool_name, &tool_input).await;
+    {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let result = tools::execute(&app, &conn, &tool_name, &tool_input);
-        let (details, decision) = match &result {
+        let (details, decision) = match &exec_result {
             Ok(_) => (description.clone(), audit::Decision::Executed),
             Err(e) => (format!("{description} — خطأ: {e}"), audit::Decision::Blocked),
         };
         let _ = audit::record(&conn, "amin", &tool_name, risk, decision, Some(&details), None);
-        result
-    };
+    }
 
     let result_text = match &exec_result {
         Ok(v) => v.to_string(),
@@ -594,16 +595,15 @@ async fn resolve_pending_action(
                 let mut guard = pending.0.lock().map_err(|e| e.to_string())?;
                 *guard = None;
             }
-            let exec_result = {
+            let exec_result = tools::execute(app, db, &action.name, &action.input).await;
+            {
                 let conn = db.0.lock().map_err(|e| e.to_string())?;
-                let result = tools::execute(app, &conn, &action.name, &action.input);
-                let (details, decision) = match &result {
+                let (details, decision) = match &exec_result {
                     Ok(_) => (description.clone(), audit::Decision::Executed),
                     Err(e) => (format!("{description} — خطأ: {e}"), audit::Decision::Blocked),
                 };
                 let _ = audit::record(&conn, "user", &action.name, risk, decision, Some(&details), None);
-                result
-            };
+            }
             let result_text = match &exec_result {
                 Ok(v) => v.to_string(),
                 Err(e) => format!("Error: {e}"),

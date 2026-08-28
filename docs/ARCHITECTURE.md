@@ -705,6 +705,48 @@ Amin's own agentic tool use through the Anthropic API.
   browser, which stays completely untouched. `open_browser_url` was
   already `ConfirmHighRisk` before this pass and still is.
 
+**Update, 2026-08-28: the browser tool can now actually act on a page, not
+just show it.** Mona asked for real "read/click/fill" capability. Added
+`read_page_content`, `click_page_element`, `fill_page_field` to
+`browser.rs`, all `ConfirmHighRisk` like `open_browser_url`. Mechanism:
+`WebviewWindow::eval_with_callback` injects JS into the same isolated
+window, bridged to an `async` Rust fn via a `tokio::sync::oneshot`
+channel (the callback is `Fn`, called once in practice but not `FnOnce`
+by the API's own signature, so a `Mutex<Option<Sender>>` is what lets it
+still consume the one-shot sender). `read_page_content` tags every
+visible interactive element with a fresh sequential `data-amin-id` and
+returns the page's URL/title/text plus that element list; `click`/`fill`
+address an element purely by that integer, never a caller-supplied CSS
+selector — the only thing ever spliced into the follow-up script is an
+`id: u32` and, for fills, a value passed through `serde_json::to_string`
+for safe escaping. That splice design is what keeps this injection-safe
+even though the input ultimately traces back to Claude's own tool call.
+
+Second-order fix this required: `tools::execute` becomes `async` (it
+`.await`s the browser calls), which meant it could no longer hold an
+already-locked `&Connection` for its whole body — a `std::sync::
+MutexGuard` isn't `Send`, so one alive across an `.await` (either inside
+`execute` or in a caller holding it across `execute(...).await`) fails to
+compile under Tauri's async command runtime. Fixed by having `execute`
+take `&Db` and lock fresh inside each synchronous arm instead — verified
+this actually works (not just assumed) by reading rustc's real behavior
+via `cargo check` rather than reasoning it through in the abstract: a
+`MutexGuard` created and dropped entirely within one non-awaiting match
+arm never gets captured by the generator state of a sibling arm that does
+await, so `Send`-ness holds. Both `commands.rs` call sites now lock only
+around the (unavoidably synchronous) `audit::record` call, after the
+`execute(...).await` has already returned.
+
+**Still not testable here:** `read_page_content`/`click_page_element`/
+`fill_page_field` need a real `WebviewWindow` actually rendering a page —
+same category as voice/mic, this sandbox cannot open one. `browser.rs`'s
+existing unit tests (URL validation) still pass, and the whole crate
+still compiles and passes `cargo test` with these changes in, but the
+actual DOM-tagging/click/fill JS has only been read carefully, never run
+against a live page. That's a real gap Mona should exercise once this
+build is in her hands, the same way she found the hands-free and
+pronunciation bugs by actually using the app.
+
 **What's still unverified:** everything here is covered by unit tests (49
 passing, including `tools.rs`'s dispatcher exercised end to end with a
 mocked Tauri `AppHandle`) and a clean `cargo check`/`clippy`/`tsc`/`vite
