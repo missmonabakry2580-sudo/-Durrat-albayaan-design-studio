@@ -1018,20 +1018,48 @@ integration code, not by hearing it.
 
 ### Portrait Mode: the honest current state
 
-Portrait Mode today renders exactly what it always has —
-`src/assets/amin-identity.jpg`, Mona's approved reference artwork — with
-no changes. Building real dynamic lip-sync/blink animation on top of it
-turned up a blocker worth stating plainly rather than working around
-quietly: **that artwork is a side-profile, translucent wireframe
-illustration with no clearly rendered mouth and no distinct eyelid** — it's
-a stylized brand image, not a frontal photographic face. Every real-time
-talking-portrait technique (a manual eyelid-mask overlay, or any neural
-lip-sync provider) needs a roughly frontal face with a visible mouth to
-drive; there is nothing in this specific image to animate without
-inventing geometry that isn't there, which is exactly the kind of fake
-success this project doesn't do. Provider research (below) still stands
-independent of this, but using it against *this exact image* would very
-likely just fail or look broken.
+Portrait Mode's earlier artwork (a side-profile, translucent wireframe
+illustration with no clearly rendered mouth or eyelid) was never
+animatable without inventing geometry that wasn't there — see git history
+for that original finding. **2026-08-28: Mona replaced it** with a real
+photorealistic frontal portrait (her own reference photo, composited by
+Amin with the brand's gold/blue AI-circuit motif via `flux-2-pro`, then
+the "أمين / Amin" text lockup added) — now `src/assets/amin-identity.jpg`.
+This genuinely unblocks dynamic animation: a frontal face with a visible
+mouth and eyes actually exists to drive now.
+
+**Two real, tested attempts at building this without a paid provider, and
+why both are ruled out with evidence rather than assumption:**
+
+1. **Per-reply rendered video** (`bytedance-omnihuman-v1.5` — animates a
+   still photo + an audio clip into a lip-synced talking-head clip,
+   available through this session's own creative-tools connector, no new
+   account needed). Tested for real with the actual portrait image and a
+   short real Arabic ElevenLabs-style line: **`estimate_only` returned
+   ~260 seconds of render time and ~$0.86 per generation.** For a live
+   conversation where Amin might speak dozens of times a day, that's both
+   a multi-minute wait after every single reply and a recurring cost that
+   scales with usage — not what "متزامن مع صوت أمين الحقيقي" (synced to
+   Amin's real voice, live) means. Ruled out for the live-conversation
+   path on measured numbers, not guessed ones.
+2. **A free, local "blink" via a second generated frame** — asked
+   `gemini-3-pro-image` to edit the official portrait into an otherwise
+   identical frame with the eyes closed, meaning to crossfade the two
+   client-side (no API, no per-reply cost). The eyes-closed result looked
+   right on its own, but overlaying it against the original exposed a
+   real problem: **the two independently generated images don't share
+   pixel-exact framing** (the edit model changed canvas size and shifted
+   the face's scale/position slightly), so a naive crossfade would visibly
+   jump on every blink instead of reading as one. Not shipped — a
+   convincing version of this would need real face-landmark alignment
+   between the two frames (buildable, but a separate piece of engineering,
+   not attempted yet since Simli's own live model produces blinking
+   natively as part of one coherent pipeline instead).
+
+**Conclusion, unchanged from the provider research below:** real lip-sync
++ blink + eye movement + head movement + micro-expressions, all tied to
+live conversation with no per-reply wait, needs a real-time streaming
+avatar provider. Simli remains the recommendation.
 
 **Provider research** (bring-your-own-audio real-time avatar APIs, so
 Portrait Mode keeps the same shared ElevenLabs voice rather than a
@@ -1045,12 +1073,16 @@ provider's own TTS):
 
 None of this can be integrated without Mona creating an account and
 providing an API key/payment — not something Amin can do on her behalf.
+The exact steps: sign up at simli.com, create a custom avatar from
+`src/assets/amin-identity.jpg` (already the right, frontal reference),
+generate an API key from the dashboard, and hand it over — at that point
+the real-time WebRTC pipeline (fed the same PCM audio `audio_level.rs`
+already decodes for the 3D avatar, so it's still ONE Amin voice) gets
+wired up the same way 3D Mode already is: swappable, same Amin Core.
 
-**Today, until both (a) a new frontal reference image exists and (b) a
-provider + credential are chosen**: Portrait Mode stays exactly as it was
-before this session — the static artwork, no blink, no lip movement. This
-is disclosed as incomplete, not presented as done. See the session's
-report to Mona for the two decisions this is waiting on.
+**Today, until a provider + credential is chosen**: Portrait Mode shows
+the new official photo, static — no blink, no lip movement yet. This is
+disclosed as incomplete, not presented as done.
 
 ## Roadmap (for orientation — each phase gets its own design notes)
 
