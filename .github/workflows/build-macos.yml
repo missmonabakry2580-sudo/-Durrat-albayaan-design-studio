@@ -98,28 +98,6 @@ jobs:
           security delete-keychain "$KEYCHAIN"
           rm -f "$CERT_PATH"
 
-      # tauri-action reuses the same "amin-preview" release/tag on every
-      # push, and when one already exists it fetches and merges its old
-      # latest.json before uploading the new one instead of writing a
-      # clean file. That merge is where a real bug surfaced: it kept the
-      # PREVIOUS run's updater signature for a platform even though this
-      # run generated (and uploaded) a brand-new .sig — so latest.json
-      # pointed the in-app updater at a signature that no longer matched
-      # the actual downloadable file, and every update check failed with
-      # "signature verification failed". Confirmed by hand: verified the
-      # uploaded Amin_universal.app.tar.gz against latest.json's embedded
-      # signature with the same minisign-verify crate the updater uses —
-      # it failed; the freshly uploaded .sig asset (fetched directly, not
-      # through latest.json) verified fine and had a different, newer
-      # timestamp. Deleting the release before tauri-action runs means
-      # there is nothing stale left to merge — every field it writes,
-      # including the signature, comes from this run's own build.
-      - name: Delete the previous amin-preview release so latest.json can't inherit a stale signature
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete amin-preview --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-
       # Code signing + notarization: only actually happens once Mona adds
       # the six repo secrets below (Settings → Secrets and variables →
       # Actions) from her own Apple Developer Program account — see
@@ -164,3 +142,85 @@ jobs:
             هذا التطبيق موقّع ومعتمد (notarized) بشهادة مطوّر آبل الخاصة بمنى، فمفروض يفتح عادي من غير أي تحذير أمان من macOS.
           releaseDraft: false
           prerelease: true
+
+      # tauri-action reuses the same "amin-preview" release/tag on every
+      # push, and when one already exists it fetches and merges its old
+      # latest.json before uploading the new one instead of writing a
+      # clean file. That merge is where a real bug surfaced: it kept the
+      # PREVIOUS run's updater signature for a platform even though this
+      # run generated (and uploaded) a brand-new .sig — so latest.json
+      # pointed the in-app updater at a signature that no longer matched
+      # the actual downloadable file, and every update check failed with
+      # "signature verification failed". Confirmed by hand: verified the
+      # uploaded Amin_universal.app.tar.gz against latest.json's embedded
+      # signature with the same minisign-verify crate the updater uses —
+      # it failed; the freshly uploaded .sig asset (fetched directly, not
+      # through latest.json) verified fine and had a different, newer
+      # timestamp.
+      #
+      # First fix attempt was deleting the whole release before this job's
+      # build — it did make every latest.json correct, but it did that by
+      # making the release (and every past-working version) not exist at
+      # all for the several minutes this job takes to compile, so any
+      # update check landing in that window failed with "Could not fetch a
+      # valid release JSON from the remote" — the exact original bug,
+      # self-inflicted, and worse: it now happened on *every* build, not
+      # just an occasional one. Mona hit this for real within the hour.
+      # Never delete the release again for this reason.
+      #
+      # Real fix: don't trust tauri-action's merged latest.json at all —
+      # rebuild it from scratch, right here, from the .sig file this exact
+      # run just wrote to disk. No merge, no fetch of anything old, so
+      # nothing stale to inherit — and the release/tag/prior-good-assets
+      # stay up the entire time, so an update check mid-build still finds
+      # the last good version instead of nothing.
+      - name: Rebuild latest.json from this run's own signature (never trust tauri-action's merge)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SIG_FILE="$GITHUB_WORKSPACE/src-tauri/target/universal-apple-darwin/release/bundle/macos/Amin.app.tar.gz.sig"
+          if [ ! -s "$SIG_FILE" ]; then
+            echo "No updater signature was produced (TAURI_SIGNING_PRIVATE_KEY probably isn't set yet) — nothing to rebuild."
+            exit 0
+          fi
+          SIGNATURE="$(cat "$SIG_FILE")"
+          VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/amin-preview/Amin_universal.app.tar.gz"
+          NOTES=$'بُنيت تلقائيًا من فرع claude/amin-project-6wwufr — آخر تحديث: '"$GITHUB_SHA"$'\n\nهذا التطبيق موقّع ومعتمد (notarized) بشهادة مطوّر آبل الخاصة بمنى، فمفروض يفتح عادي من غير أي تحذير أمان من macOS.'
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$NOTES" \
+            --arg pub_date "$PUB_DATE" \
+            --arg sig "$SIGNATURE" \
+            --arg url "$URL" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {signature: $sig, url: $url},
+                "darwin-x86_64": {signature: $sig, url: $url},
+                "darwin-aarch64-app": {signature: $sig, url: $url},
+                "darwin-x86_64-app": {signature: $sig, url: $url}
+              }
+            }' > "$RUNNER_TEMP/latest.json"
+          gh release upload amin-preview "$RUNNER_TEMP/latest.json" --clobber --repo "$GITHUB_REPOSITORY"
+
+      # Mona's explicit ask: keep only the current version's installer on
+      # the release page, not one accumulating forever. Runs after the
+      # step above so the release is never briefly asset-less — only ever
+      # removes old-version .dmg files, never the current one, and never
+      # touches the tar.gz/.sig/latest.json trio at all.
+      - name: Remove old-version installers, keep only the current one
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          CURRENT_DMG="Amin_${VERSION}_universal.dmg"
+          gh release view amin-preview --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | grep -E '^Amin_.*_universal\.dmg$' \
+            | grep -v -F "$CURRENT_DMG" \
+            | while IFS= read -r stale; do
+                gh release delete-asset amin-preview "$stale" --yes --repo "$GITHUB_REPOSITORY"
+              done
