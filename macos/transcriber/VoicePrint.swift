@@ -158,16 +158,22 @@ final class VoicePrintEngine {
     static let windowSamples = Int(sampleRate * windowSeconds)
 
     /// Cosine similarity threshold above which a fresh embedding is
-    /// considered "Mona." PLACEHOLDER, NOT MEASURED: chosen from published
-    /// ECAPA-TDNN/cosine-backend speaker-verification literature's typical
-    /// same-speaker/different-speaker separation, not from any recording of
-    /// Mona's actual voice (impossible in this sandbox — no microphone). The
-    /// first real test on her Mac (enroll, then try the wake phrase herself
-    /// and have someone else try it) is what actually calibrates this — if
-    /// she's rejected, lower it; if a stranger passes, raise it. Surfacing
-    /// that as a real, expected first-run tuning step, not hiding a magic
-    /// number.
-    private let matchThreshold: Float = 0.45
+    /// considered "Mona." PLACEHOLDER, NOT MEASURED — and the first real
+    /// test already happened, badly: Mona enrolled on a real Mac
+    /// (2026-08-28) and hands-free stopped responding to her voice
+    /// entirely afterward ("الاستماع الحر مش شغال نهائي و ناديت عليه مليون
+    /// مرة مفيش رد أبدا"), exactly the failure mode this comment predicted
+    /// ("if she's rejected, lower it") before any real audio ever ran
+    /// through this code. Lowered from the original 0.45 as an immediate,
+    /// still-unmeasured correction — biased toward false-accepts (a
+    /// stranger occasionally getting through) over false-rejects (Mona
+    /// locked out of her own hands-free mode), since the second failure
+    /// mode is the one that just actually happened and is far worse for
+    /// her. `verifyWithScore` below now surfaces the real cosine similarity
+    /// number through kind 10 specifically so the *next* rejection (if any)
+    /// comes with real data to tune this against, instead of another blind
+    /// guess.
+    private let matchThreshold: Float = 0.25
 
     private var model: MLModel?
     private var modelLoadAttempted = false
@@ -319,10 +325,23 @@ final class VoicePrintEngine {
     /// The one thing this must never do is fail *closed* on a real
     /// enrolled user due to a transient model hiccup.
     func verify(samples: [Float]) -> Bool {
-        guard hasEnrolledSpeaker() else { return true }
-        guard let enrolled = loadEnrolledEmbedding() else { return true }
-        guard let candidate = embedding(for: samples) else { return true }
-        return cosineSimilarity(enrolled, candidate) >= matchThreshold
+        verifyWithScore(samples: samples).matched
+    }
+
+    /// Same check as `verify`, but also returns the raw cosine similarity
+    /// score — `nil` whenever a real comparison never happened (nothing
+    /// enrolled, or embedding extraction failed), so callers can tell "no
+    /// score, this passed open" apart from "a real score, here it is."
+    /// Added specifically so a rejection can report the actual number
+    /// (see AminVoice.swift's use of this via kind 10) instead of a bare
+    /// yes/no — `matchThreshold` above is an unmeasured placeholder, and a
+    /// bare rejection gives nothing to tune it against.
+    func verifyWithScore(samples: [Float]) -> (matched: Bool, score: Float?) {
+        guard hasEnrolledSpeaker() else { return (true, nil) }
+        guard let enrolled = loadEnrolledEmbedding() else { return (true, nil) }
+        guard let candidate = embedding(for: samples) else { return (true, nil) }
+        let score = cosineSimilarity(enrolled, candidate)
+        return (score >= matchThreshold, score)
     }
 }
 

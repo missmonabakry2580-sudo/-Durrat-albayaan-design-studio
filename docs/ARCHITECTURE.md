@@ -1917,6 +1917,80 @@ real confirmation is the same one this project settled on after the
 `AudioResampler` incident: download the actual published `.dylib` after
 this ships and inspect it directly, never trust the CI checkmark alone.
 
+## Amin becomes voice-only, and the voiceprint threshold's first real test failed (2026-08-28)
+
+Two real, separate reports arrived together, both urgent:
+
+**Hands-free stopped responding entirely.** "الاستماع الحر مش شغال نهائي و
+ناديت عليه مليون مرة مفيش رد أبدا أبدا" (hands-free doesn't work at all, I
+called it a million times, never any response) — and the timing matches
+her having just enrolled a voiceprint ("أنا خلاص فعلت البصمة الصوتية")
+exactly. Before enrollment, `VoicePrintEngine.verify` fails open (anyone's
+voice opens a session); the moment a voiceprint exists, it starts actually
+gating on `matchThreshold` — and that threshold was always a documented,
+unmeasured placeholder (0.45, "chosen from published literature... not
+from any recording of Mona's actual voice"). This is exactly the failure
+mode that placeholder's own comment predicted, now real instead of
+hypothetical: her enrolled voiceprint most likely isn't matching her own
+live voice at that threshold, silently rejecting every wake phrase she
+says. Two fixes, not one:
+- Lowered `matchThreshold` to 0.25 as an immediate, still-unmeasured
+  correction — biased toward false-accepts over false-rejects, since a
+  stranger occasionally getting through is a far smaller problem than
+  Mona locked out of her own hands-free mode, which is what just actually
+  happened.
+- Added `VoicePrintEngine.verifyWithScore`, returning the real cosine
+  similarity number alongside the match decision. Both `armPassive` (the
+  phrase-gated fallback) and `runVerifiedListening` (the phrase-free flow)
+  now pass this score through kind 10's text instead of leaving it empty,
+  and the Settings banner for a rejection (App.tsx) shows it directly —
+  "نسبة التطابق: 0.31", say — so the *next* rejection, if there is one,
+  comes with a real number to tune against instead of another guess.
+- **Immediate workaround, no update needed**: clearing the enrolled
+  voiceprint (Settings → "مسح") reverts to fail-open immediately, restoring
+  hands-free to how it worked before enrollment, while any code fix still
+  needs a build+update cycle to reach her.
+
+**Voice-only, no visible chat interface at all.** Mona, explicitly and
+repeatedly: "أنا عايزه اكلمه صوت فقط... مفيش خاصية مايك يتقفل ويتفتح ومفيش
+زر ارسال... الكلام أصلا مش هيكون رسايل" (I want to talk to him by voice
+only — no mic-toggle affordance, no send button — speech isn't messages
+at all). Removed from the main screen entirely: the floating command bar
+(mic-toggle button, stop-speaking button, text input, quick-capture
+button, send button) and the chat-bubble transcript (`agent-log`). Talking
+to Amin is now exclusively: hands-free mode (Settings toggle) for
+continuous voice, or the existing global `alt+A` push-to-talk shortcut
+(registered natively in `lib.rs`, works from anywhere, was never tied to
+the now-removed button) as the manual fallback. The underlying
+`handleSendToAgent`/voice pipeline is untouched — only the visible
+UI and the now-dead `handleMicToggle`/`handleMicDown`/`handleMicUp`/
+`handleStopSpeaking`/`handleQuickCapture`/`agentLog` state were removed,
+along with their now-unused imports (`tsc`'s own unused-declaration
+errors caught every one of these mechanically, not manual guessing about
+what was still needed).
+
+One real gap this created and fixed in the same change: with no chat log
+to show a failure in, a silent `catch` block would make a real error in
+`handleSendToAgent`/`handleNarrateBrief` completely invisible — no visual
+trace, no sound, nothing. Both now call `speak()` with the error text on
+failure, so a real failure is at minimum heard, never silently swallowed.
+
+**What's verified vs. not**: `tsc`/`npm run build` clean (including
+chasing every cascading unused-import/state error `tsc` raised after the
+UI removal — a good forcing function for finding genuinely dead code, not
+just satisfying the compiler). A Playwright screenshot at 1280×800
+confirms `.command-bar` and `.agent-log` no longer exist in the DOM at
+all, not just hidden by CSS. **Not verified, and structurally can't be
+from this sandbox**: whether the Swift changes (`matchThreshold`,
+`verifyWithScore`) actually compile — same standing limitation as every
+other Swift change this session (no `swiftc` here, and
+`build-macos.yml`'s voice-engine step still silently bundles an empty
+placeholder dylib on a compile failure). Real confirmation needs
+downloading the published dylib after this ships. Also not verified:
+whether 0.25 is actually a good threshold for Mona's real voice — that
+still needs a real test on her Mac, same as before, just with a real
+number to read this time if it fails again.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

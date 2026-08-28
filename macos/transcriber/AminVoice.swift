@@ -55,7 +55,11 @@
 // instead of the recognition being discarded as an echo). 10 = a wake
 // phrase was heard but rejected because the voiceprint didn't match (phrase-
 // gated flow), OR — with a voiceprint enrolled — any utterance at all whose
-// voice didn't match (text always null either way; see VoicePrint.swift).
+// voice didn't match. Text is the real cosine similarity score as a plain
+// number string (e.g. "0.31"), or empty if no real comparison ran (nothing
+// enrolled, or embedding extraction failed) — see VoicePrint.swift's
+// verifyWithScore, added specifically so a rejection carries real data to
+// tune matchThreshold against instead of another guess.
 // 11 = speaker enrollment succeeded (text always null). 12 = speaker
 // enrollment failed (text is why). The string is a NUL-terminated UTF-8 C
 // string valid only for the duration of the call — the Rust side must copy
@@ -738,10 +742,11 @@ private final class HandsFreeListener {
                 self.runVerifiedListening(recognizer: recognizer)
                 return
             }
-            if VoicePrintEngine.shared.verify(samples: self.voiceBuffer.snapshot()) {
+            let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+            if result.matched {
                 self.emit(1, trimmed)
             } else {
-                self.emit(10)
+                self.emit(10, result.score.map { String($0) } ?? "")
             }
             self.runVerifiedListening(recognizer: recognizer)
         }
@@ -792,7 +797,8 @@ private final class HandsFreeListener {
                 return
             }
             if self.heard(self.wakePhrase, in: text) {
-                if VoicePrintEngine.shared.verify(samples: self.voiceBuffer.snapshot()) {
+                let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                if result.matched {
                     self.openActiveSession(recognizer: recognizer)
                     return
                 }
@@ -801,7 +807,11 @@ private final class HandsFreeListener {
                 // Only re-arm at isFinal (not every partial) so a still-
                 // growing transcript that keeps containing the phrase
                 // doesn't keep tearing down and restarting recognition.
-                self.emit(10)
+                // The real cosine similarity score (kind 10's text) is what
+                // lets matchThreshold actually get tuned against a real
+                // rejection instead of another guess — see that constant's
+                // comment.
+                self.emit(10, result.score.map { String($0) } ?? "")
                 if isFinal { self.armPassive(recognizer: recognizer) }
                 return
             }

@@ -7,7 +7,7 @@ import { Splash } from "./components/splash/Splash";
 import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
 import { resetAudioLevel, setAudioLevel } from "./lib/visual/audioLevelBus";
-import { speakViaSimli, stopSimliSpeaking } from "./lib/simli/simliSession";
+import { speakViaSimli } from "./lib/simli/simliSession";
 import { getStoredVisualMode, setStoredVisualMode, type VisualMode } from "./lib/visual/visualMode";
 import {
   type AppInfo,
@@ -48,7 +48,6 @@ import {
   listTasks,
   listWorkspaceFiles,
   openBrowserUrl,
-  quickCapture,
   readWorkspaceFile,
   saveApiKey,
   saveElevenLabsKey,
@@ -64,9 +63,6 @@ import {
   setTaskStatus,
   speakText,
   startSpeakerEnrollment,
-  startVoiceCapture,
-  stopSpeaking,
-  stopVoiceCapture,
   writeWorkspaceFile,
 } from "./lib/tauri";
 import "./App.css";
@@ -116,11 +112,6 @@ function arabicLabel(map: Record<string, string>, value: string): string {
   return map[value] ?? value;
 }
 
-interface AgentTurn {
-  role: "user" | "amin";
-  text: string;
-}
-
 type PanelKey = "brief" | "tasks" | "followups" | "files" | "browser" | "audit" | "settings";
 
 const NAV_ITEMS: { key: PanelKey; icon: string; label: string }[] = [
@@ -168,26 +159,26 @@ function App() {
   const [speakerEnrolled, setSpeakerEnrolled] = useState(false);
   const [enrollmentBusy, setEnrollmentBusy] = useState(false);
   const [enrollmentStatus, setEnrollmentStatus] = useState<string | null>(null);
-  const [handsFreeSessionOpen, setHandsFreeSessionOpenState] = useState(false);
-  // Mirrors handsFreeSessionOpen for synchronous reads from event handlers.
-  // React (StrictMode especially) may invoke a functional state updater
-  // more than once as a purity check, so a real side effect — sending a
-  // just-heard command to the agent — can never live inside one; this ref
-  // is what the voice://final handler below reads instead.
+  // Whether an open hands-free command session is active — a plain ref,
+  // not React state, since nothing renders based on this value anymore
+  // (it used to drive a command-bar tooltip, removed along with the rest
+  // of the visible chat UI — see the voice-only redesign note near the
+  // bottom of this file). React (StrictMode especially) may invoke a
+  // functional state updater more than once as a purity check, so a real
+  // side effect — sending a just-heard command to the agent — could never
+  // safely live inside a setState callback anyway; a ref read directly by
+  // the voice://final handler below was always the correct tool for that.
   const handsFreeSessionOpenRef = useRef(false);
   function setHandsFreeSessionOpen(open: boolean) {
     handsFreeSessionOpenRef.current = open;
-    setHandsFreeSessionOpenState(open);
   }
   const [autonomy, setAutonomy] = useState<AutonomyLevel>("observe");
   const [halted, setHalted] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [agentInput, setAgentInput] = useState("");
-  const [agentLog, setAgentLog] = useState<AgentTurn[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [isListening, setIsListening] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskInput, setTaskInput] = useState("");
   const [showDoneTasks, setShowDoneTasks] = useState(false);
@@ -368,7 +359,6 @@ function App() {
       }),
       listen<string>("voice://error", (e) => {
         setVoiceError(e.payload);
-        setIsListening(false);
         setAminState("warning");
         setTimeout(
           () => setAminState((s) => (s === "warning" ? (handsFreeEnabled ? "armed" : "idle") : s)),
@@ -376,7 +366,6 @@ function App() {
         );
       }),
       listen<string>("voice://state", (e) => {
-        setIsListening(e.payload === "listening");
         setAminState(e.payload === "listening" ? "listening" : "idle");
       }),
       listen("voice://speaking-finished", () => {
@@ -432,9 +421,15 @@ function App() {
       // banner for every one of those would be exactly the kind of noisy,
       // intrusive behavior hands-free mode is supposed to avoid, so it's
       // silently ignored in that mode instead.
-      listen("voice://hands-free-voice-rejected", () => {
+      listen<string>("voice://hands-free-voice-rejected", (e) => {
         if (!speakerEnrolled) {
-          setVoiceError("سمعت عبارة الفتح لكن الصوت مش متطابق مع بصمتك الصوتية المسجّلة.");
+          // The payload is the real cosine similarity score (see
+          // VoicePrint.swift's verifyWithScore) — surfaced in the message
+          // itself so a real rejection carries a real number to report
+          // back and tune matchThreshold against, instead of "it doesn't
+          // work" with nothing to go on.
+          const score = e.payload ? ` (نسبة التطابق: ${e.payload})` : "";
+          setVoiceError(`سمعت عبارة الفتح لكن الصوت مش متطابق مع بصمتك الصوتية المسجّلة${score}.`);
         }
       }),
       listen("voice://speaker-enrolled", () => {
@@ -653,19 +648,6 @@ function App() {
     setTimeout(finishSpeaking, 25000);
   }
 
-  /** Interrupts Amin mid-reply — there was no way to do this at all before;
-   * only the "wait it out" option existed. */
-  async function handleStopSpeaking() {
-    stopSimliSpeaking();
-    try {
-      await stopSpeaking();
-    } catch (e) {
-      setVoiceError(String(e));
-    }
-    setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
-    resetAudioLevel();
-  }
-
   /** `overrideText` lets hands-free mode send a just-heard command straight
    * through without a round trip via `agentInput` state, which would
    * otherwise be stale in the same tick it's set. */
@@ -673,7 +655,6 @@ function App() {
     const text = (overrideText ?? agentInput).trim();
     if (!text || agentBusy) return;
 
-    setAgentLog((log) => [...log, { role: "user", text }]);
     setAgentInput("");
     setAgentBusy(true);
     setAminState("thinking");
@@ -681,12 +662,15 @@ function App() {
     try {
       const reply = await sendAgentMessage(text);
       setLastEmotion(reply.emotion);
-      setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
       speak(reply.text, reply.emotion);
     } catch (e) {
-      setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
+      // Voice-only now — with no chat log to show this in, staying silent
+      // on a real failure would mean she never finds out anything went
+      // wrong at all. Speaking it (on-device fallback path — see speak())
+      // is what makes an error audible instead of invisible.
       setAminState("warning");
+      speak(`حصل خطأ: ${String(e)}`, "concerned");
       setTimeout(() => setAminState("idle"), 1400);
     } finally {
       setAgentBusy(false);
@@ -712,37 +696,6 @@ function App() {
 
   async function handleNewConversation() {
     await clearAgentConversation();
-    setAgentLog([]);
-  }
-
-  async function handleMicDown() {
-    setVoiceError(null);
-    try {
-      await startVoiceCapture();
-      setIsListening(true);
-      setAminState("listening");
-    } catch (e) {
-      setVoiceError(String(e));
-    }
-  }
-
-  async function handleMicUp() {
-    if (!isListening) return;
-    await stopVoiceCapture();
-    setIsListening(false);
-    setAminState("idle");
-  }
-
-  /** Tap once to start, tap again to stop — holding a mouse button down
-   * the whole time she's talking isn't a reasonable ask. Recognition also
-   * still ends on its own after a natural pause in speech, so tapping
-   * again is "I'm done early," not the only way to stop. */
-  function handleMicToggle() {
-    if (isListening) {
-      handleMicUp();
-    } else {
-      handleMicDown();
-    }
   }
 
   async function handleCreateTask() {
@@ -750,14 +703,6 @@ function App() {
     if (!title) return;
     setTaskInput("");
     await createTask(title);
-    await refresh();
-  }
-
-  async function handleQuickCapture() {
-    const text = agentInput.trim();
-    if (!text) return;
-    setAgentInput("");
-    await quickCapture(text);
     await refresh();
   }
 
@@ -840,18 +785,16 @@ function App() {
       "هات لي ملخص سريع وطبيعي بناءً على البيانات دي (Delta Brief محلي، لسه معندهوش Gmail/Calendar):\n" +
       JSON.stringify(deltaBrief, null, 2);
 
-    setAgentLog((log) => [...log, { role: "user", text: "📋 ملخص التغييرات" }]);
     setBriefBusy(true);
     setAminState("thinking");
     try {
       const reply = await sendAgentMessage(prompt);
       setLastEmotion(reply.emotion);
-      setAgentLog((log) => [...log, { role: "amin", text: reply.text }]);
       setAminState("speaking");
       speak(reply.text, reply.emotion);
     } catch (e) {
-      setAgentLog((log) => [...log, { role: "amin", text: `⚠️ ${String(e)}` }]);
       setAminState("warning");
+      speak(`حصل خطأ: ${String(e)}`, "concerned");
       setTimeout(() => setAminState("idle"), 1400);
     } finally {
       setBriefBusy(false);
@@ -928,25 +871,6 @@ function App() {
             )}
           </div>
 
-          {agentLog.length > 0 && (
-            <div className="amin-world-log-wrap">
-              <ul className="agent-log">
-                {agentLog.map((turn, i) => (
-                  <li key={i} className={`agent-turn agent-turn-${turn.role}`}>
-                    <span className="agent-turn-role">{turn.role === "user" ? "أنتِ" : "أمين"}</span>
-                    <span className="agent-turn-text">{turn.text}</span>
-                  </li>
-                ))}
-              </ul>
-              <button
-                className="chip amin-world-log-clear"
-                onClick={handleNewConversation}
-                disabled={!inTauri}
-              >
-                محادثة جديدة
-              </button>
-            </div>
-          )}
         </div>
 
         <nav className="side-rail" aria-label="أقسام أمين">
@@ -1221,6 +1145,13 @@ function App() {
 
               {activePanel === "settings" && (
                 <>
+                  <div className="field-row">
+                    <span className="field-label">المحادثة الحالية</span>
+                    <button className="chip" onClick={handleNewConversation} disabled={!inTauri}>
+                      محادثة جديدة
+                    </button>
+                  </div>
+
                   <div className="field-row">
                     <span className="field-label">مفتاح الاتصال بأنثروبيك</span>
                     <span className={keySaved ? "badge badge-success" : "badge"}>
@@ -1575,73 +1506,23 @@ function App() {
           </div>
         )}
 
-        <form
-          className="command-bar"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSendToAgent();
-          }}
-        >
-          <button
-            type="button"
-            className={isListening ? "command-bar-mic command-bar-mic-active" : "command-bar-mic"}
-            onClick={handleMicToggle}
-            disabled={!inTauri || agentBusy || handsFreeEnabled}
-            title={
-              handsFreeEnabled
-                ? speakerEnrolled
-                  ? "الاستماع الحر شغّال — كلّمي أمين على طول من غير عبارة فتح، صوتك نفسه هو المفتاح"
-                  : handsFreeSessionOpen
-                    ? "أمين سامعك دلوقتي — قولي عبارة القفل أو استني شوية لما تخلصي"
-                    : "الاستماع الحر شغّال — كلّمي أمين بعبارة الفتح من غير ما تدوسي حاجة"
-                : isListening
-                  ? "دوسي تاني لو خلصتي كلامك — أو استنيه يوقف من نفسه"
-                  : "دوسي وابدئي الكلام — أو استخدمي alt+A من أي مكان"
-            }
-          >
-            🎤
-          </button>
-          {aminState === "speaking" && (
-            <button
-              type="button"
-              className="command-bar-mic"
-              onClick={handleStopSpeaking}
-              title="اسكتي أمين دلوقتي"
-            >
-              🔇
-            </button>
-          )}
-          {/* Hidden during hands-free: typing here would defeat the whole
-              point of hands-free mode, and Mona's repeated complaint has
-              been that seeing a chat box + send button at all makes Amin
-              feel like a typed chat app instead of a voice assistant.
-              Manual mode keeps them — that's the deliberate typed
-              fallback for when voice isn't practical. */}
-          {!handsFreeEnabled && (
-            <>
-              <input
-                type="text"
-                className="command-bar-input"
-                placeholder="كلّمي أمين أو اكتبي ما تريدين..."
-                value={agentInput}
-                onChange={(e) => setAgentInput(e.currentTarget.value)}
-                disabled={!inTauri || agentBusy}
-              />
-              <button
-                type="button"
-                className="command-bar-action"
-                onClick={handleQuickCapture}
-                disabled={!inTauri || agentBusy || !agentInput.trim()}
-                title="احفظي النص ده كمهمة بدل ما تبعتيه لأمين"
-              >
-                📌
-              </button>
-              <button type="submit" className="command-bar-send" disabled={!inTauri || agentBusy || !agentInput.trim()}>
-                {agentBusy ? "..." : "إرسال"}
-              </button>
-            </>
-          )}
-        </form>
+        {/* No visible chat bar, chat log, or mic/send buttons — Mona,
+            explicitly and repeatedly (2026-08-28): "أنا عايزه اكلمه صوت
+            فقط... مفيش خاصية مايك يتقفل ويتفتح ومفيش زر ارسال... الكلام
+            أصلا مش هيكون رسايل" (I want to talk to him by voice only, no
+            mic-toggle affordance, no send button, speech shouldn't be
+            messages at all). Talking to Amin is now exclusively voice:
+            hands-free mode (Settings — continuous once a voiceprint is
+            enrolled, wake/close-phrase-gated as a fallback otherwise) for
+            hands-free use, or the global alt+A push-to-talk shortcut
+            (registered natively in lib.rs, works from anywhere, needs no
+            visible button) as the manual fallback. `handleSendToAgent`,
+            `handleMicToggle`, `agentInput`, and the rest of this state
+            still exist and still work exactly as before — only the
+            floating input/button UI and the chat-bubble log were removed,
+            not the underlying voice pipeline. Developer Mode's debug panel
+            (Settings) is still there for anyone who wants to see what was
+            actually said/heard. */}
       </main>
     </>
   );

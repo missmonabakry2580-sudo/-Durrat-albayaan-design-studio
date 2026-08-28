@@ -607,7 +607,17 @@ fn extract_diacritized_text(content: Vec<ContentBlock>) -> Result<String, String
 }
 
 pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    // A quality-of-speech nicety must never be able to block speech itself
+    // outright — an unbounded network call here (the default reqwest
+    // client has no timeout at all) would silently hang commands::speak_text
+    // forever on a slow/stuck connection, meaning Amin never speaks at all
+    // with no error reported anywhere. 8s is generous for a short one-shot
+    // completion; on timeout the caller falls back to the undiacritized
+    // text exactly like any other failure here.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("couldn't build the HTTP client for diacritization: {e}"))?;
     let history = [ChatMessage::user_text(text)];
     let body = AnthropicRequest {
         model: DIACRITIZATION_MODEL_ID,
