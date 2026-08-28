@@ -2079,6 +2079,57 @@ update, the next step is getting real data from her Mac (a Developer
 Mode log line, or asking her to check System Settings → Keyboard →
 Dictation for Arabic) rather than guessing again.
 
+## Hands-free's real problem might have been zero feedback, not zero function (2026-08-28)
+
+The on-device-recognition fix (0.2.29) shipped, was verified as actually
+present in the published dylib (downloaded the real release asset,
+checksum-matched it, and `strings`-grepped it for both the new error
+message and the expected exported symbols — all present, so this wasn't
+another CI-masking-flaw placeholder), and Mona still reported hands-free
+completely unchanged: no visible difference on Amin, no sound, and
+pressing alt+A "did nothing" too.
+
+That alt+A result turned out to be expected, not another data point: the
+global-shortcut handler in `lib.rs` deliberately refuses push-to-talk
+while `HandsFreeSession::is_active()` is true (the two native listeners
+can't run at once) and emits a `voice://error` explaining that instead —
+if hands-free was toggled on at the time, alt+A doing nothing new is the
+designed behavior, not evidence of a second bug.
+
+The real, separate finding: **there was no way to actually notice
+hands-free arming even if it worked perfectly.** Two gaps compounded:
+
+1. `armed`'s only visual signal was a brow/eye blendshape at 0.15-0.2
+   intensity — well under the ~0.5+ this session already found necessary
+   for this model's small blendshape deltas to read as visible at all
+   (see "Real, hard-won finding" earlier in this doc). Bumped `armed`
+   and `listening` in `ThreeDAvatar.tsx`'s `STATE_EXPRESSIONS` into the
+   same visible range every other calibrated expression uses.
+2. Removing the chat UI for the voice-only redesign also removed the
+   only feedback hands-free ever had — the input box's live partial
+   transcript. Nothing replaced it. Added a short system-sound chime
+   (`afplay` of a bundled macOS system sound, not ElevenLabs — so it
+   fires even if TTS keys are broken) the instant hands-free actually
+   arms (kind 5) and again the instant it hears and accepts a real
+   command (kind 1), in `voice.rs`'s `on_voice_event`. Deliberately not
+   tracked by `AFPLAY_PID`/`kill_current_afplay` — it's a cue, never
+   "Amin speaking".
+
+This doesn't rule out a real underlying listening failure too — it's
+still possible the native pipeline itself isn't hearing her. But it was
+no longer possible to tell the two apart from her side: "nothing
+happened" was equally consistent with "hands-free never started" and
+"hands-free started fine and is just invisible." The chime turns the
+next report into real signal: silence on toggling it on means arming
+itself is failing; a chime on arming but nothing on speaking narrows it
+to recognition/verification specifically.
+
+**What's verified vs. not**: `cargo build`/`cargo test` (112 passed) and
+`tsc` pass. **Not verified**: whether the underlying native listening
+actually works now on her Mac — that's still an open question this
+change is designed to get a real, unambiguous answer to on the next
+test, not a claim that hands-free itself is fixed.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

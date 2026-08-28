@@ -178,6 +178,18 @@ fn engine(app: &AppHandle) -> Result<&'static Library, String> {
     Ok(lib)
 }
 
+/// Fire-and-forget system-sound cue, entirely independent of ElevenLabs/
+/// afplay's `AFPLAY_PID` bookkeeping (see `kill_current_afplay`) — this is
+/// never "Amin speaking" and must never be tracked, muted, or killed as
+/// part of that logic. Deliberately best-effort: a missing sound file or a
+/// spawn failure should never do anything more than silently skip the
+/// chime, since the chime itself only exists to make the real voice
+/// pipeline's state audible, not to be a critical part of it.
+fn play_chime(system_sound_name: &str) {
+    let path = format!("/System/Library/Sounds/{system_sound_name}.aiff");
+    let _ = std::process::Command::new("afplay").arg(path).spawn();
+}
+
 /// Forwards a partial/final/error event from the (in-process) voice engine
 /// to the frontend. Runs on whatever thread the Speech framework's
 /// recognition task happens to call back on.
@@ -211,6 +223,26 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         // afplay process and the on-device AVSpeechSynthesizer are both
         // covered by this same call (see stop_speaking's doc comment).
         let _ = stop_speaking();
+    }
+
+    // Real bug found 2026-08-28: Mona reported hands-free "never responds"
+    // with zero visible sign of anything happening — no error, no change.
+    // Two real, separate gaps turned out to compound: (1) `armed`'s only
+    // visual signal was a brow/eye blendshape at 0.15-0.2 intensity, well
+    // below the ~0.5+ this session already found necessary for this
+    // model's small blendshape deltas to read as visible at all (see this
+    // file's "small blendshape deltas" note in ARCHITECTURE.md); (2) once
+    // the chat UI was removed for the voice-only redesign, there was no
+    // replacement feedback at all for "Amin just started listening" — not
+    // even the old input box's live partial transcript. A short system
+    // chime the instant hands-free actually arms is unambiguous, doesn't
+    // depend on ElevenLabs/network/API keys (so it still fires even if
+    // those are broken), and turns "did it even start?" from a guess into
+    // something she can literally hear within a second of toggling it on.
+    if kind == 5 {
+        play_chime("Pop");
+    } else if kind == 1 {
+        play_chime("Tink");
     }
 
     let _ = match kind {

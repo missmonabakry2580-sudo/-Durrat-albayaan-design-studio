@@ -82,11 +82,18 @@ const EMOTION_EXPRESSIONS: Record<string, ExpressionTargets> = {
  * reads as both at once instead of either erasing the other. */
 const STATE_EXPRESSIONS: Record<AminState, ExpressionTargets> = {
   idle: {},
-  // Kept deliberately mild — these two are meant to read as calm
-  // background attentiveness during long stretches of hands-free
-  // listening, not a strong expression fighting for attention.
-  armed: { browInnerUp: 0.2, eyeWideLeft: 0.15, eyeWideRight: 0.15 },
-  listening: { browInnerUp: 0.3, eyeWideLeft: 0.25, eyeWideRight: 0.25 },
+  // REVISED 2026-08-28 — these were originally 0.2/0.15/0.15 and
+  // 0.3/0.25/0.25, kept deliberately mild for calm background
+  // attentiveness. Real bug: this model's blendshape vertex
+  // displacements are small (see the "small blendshape deltas" note
+  // elsewhere in this file/ARCHITECTURE.md) — this session already found
+  // ~0.5+ necessary before a change reads as visible at all on-screen, so
+  // "mild" here meant "invisible", not "subtle". Mona reported hands-free
+  // looking completely unchanged when armed, which this alone could fully
+  // explain regardless of whether listening itself was working. Pushed
+  // into the same visible range every other calibrated expression uses.
+  armed: { browInnerUp: 0.55, eyeWideLeft: 0.5, eyeWideRight: 0.5 },
+  listening: { browInnerUp: 0.65, eyeWideLeft: 0.6, eyeWideRight: 0.6 },
   thinking: { browInnerUp: 0.5, browDownLeft: 0.3 },
   planning: { browInnerUp: 0.4, browDownLeft: 0.25 },
   executing: { browDownLeft: 0.35, browDownRight: 0.35 },
