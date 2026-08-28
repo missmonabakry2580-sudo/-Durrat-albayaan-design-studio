@@ -1387,6 +1387,56 @@ averaged utterances) — a reasonable v1 given there's no way to iterate on
 recording quality without a real Mac in the loop, but a likely first
 improvement once real accuracy data comes back.
 
+## ElevenLabs Arabic pronunciation audit (2026-08-28)
+
+Mona reported Arabic pronunciation as "سيئ جدًا" (very bad) — most sentences
+sounding unnatural — and asked for a real audit before any change, in a
+specific format. Answers, checked against ElevenLabs' own docs and this
+codebase, not assumed:
+
+- **Model**: was `eleven_multilingual_v2`, now `eleven_v3` (see
+  `elevenlabs.rs`'s `MODEL_ID` doc comment for the full reasoning).
+  `eleven_multilingual_v2` does list Arabic among its 29 languages — the
+  model wasn't fundamentally broken for Arabic.
+- **Voice**: `DEFAULT_VOICE_ID` (Rachel, English-trained) only applies when
+  no voice ID is saved in Settings. The real, session-confirmed cause of
+  "every Arabic sentence sounds wrong": Mona's ElevenLabs API key had been
+  pasted into the Voice ID setting (see the separate "Reject an API key
+  pasted into the Voice ID field" fix, same day) — every request silently
+  fell back to Rachel reading Arabic the whole time, which explains a
+  *consistent*, not occasional, pronunciation problem far better than a
+  model limitation would.
+- **`language_code`**: not sent, and — checked directly against
+  ElevenLabs' docs — explicitly documented as unsupported on
+  `eleven_multilingual_v2` ("This parameter is not supported for
+  multilingual_v2 models"). Not an oversight; a real, documented
+  limitation of the model this app used until today.
+- **Text integrity**: verified by reading `agent::strip_markdown_for_speech`
+  and `fix_pronunciation_for_speech` directly — they strip markdown
+  symbols/emoji and narrowly fix one name's diacritics; neither
+  transliterates, re-encodes, or otherwise mangles Arabic script. The text
+  ElevenLabs receives is the same Arabic text Claude wrote.
+- **SSML/pronunciation dictionaries**: none used anywhere in this pipeline.
+- **Voice settings**: `stability`/`style` vary by emotion (see
+  `voice_settings_for_emotion`), `similarity_boost` fixed at 0.75,
+  `use_speaker_boost` fixed true, `speed` never set (ElevenLabs default:
+  1.0) — confirmed against ElevenLabs' documented `voice_settings` schema.
+
+**What this audit could NOT do, honestly**: run the model/API to actually
+listen to the five test sentences Mona specified. There is no ElevenLabs
+API key in this sandbox, and — per her own explicit instruction — a
+successful API call is not proof of correct pronunciation regardless. The
+`eleven_v3` switch is a documented-Arabic-support, backward-compatible
+change (its "audio tag" emotional-delivery syntax is additive to
+`voice_settings`, not a replacement, per ElevenLabs' own prompting docs),
+protected by the existing streaming→REST→on-device fallback chain in
+`commands::speak_text` if anything about it doesn't work as expected — but
+its actual pronunciation quality, and its behavior specifically over the
+streaming WebSocket, are unverified until tested with a real key. **The
+fix this audit is confident in regardless of model**: Mona needs a real
+Arabic voice ID saved in Settings — this sandbox has no access to her
+ElevenLabs account's Voice Library to choose one for her.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

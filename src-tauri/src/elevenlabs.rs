@@ -26,7 +26,46 @@ const ELEVENLABS_WS_URL: &str = "wss://api.elevenlabs.io/v1/text-to-speech";
 /// library. `eleven_multilingual_v2` is the model, not the voice — it's
 /// what lets this voice read Arabic text at all.
 const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
-const MODEL_ID: &str = "eleven_multilingual_v2";
+/// Audit finding, 2026-08-28 (Mona: Arabic pronunciation "سيئ جدًا... معظم
+/// الجمل تُنطق بشكل غير طبيعي" — bad, most sentences pronounced
+/// unnaturally), checked against ElevenLabs' own docs rather than assumed:
+///
+///  - `eleven_multilingual_v2` (the previous value here) DOES list Arabic
+///    among its 29 supported languages — the model itself wasn't the
+///    fundamental problem. The likely dominant cause is DEFAULT_VOICE_ID
+///    (Rachel, an English-trained voice) being what actually spoke, not a
+///    model limitation — see the real bug this session found and fixed the
+///    same day: Mona's ElevenLabs API key had been pasted into the Voice
+///    ID *setting*, so every request silently used this fallback the whole
+///    time instead of whatever Arabic voice she'd meant to pick.
+///  - `language_code` — the parameter Mona specifically asked about — is
+///    explicitly documented as NOT supported by `eleven_multilingual_v2`
+///    ("This parameter is not supported for multilingual_v2 models"), so
+///    it was never a fixable gap on that model, not an oversight.
+///  - `eleven_v3` (what this constant is now) is ElevenLabs' newest,
+///    highest-quality model, explicitly documented as supporting 70+
+///    languages including Arabic — the two other checked models
+///    (`eleven_multilingual_v2`, `eleven_flash_v2_5`) both cap out lower.
+///    Its docs describe emotional-delivery "audio tags" ("[excited]",
+///    "[whispers]") as embeddable in the text as an ADDITION to
+///    `voice_settings`, not a replacement — so `voice_settings_for_emotion`
+///    below still applies unchanged.
+///
+/// **What's NOT verified — no ElevenLabs API key in this sandbox to test
+/// with, and Mona's own instruction was explicit not to count an API
+/// response as proof of correct pronunciation**: whether `eleven_v3`
+/// actually sounds better for Arabic in practice, whether it works over
+/// `synthesize_streaming`'s stream-input WebSocket (undocumented in what
+/// could be checked — if it doesn't, the existing streaming→REST→on-device
+/// fallback chain in `commands::speak_text` already covers that, so this
+/// is a safe experiment either way, not a gamble on a single path), and
+/// whether it's priced or access-gated differently on her plan. The one
+/// thing this audit is confident fixing regardless of the model: Mona
+/// still needs to set a real Arabic voice ID from her own ElevenLabs
+/// Voice Library — no model choice fixes an English-trained voice reading
+/// Arabic, and this sandbox has no access to her account's voice library
+/// to pick one on her behalf.
+const MODEL_ID: &str = "eleven_v3";
 
 /// Maps Claude's own `[[emotion:VALUE]]` tag (see agent::KNOWN_EMOTIONS,
 /// agent::extract_emotion) to ElevenLabs' per-request `voice_settings` —
