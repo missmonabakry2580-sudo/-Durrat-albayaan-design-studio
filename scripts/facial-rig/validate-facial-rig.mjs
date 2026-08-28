@@ -22,12 +22,23 @@
 import { readGlbJson } from "./glb-json.mjs";
 import { REQUIRED_ARKIT, REQUIRED_VISEMES } from "./required-targets.mjs";
 
-function findDuplicates(names) {
-  const seen = new Set();
+// Duplicates only matter *within* one mesh's own target list — that's what
+// would make glTF's per-primitive index-to-name mapping ambiguous. The same
+// name reused across different meshes (e.g. "browDownLeft" on both the head
+// and the eyelashes, so the lashes track brow movement) is the standard,
+// correct pattern for a multi-mesh face rig: three.js builds a separate
+// morphTargetDictionary per mesh, so there's no collision. Checking this
+// list-wide instead of per-mesh was this validator's own bug, never caught
+// because no real multi-mesh model existed to test it against until now.
+function findDuplicates(meshes) {
   const duplicates = new Set();
-  for (const name of names) {
-    if (seen.has(name)) duplicates.add(name);
-    seen.add(name);
+  for (const mesh of meshes) {
+    if (!mesh.targetNames) continue;
+    const seen = new Set();
+    for (const name of mesh.targetNames) {
+      if (seen.has(name)) duplicates.add(name);
+      seen.add(name);
+    }
   }
   return [...duplicates];
 }
@@ -98,7 +109,7 @@ export function validateFacialRig(path) {
     allNames.push(...mesh.targetNames);
   }
 
-  const duplicates = findDuplicates(allNames);
+  const duplicates = findDuplicates(meshes);
   const nameSet = new Set(allNames);
 
   const arkitFound = REQUIRED_ARKIT.filter((n) => nameSet.has(n));
