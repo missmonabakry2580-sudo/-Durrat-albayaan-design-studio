@@ -50,7 +50,22 @@ import CoreML
 /// independent of `SFSpeechAudioBufferRecognitionRequest`'s own internal
 /// (and inaccessible) format handling — the two consumers of the same tap
 /// buffer have different needs and shouldn't be coupled.
-private final class AudioResampler {
+///
+/// Deliberately NOT `private`: Swift's `private` is file-scoped, not
+/// module-scoped, so it would be inaccessible from AminVoice.swift's
+/// `HandsFreeListener` even though both files compile into the same
+/// module (swiftc's multi-file mode — see macos/transcriber/README.md).
+/// Real bug this exact mistake caused, found in CI logs after Mona's real
+/// Mac reported the whole voice engine missing (2026-08-28): every build
+/// since this file was added silently shipped an empty placeholder dylib
+/// (the CI script's own graceful-degradation fallback for a compile
+/// failure — see build-macos.yml's "Build the voice engine" step) because
+/// `swiftc` failed with "'AudioResampler' is inaccessible due to
+/// 'private' protection level" at both of AminVoice.swift's call sites —
+/// and because that fallback never fails the CI job itself, this went
+/// undetected by every check in this pipeline until a human actually
+/// tried to use hands-free mode.
+final class AudioResampler {
     private let converter: AVAudioConverter?
     private let targetFormat: AVAudioFormat
 

@@ -1409,32 +1409,55 @@ improvement once real accuracy data comes back.
 The 0.2.18 release Mona updated to reported, on every voice feature at
 once: **"couldn't load the voice engine: dlopen(...libaminvoice.dylib):
 tried: ... (no such file) ..."** — the dylib itself missing from the
-installed `.app`, not a code bug inside it. This release's only bundling
-change was adding the ECAPA-TDNN model above as a second
-`bundle.resources` entry, referenced via a path escaping `src-tauri`
-(`"../macos/transcriber/Resources/ECAPA_TDNN.mlpackage"`). Tauri's own
-docs say array-format resources bundle with "the original directory
-structure preserved" — for a source path that starts with `../`, what
-that resolves to inside the app's `Resources/` folder is genuinely
-unclear, and the timing (this is the first release where any voice
-feature failed to load at all, immediately after this entry was added) is
-strong circumstantial evidence it broke resource bundling for the *whole*
-`Resources/` folder, not just its own entry. Not proven with certainty —
-no way to inspect a shipped `.app`'s actual bundle contents from this
-sandbox — but treated as the working theory rather than left unaddressed.
+installed `.app`, not a code bug inside it.
 
-Fixed by removing the cross-directory reference entirely: a new CI step
-("Copy the voiceprint model into src-tauri") copies the committed
-`macos/transcriber/Resources/ECAPA_TDNN.mlpackage` into `src-tauri/`
-(git-ignored there, same treatment as `libaminvoice.dylib` itself — a
-build-time copy, never a source file) right before the bundling step, and
-`tauri.conf.json`'s resource entry is now a plain `"ECAPA_TDNN.mlpackage"`
-— matching `libaminvoice.dylib`'s own entry, which never had this problem.
-**Not yet verified against the actual failure** — the only way to confirm
-is Mona's next update actually loading voice again — but avoiding an
-ambiguous, only-lightly-documented resource-path shape in favor of the
-exact pattern already proven to work is the right fix regardless of
-whether this specific causal theory is 100% correct.
+**First theory, WRONG — corrected here rather than left standing.** The
+first fix attempt (this section, as originally written) blamed the new
+`bundle.resources` entry for the ECAPA-TDNN model, referenced via a path
+escaping `src-tauri` (`"../macos/transcriber/Resources/ECAPA_TDNN.mlpackage"`),
+reasoning that Tauri's "original directory structure preserved" behavior
+for array-format resources was ambiguous for a path starting with `../`.
+That fix (moving the model into `src-tauri` at CI time — kept below, since
+it's still a real improvement) shipped as `0.2.19` and was verified by
+actually downloading and extracting the published `.app.tar.gz`: both
+`libaminvoice.dylib` and `ECAPA_TDNN.mlpackage` were now genuinely present
+at the right paths inside `Contents/Resources/` — the resource-bundling
+theory's fix *worked*, on its own terms. **The dylib was still 0 bytes.**
+
+**The real cause, found in the actual CI build log, not guessed a second
+time**: `AudioResampler` (`VoicePrint.swift`) was declared `private`.
+Swift's `private` is file-scoped, not module-scoped — it doesn't mean "not
+public API," it means "only this file can see it," even when another file
+compiles into the very same module (as `AminVoice.swift` and
+`VoicePrint.swift` do here — see macos/transcriber/README.md). Every
+build since `VoicePrint.swift` was added (`0.2.17`, `0.2.18`, `0.2.19`)
+had genuinely failed to compile with `error: 'AudioResampler' is
+inaccessible due to 'private' protection level` at both of
+`HandsFreeListener`'s call sites — and because `build-macos.yml`'s "Build
+the voice engine" step's own graceful-degradation design (an `if/else`
+shell construct that always exits 0, printing a `::warning::` and
+bundling an empty placeholder dylib rather than failing the whole
+release) never fails the CI *job* itself, this was invisible in every
+green checkmark this whole time. Nothing in this pipeline — not the build
+step's own conclusion, not the later "resource path exists" checks, not
+`cargo check` — actually verifies the dylib it bundles is a real,
+non-empty compiled binary; a placeholder passes all of them. **A real gap
+worth naming, not just patching around**: this graceful-degradation design
+was built (see the "Build the voice engine" step's own comment) explicitly
+so a Swift compile failure "never breaks Amin's whole release" — a
+reasonable goal — but its actual effect was hiding three consecutive
+releases' worth of the SAME failure from every automated check that
+exists. A future improvement worth making: have that step still succeed
+overall, but surface loudly (not just a build-log `::warning::` nobody
+reads) that voice shipped broken, e.g. failing a later, non-blocking CI
+check, or checking the dylib's actual size in "Rebuild latest.json" before
+publishing.
+
+Fixed by removing `private` from `AudioResampler`'s declaration — verified
+the real cause the same way as the CSP bug earlier this session: not by
+reasoning about what *should* work, but by downloading the next build's
+actual `.app.tar.gz` and confirming `libaminvoice.dylib` is no longer
+0 bytes (see the commit that fixes this for the exact byte count found).
 
 ## ElevenLabs Arabic pronunciation audit (2026-08-28)
 
