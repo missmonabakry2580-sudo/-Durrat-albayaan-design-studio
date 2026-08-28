@@ -302,10 +302,26 @@ pub fn get_elevenlabs_voice_id(db: State<Db>) -> Result<String, String> {
     Ok(get_setting(&conn, ELEVENLABS_VOICE_ID_KEY).unwrap_or_default())
 }
 
+/// Real bug from a real Mac screenshot (2026-08-28): Mona pasted her actual
+/// ElevenLabs API key into this field instead of a Voice ID — an easy
+/// mistake, since both fields sit right next to each other and both are
+/// opaque pasted strings. The result was a confusing `404 voice_not_found`
+/// naming the API key itself as the "voice", every ElevenLabs call failing,
+/// and a silent fallback to the on-device voice she then (reasonably) read
+/// as "the voice is broken" rather than "the wrong string is in the wrong
+/// box." Every real ElevenLabs API key starts with `sk_`; no real Voice ID
+/// ever does — this is a cheap, reliable check that turns that whole
+/// failure mode into an immediate, specific error instead of a mystery.
 #[tauri::command]
 pub fn save_elevenlabs_voice_id(voice_id: String, db: State<Db>) -> Result<(), String> {
+    let voice_id = voice_id.trim();
+    if voice_id.starts_with("sk_") {
+        return Err(
+            "الكود ده شكله مفتاح API (ElevenLabs API key) مش Voice ID — الـ Voice ID بتاخديه من صفحة Voices في حسابك، مش من صفحة الـ API keys".to_string(),
+        );
+    }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_setting(&conn, ELEVENLABS_VOICE_ID_KEY, voice_id.trim())
+    set_setting(&conn, ELEVENLABS_VOICE_ID_KEY, voice_id)
 }
 
 #[tauri::command]
