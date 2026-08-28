@@ -606,6 +606,32 @@ fn extract_diacritized_text(content: Vec<ContentBlock>) -> Result<String, String
         .ok_or_else(|| "الموديل مرجعش نص مشكّل".to_string())
 }
 
+/// Strips Arabic diacritics (tashkeel) and collapses whitespace, leaving
+/// only the base letters — the invariant a correct diacritization must
+/// preserve exactly.
+fn strip_diacritics_and_whitespace(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(*c, '\u{064B}'..='\u{0652}' | '\u{0670}' | '\u{0640}'))
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// REAL BUG found 2026-08-28, on a real Mac, minutes after hands-free
+/// started working: Amin suddenly spoke sentences like "أنا أداة تشكيل
+/// نصوص عربية" — the diacritization model's own self-description, i.e.
+/// the model occasionally ANSWERS the text conversationally instead of
+/// diacritizing it, despite the system prompt forbidding exactly that
+/// ("مش مساعد محادثة"). A prompt is an instruction, not a guarantee; this
+/// is the guarantee: a valid diacritization differs from its input only
+/// in added harakat, so stripping them must reproduce the original
+/// exactly (ignoring whitespace differences). Anything else — an answer,
+/// an explanation, a reworded sentence, a truncation — fails this check
+/// and the caller falls back to the plain undiacritized text, which is
+/// always safe to speak.
+fn diacritization_preserves_text(original: &str, diacritized: &str) -> bool {
+    strip_diacritics_and_whitespace(original) == strip_diacritics_and_whitespace(diacritized)
+}
+
 pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String, String> {
     // A quality-of-speech nicety must never be able to block speech itself
     // outright — an unbounded network call here (the default reqwest
@@ -653,7 +679,13 @@ pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String,
     let parsed: AnthropicResponse =
         serde_json::from_str(&raw).map_err(|e| format!("couldn't parse the diacritization response: {e}"))?;
 
-    extract_diacritized_text(parsed.content)
+    let diacritized = extract_diacritized_text(parsed.content)?;
+    // See diacritization_preserves_text — without this, a chatty model
+    // reply replaces Amin's actual words and gets spoken aloud verbatim.
+    if !diacritization_preserves_text(text, &diacritized) {
+        return Err("الموديل رجّع رد مختلف عن النص الأصلي بدل ما يشكّله".to_string());
+    }
+    Ok(diacritized)
 }
 
 #[cfg(test)]
@@ -708,6 +740,29 @@ mod tests {
     fn an_empty_or_missing_text_block_is_an_error_not_a_blank_utterance() {
         assert!(extract_diacritized_text(vec![]).is_err());
         assert!(extract_diacritized_text(vec![ContentBlock::Text { text: "   ".to_string() }]).is_err());
+    }
+
+    #[test]
+    fn a_correct_diacritization_passes_the_preservation_check() {
+        // Same letters, harakat added — the only change a valid
+        // diacritization is allowed to make.
+        assert!(diacritization_preserves_text("صباح الخير يا منى", "صَبَاحُ الخَيْرِ يَا مُنَى"));
+        // Whitespace-only differences (a collapsed double space, a
+        // trailing newline) don't fail it either.
+        assert!(diacritization_preserves_text("صباح  الخير", "صَبَاحُ الخَيْرِ\n"));
+    }
+
+    #[test]
+    fn a_chatty_model_answer_fails_the_preservation_check() {
+        // The real failure observed on Mona's Mac (2026-08-28): the
+        // diacritization model answering with its own self-description
+        // instead of diacritizing the input — this must never be spoken.
+        assert!(!diacritization_preserves_text(
+            "تمام، هبتدي في المهمة دلوقتي",
+            "أنا أداة تشكيل نصوص عربية، من فضلك قدّمي نصًا لتشكيله"
+        ));
+        // A truncated or reworded "diacritization" fails too.
+        assert!(!diacritization_preserves_text("تمام، هبتدي في المهمة دلوقتي", "تَمَام"));
     }
 
     #[test]

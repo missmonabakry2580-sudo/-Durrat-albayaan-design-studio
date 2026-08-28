@@ -531,7 +531,27 @@ private final class HandsFreeListener {
 
     private enum Mode: Equatable { case passive, active }
 
+    /// REAL BUG found 2026-08-28, minutes after hands-free first worked on
+    /// a real Mac: Amin fell into a loop of talking to itself ("مليون
+    /// جملة" — Mona wasn't even speaking to it). Mechanism: the moment
+    /// playback finishes, `setSpeakingText(nil)` wipes
+    /// `currentlySpeakingText` — but the recognizer is still holding the
+    /// tail end of Amin's own just-played voice as partials, and the new
+    /// silence-based finalization (see `runRecognition`) then fires that
+    /// echo as a "final" ~1.2s later, when the echo check has already been
+    /// disarmed. The echo of Amin's own reply became Mona's next
+    /// "command", whose reply became the next command, forever. Keeping
+    /// the last spoken text around for a short grace period after playback
+    /// ends lets `isLikelySelfEcho` keep catching exactly that tail.
+    private var recentlySpokenText: String?
+    private var recentlySpokenClearedAt: Date?
+    private let echoGracePeriod: TimeInterval = 3.0
+
     func setSpeakingText(_ text: String?) {
+        if let ending = currentlySpeakingText, text == nil || text?.isEmpty == true {
+            recentlySpokenText = ending
+            recentlySpokenClearedAt = Date()
+        }
         currentlySpeakingText = (text?.isEmpty == false) ? text : nil
     }
 
@@ -588,7 +608,17 @@ private final class HandsFreeListener {
     /// (harmless, familiar); a false barge-in makes Amin cut itself off
     /// having heard nothing, which is a stranger, more confusing failure.
     private func isLikelySelfEcho(_ heard: String) -> Bool {
-        guard let speaking = currentlySpeakingText, !speaking.isEmpty else { return false }
+        // Live playback, or its tail within the grace period just after
+        // playback ended (see recentlySpokenText's comment for the real
+        // self-conversation loop this closes).
+        var candidate = currentlySpeakingText
+        if candidate == nil,
+           let recent = recentlySpokenText,
+           let clearedAt = recentlySpokenClearedAt,
+           Date().timeIntervalSince(clearedAt) < echoGracePeriod {
+            candidate = recent
+        }
+        guard let speaking = candidate, !speaking.isEmpty else { return false }
         let heardNorm = normalize(heard)
         if heardNorm.isEmpty { return true }
         let speakingNorm = normalize(speaking)
@@ -743,7 +773,22 @@ private final class HandsFreeListener {
                     return
                 }
                 if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self.emit(9, text)
+                    // Part of the self-conversation-loop fix (see
+                    // recentlySpokenText): a barge-in cuts playback and
+                    // becomes a command directly, with no voiceprint check
+                    // anywhere downstream — so before this change, any
+                    // echo fragment that slipped past isLikelySelfEcho's
+                    // text comparison (imperfect transcription of Amin's
+                    // own synthetic voice) interrupted Amin and fed his
+                    // own words back to himself. Verify it's actually
+                    // Mona's voice before treating it as a barge-in; a
+                    // mismatch is discarded exactly like an echo.
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    if result.matched {
+                        self.emit(9, text)
+                    } else {
+                        self.emit(10, result.score.map { String($0) } ?? "")
+                    }
                     self.runVerifiedListening(recognizer: recognizer)
                 }
                 return
@@ -754,6 +799,15 @@ private final class HandsFreeListener {
             }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
+                self.runVerifiedListening(recognizer: recognizer)
+                return
+            }
+            // Playback may have ended between this utterance being heard
+            // and its silence-final firing — currentlySpeakingText is nil
+            // by then, so the branch above never sees the echo's tail.
+            // isLikelySelfEcho keeps matching against the just-finished
+            // reply for a short grace period (see recentlySpokenText).
+            if self.isLikelySelfEcho(trimmed) {
                 self.runVerifiedListening(recognizer: recognizer)
                 return
             }
@@ -805,9 +859,18 @@ private final class HandsFreeListener {
                 // Amin is talking (a proactive reply, not inside an open
                 // session) and this doesn't look like its own echo — treat
                 // it as Mona actually trying to get its attention.
+                // Voiceprint-gated like the other two barge-in paths — see
+                // runVerifiedListening's comment for the self-conversation
+                // loop an ungated barge-in caused on a real Mac.
                 if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self.emit(9, text)
-                    self.openActiveSession(recognizer: recognizer)
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    if result.matched {
+                        self.emit(9, text)
+                        self.openActiveSession(recognizer: recognizer)
+                    } else {
+                        self.emit(10, result.score.map { String($0) } ?? "")
+                        self.armPassive(recognizer: recognizer)
+                    }
                 }
                 return
             }
@@ -872,8 +935,16 @@ private final class HandsFreeListener {
                 // final) lets the Rust side stop playback immediately,
                 // before the frontend even sees the text, instead of
                 // waiting for a fresh stop_speaking round trip afterward.
+                // Voiceprint-gated like runVerifiedListening's barge-in —
+                // see the comment there for the self-conversation loop an
+                // ungated barge-in caused on a real Mac.
                 if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self.emit(9, text)
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    if result.matched {
+                        self.emit(9, text)
+                    } else {
+                        self.emit(10, result.score.map { String($0) } ?? "")
+                    }
                     self.listenForCommand(recognizer: recognizer)
                 }
                 return

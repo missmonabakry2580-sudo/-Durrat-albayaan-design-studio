@@ -2208,6 +2208,56 @@ value on a real Mac, and whether the diagnosed cause is complete (it
 explains the exact symptom observed, but a real device may still surface
 something this reasoning didn't anticipate).
 
+## Hands-free worked — and Amin immediately started talking to himself (2026-08-28)
+
+Minutes after Mona confirmed hands-free finally responds ("اشتغل"), a
+new, worse failure: Amin speaking endless strange sentences on his own
+("أنا أداة نصوص عربية وأنا بشكل الكلام...") with her not talking to him
+at all. Two real bugs compounding, both direct consequences of things
+that had just started working:
+
+**Bug 1 — the diacritization model sometimes answers instead of
+diacritizing.** The sentences she quoted are near-verbatim the
+`DIACRITIZATION_SYSTEM_PROMPT`'s own self-description ("أنتِ أداة تشكيل
+نصوص عربية، مش مساعد محادثة") — i.e. the Haiku diacritization call,
+handed a conversational sentence, occasionally replies *as* that persona
+instead of returning the diacritized text, and that reply silently
+replaced Amin's actual words in `speak_text`. A system prompt is an
+instruction, not a guarantee. The guarantee is now enforced in code:
+`diacritization_preserves_text` strips all harakat and whitespace from
+the model's output and requires the remaining letters to equal the
+input's exactly — a valid diacritization can only add harakat, so
+anything else (an answer, a rewording, a truncation) fails and the
+caller falls back to the plain undiacritized text. Two new unit tests,
+one using the exact observed failure.
+
+**Bug 2 — the self-conversation loop.** With silence-finalization now
+actually producing finals, Amin's own played-back voice became input:
+(a) during playback, any echo fragment that slipped past
+`isLikelySelfEcho`'s text comparison fired the barge-in path (kind 9),
+which had NO voiceprint check anywhere downstream and went straight to
+the agent as a command; (b) just after playback, `setSpeakingText(nil)`
+wiped the echo comparison text while the recognizer still held the tail
+of Amin's own voice, whose silence-final then fired ~1.2s later with
+every echo defense already disarmed. His own words became commands,
+whose replies became commands. Fixed both: all three barge-in paths now
+verify the voiceprint before emitting kind 9 (a mismatch is discarded
+like an echo, with the score surfaced via kind 10), and the last spoken
+text is kept for a 3-second grace period after playback ends so
+`isLikelySelfEcho` keeps catching the tail — with the phrase-free flow's
+final path now also running the echo check (it previously only ran
+while `currentlySpeakingText` was still set, which is exactly when the
+tail-final doesn't fire).
+
+**What's verified vs. not**: `cargo test` (114 passed, 2 new) and `tsc`
+pass; Swift brace/paren-balance checked by hand (no `swiftc` here, same
+limitation and same published-dylib verification discipline as always).
+**Not verified**: whether the enrolled voiceprint actually rejects
+Amin's ElevenLabs voice at the current 0.25 threshold (unknowable
+without a real Mac) — which is exactly why the echo grace period exists
+as a second, voiceprint-independent defense; and the 3s grace period
+itself is a first estimate, like the 1.2s silence threshold before it.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
