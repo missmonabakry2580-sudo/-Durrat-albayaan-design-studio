@@ -54,6 +54,17 @@ export function PortraitAvatar({ className }: PortraitAvatarProps) {
         style={{ display: showVideo ? "block" : "none" }}
       />
       {!showVideo && <img className={className} src={identityImage} alt="" aria-hidden="true" />}
+      {/* Real gap this closed: connecting/error states looked identical to
+          the plain idle static portrait — Mona would have no way to tell
+          "Simli is trying to connect" from "nothing is happening" while
+          waiting the few seconds a real WebRTC handshake takes. Small,
+          non-blocking (pointer-events: none — never in the way of clicking
+          the mode toggle or anything else underneath). */}
+      {connState === "connecting" && (
+        <span className="portrait-connecting-badge" aria-live="polite">
+          جاري الاتصال بصورة أمين الحية...
+        </span>
+      )}
     </>
   );
 }

@@ -117,6 +117,24 @@
   }
 }
 
+/* Simli connecting-state badge — see PortraitAvatar.tsx. Sits below the
+   portrait, matching the waveform's own vertical slot below, never over
+   the face. */
+.portrait-connecting-badge {
+  position: absolute;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 /* --- Voice waveform, beneath the portrait -------------------------------- */
 
 .amin-presence-wave {
