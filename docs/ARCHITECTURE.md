@@ -1829,6 +1829,35 @@ overlap fixes apply to.
 | 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |
 | 7 | Mobile Companion (iOS, personal install only) — remote control over a private VPN mesh to the same core; see "Mobile Companion" above |
 
+## The new expression system fought with the speaking mouth (2026-08-28, same day)
+
+Found immediately from a real Mac screenshot Mona sent right after the
+expression fix shipped: mid-speech, jaw wide open, teeth showing far more
+than a normal open mouth — "هي دي تعبيرات الفم المتطابقة مع الكلام؟؟؟؟؟؟؟"
+(is *this* the mouth expressions that match the speech?). Real: the reply
+was tagged `happy` (`mouthSmileLeft`/`Right` at 0.9), and while she was
+actively speaking, `jawOpen` was simultaneously driven up to 0.55 by the
+audio-reactive viseme animation. Both landed on overlapping mouth
+geometry at the same time — a wide-open jaw *and* corners pulled up into
+a hard smile — and stacked into a distorted, stretched shape instead of
+reading as "happy while talking."
+
+Fixed by having `combineExpressions` zero out every mouth-shape target
+(`mouthSmileLeft/Right`, `mouthFrownLeft/Right`, `mouthPressLeft/Right`,
+`mouthShrugUpper` — `MOUTH_SHAPE_NAMES`) whenever `isSpeaking` is true,
+handing the mouth entirely to the jaw/viseme animation for the duration
+of the utterance. Brow/eye/cheek expression keeps running underneath
+unaffected — "happy" still reads in the eyes and brows while Amin talks,
+it just stops fighting the mouth shape speech already owns.
+
+Verified: `tsc`/`npm run build` clean. Visually re-confirmed with the
+same temporary test harness as the original expression fix (state=
+speaking, emotion=happy, `audioLevelBus.setAudioLevel` driven to simulate
+loudness): the mouth now shows a normal open-speaking shape with no
+smile distortion, while the same emotion at `state=idle` still shows the
+full smile exactly as before — the suppression is speech-gated, not a
+blanket removal of the happy expression.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

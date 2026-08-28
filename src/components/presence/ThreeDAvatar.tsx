@@ -104,12 +104,45 @@ const ALL_EXPRESSION_NAMES = [
   ...new Set([...Object.values(EMOTION_EXPRESSIONS), ...Object.values(STATE_EXPRESSIONS)].flatMap(Object.keys)),
 ];
 
+/** Every mouth-shape name either expression map can target — as opposed to
+ * the brow/eye/cheek ones, these directly reshape the same lips jawOpen
+ * and the viseme_* targets are already animating during speech. Real bug,
+ * a real Mac (2026-08-28): Mona's reply was tagged "happy" (mouthSmileLeft/
+ * Right at 0.9), and while she was actively speaking the jaw was
+ * simultaneously wide open for the audio-reactive viseme animation — the
+ * two combined into a distorted, overly wide, teeth-baring mouth that
+ * looked broken rather than expressive ("هي دي تعبيرات الفم المتطابقة مع
+ * الكلام؟؟؟"). Suppressing exactly these names while speaking (see
+ * combineExpressions below) hands the mouth entirely to the jaw/viseme
+ * animation for the duration of the utterance; brow/eye/cheek expression
+ * keeps running underneath the whole time, so "happy while talking" still
+ * reads in the eyes and brows, just not fighting over the mouth shape. */
+const MOUTH_SHAPE_NAMES = new Set([
+  "mouthSmileLeft",
+  "mouthSmileRight",
+  "mouthFrownLeft",
+  "mouthFrownRight",
+  "mouthPressLeft",
+  "mouthPressRight",
+  "mouthShrugUpper",
+]);
+
 /** Sums the emotion and state expression maps per blendshape name,
  * clamping each to 1 — two mild expressions stacking shouldn't be able to
- * exceed what a single strong one would look like. */
-function combineExpressions(emotion: ExpressionTargets, state: ExpressionTargets): Map<string, number> {
+ * exceed what a single strong one would look like. `suppressMouthShapes`
+ * zeroes every MOUTH_SHAPE_NAMES target instead of summing it — see that
+ * set's own comment for why (active speech already owns the mouth). */
+function combineExpressions(
+  emotion: ExpressionTargets,
+  state: ExpressionTargets,
+  suppressMouthShapes: boolean,
+): Map<string, number> {
   const combined = new Map<string, number>();
   for (const name of ALL_EXPRESSION_NAMES) {
+    if (suppressMouthShapes && MOUTH_SHAPE_NAMES.has(name)) {
+      combined.set(name, 0);
+      continue;
+    }
     combined.set(name, Math.min(1, (emotion[name] ?? 0) + (state[name] ?? 0)));
   }
   return combined;
@@ -416,6 +449,7 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       const expressionTargets = combineExpressions(
         EMOTION_EXPRESSIONS[emotionRef.current ?? "neutral"] ?? {},
         STATE_EXPRESSIONS[currentState],
+        isSpeaking,
       );
       for (const name of ALL_EXPRESSION_NAMES) {
         const target = expressionTargets.get(name) ?? 0;
