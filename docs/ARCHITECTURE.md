@@ -2276,6 +2276,33 @@ Verified with the usual temporary facetest harness (Playwright, forced
 framing scale): a natural talking aperture at peak loudness, no gape,
 harness deleted before commit as always. Not verified on her Mac yet.
 
+## Amin denying being Amin (2026-08-28)
+
+While the self-conversation-loop fixes sat locally awaiting Mona's push
+approval, her still-affected build produced a new symptom: Amin
+repeatedly telling her "أنا مش أمين، أنا مساعد ذكي من كلود". Consistent
+with the loop feeding the agent identity-confusing garbage as "user"
+input (echoed fragments of the diacritization tool's self-description
+among them) — confronted with input asserting a different identity, the
+underlying model broke persona and disclosed its substrate instead of
+staying أمين.
+
+The loop fix (already committed above) removes the trigger, but persona
+robustness shouldn't depend on inputs never being weird. Added an
+identity paragraph to `SYSTEM_PROMPT`: he is always أمين; being built on
+Claude is disclosed honestly *when asked what he's built on*, never
+volunteered as a replacement identity; and garbled/echoed input gets one
+short "قوليلي تاني؟" instead of being reasoned about as a real request —
+with the echo-leak failure mode described to the model explicitly, since
+it's a real property of this system, not a hypothetical. Honesty is
+preserved deliberately: the instruction distinguishes "never claim to
+not be Amin" from "never admit what you're built on" — the latter stays
+answerable, because lying to Mona about the substrate was never the
+goal, only the broken "I'm not Amin" framing.
+
+**Verified**: `cargo test` (114 passed). Prompt-only change; its real
+effect on persona stability is only observable in live replies.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
