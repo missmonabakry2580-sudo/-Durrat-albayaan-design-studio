@@ -15,6 +15,7 @@ mod notify;
 mod pipeline_test;
 mod policy;
 mod secrets;
+mod simli;
 mod tasks;
 mod tools;
 mod tray;
@@ -164,6 +165,13 @@ pub fn run() {
             commands::clear_elevenlabs_key,
             commands::get_elevenlabs_voice_id,
             commands::save_elevenlabs_voice_id,
+            commands::has_simli_key,
+            commands::save_simli_key,
+            commands::clear_simli_key,
+            commands::get_simli_face_id,
+            commands::save_simli_face_id,
+            commands::start_simli_session,
+            commands::synthesize_pcm_for_simli,
             commands::get_autonomy_level,
             commands::set_autonomy_level,
             commands::is_halted,

@@ -9,8 +9,8 @@ use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::{HandsFreeSession, VoiceSession};
 use crate::{
-    agent, audio_level, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks,
-    tools, verification, voice,
+    agent, audio_level, audit, brief, browser, elevenlabs, files, followups, memory, notify, simli,
+    tasks, tools, verification, voice,
 };
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
@@ -24,6 +24,19 @@ const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
 /// (Rachel, English) mangles Arabic and needs to be Mona's own choice
 /// from her ElevenLabs voice library, not guessed by this app.
 const ELEVENLABS_VOICE_ID_KEY: &str = "elevenlabs_voice_id";
+/// Optional — Portrait Mode's real-time talking avatar (see
+/// docs/ARCHITECTURE.md's "Visual modes" section and simli.rs). Stored the
+/// same way as the two keys above (local settings table, not the OS
+/// Keychain — see has_api_key's doc comment for why) for the same reason:
+/// consistency with an already-disclosed, already-accepted trade-off,
+/// not a new decision made for this key specifically. Entered once in
+/// Settings, never typed into a chat message or committed to Git.
+const SIMLI_KEY_NAME: &str = "simli_api_key";
+/// Which Simli avatar (faceId) to animate — a free preset while Mona is
+/// only proving the integration works at all, then her own custom face
+/// (built from src/assets/amin-identity.jpg) once she upgrades. See
+/// simli.rs for why this is never hardcoded.
+const SIMLI_FACE_ID_KEY: &str = "simli_face_id";
 
 /// Hands-free mode settings — see voice::start_hands_free and
 /// AminVoice.swift's `HandsFreeListener`. Off by default, every launch, on
@@ -230,6 +243,57 @@ pub fn clear_elevenlabs_key(db: State<Db>) -> Result<(), String> {
         None,
         None,
     )
+}
+
+#[tauri::command]
+pub fn has_simli_key(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, SIMLI_KEY_NAME)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn save_simli_key(key: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, SIMLI_KEY_NAME, key.trim())?;
+    audit::record(
+        &conn,
+        "user",
+        "save_simli_key",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn clear_simli_key(db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [SIMLI_KEY_NAME])
+        .map_err(|e| e.to_string())?;
+    audit::record(
+        &conn,
+        "user",
+        "clear_simli_key",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn get_simli_face_id(db: State<Db>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, SIMLI_FACE_ID_KEY).unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_simli_face_id(face_id: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, SIMLI_FACE_ID_KEY, face_id.trim())
 }
 
 #[tauri::command]
@@ -832,6 +896,70 @@ pub async fn speak_text(
 #[tauri::command]
 pub fn stop_speaking() -> Result<(), String> {
     voice::stop_speaking()
+}
+
+/// A free, shared preset face ("Doctor" — one of Simli's own published
+/// example faces, see docs.simli.com/api-reference/preset-faces) — used
+/// only while Mona proves the Simli integration itself works, per her own
+/// explicit instruction not to pay for a custom face until then. Once she
+/// upgrades and builds a real Amin face from amin-identity.jpg, saving
+/// that face ID via save_simli_face_id overrides this default.
+const SIMLI_DEFAULT_PRESET_FACE_ID: &str = "f0ba4efe-7946-45de-9955-c04a04c367b9";
+
+/// Starts a new Simli session and returns the short-lived session token —
+/// never the API key itself — for the frontend's WebRTC client
+/// (src/lib/simli/simliClient.ts) to open the signaling WebSocket with.
+/// See simli.rs's doc comment for why the WebRTC/audio-streaming half
+/// can't live here in Rust.
+#[tauri::command]
+pub async fn start_simli_session(db: State<'_, Db>) -> Result<String, String> {
+    let (api_key, face_id) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let key = get_setting(&conn, SIMLI_KEY_NAME).filter(|v| !v.trim().is_empty());
+        let face = get_setting(&conn, SIMLI_FACE_ID_KEY)
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| SIMLI_DEFAULT_PRESET_FACE_ID.to_string());
+        (key, face)
+    };
+    let Some(api_key) = api_key else {
+        return Err("مفيش Simli API key متحط في الإعدادات — دخّليه الأول".to_string());
+    };
+    simli::start_session(&api_key, &face_id).await
+}
+
+/// Synthesizes `text` as raw 16kHz/16-bit/mono PCM for the frontend to
+/// stream into an already-open Simli session — a separate command from
+/// speak_text because the two paths need the audio in fundamentally
+/// different shapes (a played file vs. raw bytes over a WebSocket), not
+/// because they use a different voice: same ElevenLabs key, same voice
+/// ID, same emotion tagging, same "one Amin voice" either way.
+#[tauri::command]
+pub async fn synthesize_pcm_for_simli(
+    text: String,
+    emotion: Option<String>,
+    db: State<'_, Db>,
+) -> Result<Vec<u8>, String> {
+    let text = agent::strip_markdown_for_speech(&text);
+    let text = agent::fix_pronunciation_for_speech(&text);
+
+    let (eleven_key, voice_id) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        (
+            get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
+            get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
+        )
+    };
+    let Some(key) = eleven_key else {
+        // Unlike speak_text, there is no on-device fallback here: the
+        // native AVSpeechSynthesizer path never hands Rust any audio
+        // bytes at all (see voice.rs), so there is nothing to send Simli
+        // without ElevenLabs configured. Disclosed plainly rather than
+        // silently producing silence.
+        return Err(
+            "Portrait Mode مع Simli محتاج مفتاح ElevenLabs متحط — الصوت المحلي (بدون ElevenLabs) مفيش منه بيانات صوت تتبعت لـ Simli".to_string(),
+        );
+    };
+    elevenlabs::synthesize_pcm16(&key, &text, voice_id.as_deref(), emotion.as_deref()).await
 }
 
 #[derive(serde::Serialize)]

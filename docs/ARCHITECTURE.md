@@ -1084,6 +1084,122 @@ wired up the same way 3D Mode already is: swappable, same Amin Core.
 the new official photo, static — no blink, no lip movement yet. This is
 disclosed as incomplete, not presented as done.
 
+## Simli integration: Portrait Mode's real lip-sync engine (2026-08-28)
+
+Mona's condition before spending anything: prove the integration itself
+works on Simli's free plan (a shared preset face) before she upgrades to
+build a custom Amin face. This section documents what was actually built
+and — since a real API key was deliberately never shared into this
+session (Mona's own explicit requirement, see below) — exactly which
+parts that let verify for real versus which parts still need her to run
+it once.
+
+### Where the key lives
+
+Same pattern as the Anthropic and ElevenLabs keys (see `has_api_key`'s
+doc comment in commands.rs): a local settings-table entry, entered once
+in Amin's own Settings panel, never typed into a chat message, never
+committed to Git or baked into the binary. Not the OS Keychain — that
+was tried for the Anthropic key first and failed reproducibly on a real
+Mac (see secrets.rs), so Mona already made this trade-off knowingly; a
+third secret doesn't reopen that decision. `SIMLI_KEY_NAME =
+"simli_api_key"`, `SIMLI_FACE_ID_KEY = "simli_face_id"` in commands.rs;
+`has_simli_key`/`save_simli_key`/`clear_simli_key`/`get_simli_face_id`/
+`save_simli_face_id` Tauri commands; a Settings field identical in shape
+to the ElevenLabs one. Leaving the face ID blank uses
+`SIMLI_DEFAULT_PRESET_FACE_ID` — Simli's own published free "Doctor"
+preset face — exactly as instructed: prove it works before paying for a
+custom one.
+
+### Why the WebRTC half has to live in the webview
+
+This is the one deliberate exception to "the frontend never reaches the
+network directly" (see Cargo.toml's reqwest comment) — `connect-src` in
+tauri.conf.json now also allows `https://api.simli.ai` and
+`wss://api.simli.ai`, nothing else. The reason: Simli's real protocol
+(confirmed against their actual OpenAPI spec and docs, not a summary)
+carries both the WebRTC signaling *and* the raw outgoing audio frames
+over the *same* WebSocket — `wss://api.simli.ai/compose/webrtc/peer_to_peer?session_token=...`.
+WebRTC (`RTCPeerConnection`) is a browser API with no equivalent in this
+Rust codebase, and since signaling and audio share one socket, there's
+no way to keep audio-sending in Rust while only handing the frontend a
+finished video element. So the whole client — opening the socket,
+creating the offer, sending the SDP, receiving the answer, and streaming
+audio bytes once connected — runs in `src/lib/simli/simliClient.ts`,
+written directly against Simli's documented plain-WebRTC protocol rather
+than their `simli-client` npm package (whose docs only show the
+LiveKit-backed path, with no version pinned). Rust's `simli.rs` does
+exactly one thing: exchange the long-lived API key for a short-lived
+session token via `POST https://api.simli.ai/compose/token` — that
+token, not the key, is what reaches the webview.
+
+### A real bug, caught by testing against Simli's live server with an
+### invalid key — not by trusting their docs
+
+Simli's own published error example is `{"session_token":"FAIL
+TOKEN","detail":"..."}`. Checking that shape looked sufficient — until
+an actual `curl` against `api.simli.ai` with a deliberately wrong key
+(not a real credential) came back **HTTP 401** with a *different*,
+non-empty, real-looking `session_token` string plus
+`detail:"INVALID_API_KEY"`. A body-only check would have silently
+treated this exact failure as success. Fixed by checking
+`response.status()` first, matching how `elevenlabs::synthesize`
+already does it — and kept as `simli::tests::a_real_invalid_key_is_rejected_by_the_live_endpoint`,
+an `#[ignore]`d test (network-dependent, and this repo's CI never runs
+`cargo test` at all — see build-macos.yml) that reproduces the exact
+call for anyone re-verifying this later.
+
+### One shared voice, one audio source — not two playing at once
+
+`elevenlabs::synthesize_pcm16` asks ElevenLabs for `output_format=pcm_16000`
+(confirmed against ElevenLabs' own API docs) — raw 16-bit/16kHz/mono PCM,
+the exact format Simli's docs specify, with no manual resampling step to
+get wrong. `commands::synthesize_pcm_for_simli` uses the *same* stored
+ElevenLabs key, voice ID, and emotion-tagging as `speak_text` — one Amin
+voice, a different byte shape for a different transport, never a
+different voice. When Portrait Mode's Simli session is connected,
+`App.tsx`'s `speak()` sends audio there instead of through local
+`afplay`, because Simli's WebRTC connection returns audio bundled with
+its lip-synced video (recvonly audio+video transceivers) — playing local
+`afplay` audio *at the same time* would mean Mona hears Amin's voice
+twice, once instantly and once delayed by the network round-trip. Any
+Simli failure (not configured, session dead, network error) falls back
+to the exact same local `speakText` path 3D Mode always uses, with one
+disclosed banner — a visual feature failing must never cost Mona the
+ability to hear Amin at all.
+
+### Session continuity across mode switches
+
+`src/lib/simli/simliSession.ts` is a module-level singleton, not tied to
+any component's mount lifecycle — switching `visualMode` between "3d"
+and "portrait" never tears down or reconnects it. It also never connects
+proactively: `PortraitAvatar.tsx` registers its `<video>` element on
+mount but does **not** call `ensureConnected()` there, specifically
+because that component also renders during the splash screen and every
+time Portrait Mode is shown — connecting on every one of those would
+burn through Simli's free-tier minutes before Amin ever says a word.
+Connection happens lazily, inside `speakViaSimli`, the first time there
+is something real to say.
+
+### What's verified for real, and what still needs Mona's one test
+
+**Verified against Simli's real, live server in this session** (not
+assumed from docs): the exact REST request this code sends is accepted
+by their endpoint, and the exact failure mode for a bad key is now
+handled correctly (see the bug above) — this is a genuine, if narrow,
+live integration test.
+
+**Not verifiable without Mona's own key**, and not faked as passing: the
+actual SDP offer/answer exchange, whether Simli's answer is accepted and
+a real video track arrives, whether the free preset face's lip-sync
+looks natural, and real end-to-end latency. Every line of
+`simliClient.ts` was written directly against Simli's own documented
+message shapes, but a *live* WebRTC handshake needs a real session token
+this session was deliberately never given — Mona's own explicit
+requirement, honored rather than worked around. The one, single test
+this needs from her: paste a free Simli API key into Settings, open
+Portrait Mode, and let Amin say one thing.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

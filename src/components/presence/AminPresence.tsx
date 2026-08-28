@@ -1,5 +1,5 @@
 import { useState } from "react";
-import identityImage from "../../assets/amin-identity.jpg";
+import { PortraitAvatar } from "./PortraitAvatar";
 import { ThreeDAvatar } from "./ThreeDAvatar";
 import { AMIN_STATE_LABELS, type AminState } from "./types";
 import type { VisualMode } from "../../lib/visual/visualMode";
@@ -67,7 +67,7 @@ export function AminPresence({
       {showThreeD ? (
         <ThreeDAvatar className="amin-presence-portrait amin-presence-portrait-3d" state={state} onFailure={handleFailure} />
       ) : (
-        <img className="amin-presence-portrait" src={identityImage} alt="" aria-hidden="true" />
+        <PortraitAvatar className="amin-presence-portrait" />
       )}
       <div className="amin-presence-wave" aria-hidden="true">
         {WAVE_BARS.map((i) => (

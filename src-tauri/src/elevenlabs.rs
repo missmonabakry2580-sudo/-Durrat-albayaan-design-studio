@@ -102,6 +102,48 @@ pub async fn synthesize(
         .map_err(|e| format!("couldn't read ElevenLabs audio: {e}"))
 }
 
+/// Same call as `synthesize`, but asks ElevenLabs for raw, headerless
+/// 16-bit/16kHz/mono PCM (`output_format=pcm_16000`) instead of MP3 — the
+/// exact format Simli's real-time avatar requires audio in (confirmed
+/// against Simli's own docs: "raw PCM, Int16, 16000 Hz, mono"). Requesting
+/// this natively from ElevenLabs, rather than decoding MP3 and resampling
+/// it ourselves (see audio_level.rs's decode path, used only for the 3D
+/// avatar's loudness meter), avoids a resampling step entirely — one less
+/// place for a subtle pitch/speed bug to hide.
+pub async fn synthesize_pcm16(
+    api_key: &str,
+    text: &str,
+    voice_id: Option<&str>,
+    emotion: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{ELEVENLABS_TTS_URL}/{voice_id}?output_format=pcm_16000"))
+        .header("xi-api-key", api_key)
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "text": text,
+            "model_id": MODEL_ID,
+            "voice_settings": voice_settings_for_emotion(emotion),
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("couldn't reach ElevenLabs: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("ElevenLabs API error ({status}): {body}"));
+    }
+
+    response
+        .bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("couldn't read ElevenLabs PCM audio: {e}"))
+}
+
 /// The first WebSocket message per ElevenLabs' stream-input protocol:
 /// establishes voice settings and generation config for the whole
 /// utterance. `text` must be non-empty per their docs even though no real

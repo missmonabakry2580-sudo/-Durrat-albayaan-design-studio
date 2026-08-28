@@ -54,6 +54,36 @@ export const getElevenLabsVoiceId = () => invoke<string>("get_elevenlabs_voice_i
 export const saveElevenLabsVoiceId = (voiceId: string) =>
   invoke<void>("save_elevenlabs_voice_id", { voiceId });
 
+/** Optional — Portrait Mode's real-time talking avatar (see
+ * docs/ARCHITECTURE.md "Visual modes"). Stored the same way as the two
+ * keys above (local settings table, not the OS Keychain — a known,
+ * already-disclosed trade-off, not a new one made for this key). Entered
+ * once in Settings; never typed into a chat message or committed to Git. */
+export const hasSimliKey = () => invoke<boolean>("has_simli_key");
+export const saveSimliKey = (key: string) => invoke<void>("save_simli_key", { key });
+export const clearSimliKey = () => invoke<void>("clear_simli_key");
+
+/** Which Simli avatar (faceId) to animate — empty means the free preset
+ * baked into commands.rs (SIMLI_DEFAULT_PRESET_FACE_ID). Set to a custom
+ * face ID once Mona upgrades and builds one from amin-identity.jpg. */
+export const getSimliFaceId = () => invoke<string>("get_simli_face_id");
+export const saveSimliFaceId = (faceId: string) => invoke<void>("save_simli_face_id", { faceId });
+
+/** Starts a new Simli session using the stored key/face ID and returns a
+ * short-lived session token — the API key itself never leaves Rust. See
+ * src/lib/simli/simliClient.ts for what the frontend does with it. */
+export const startSimliSession = () => invoke<string>("start_simli_session");
+
+/** Synthesizes `text` as raw PCM16/16kHz/mono bytes for streaming into an
+ * already-open Simli session. Same ElevenLabs key/voice/emotion as
+ * speakText — a different audio *shape* for a different transport, not a
+ * different voice. Tauri's IPC serializes Rust's `Vec<u8>` as a plain
+ * JSON array of byte values (serde's default, no base64 involved) —
+ * `new Uint8Array(await synthesizePcmForSimli(...))` is the whole
+ * conversion needed on this side. */
+export const synthesizePcmForSimli = (text: string, emotion?: string | null) =>
+  invoke<number[]>("synthesize_pcm_for_simli", { text, emotion: emotion ?? null });
+
 export const getAutonomyLevel = () => invoke<AutonomyLevel>("get_autonomy_level");
 export const setAutonomyLevel = (level: AutonomyLevel) =>
   invoke<void>("set_autonomy_level", { level });

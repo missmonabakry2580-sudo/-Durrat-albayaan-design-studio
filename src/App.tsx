@@ -7,6 +7,7 @@ import { Splash } from "./components/splash/Splash";
 import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
 import { resetAudioLevel, setAudioLevel } from "./lib/visual/audioLevelBus";
+import { speakViaSimli, stopSimliSpeaking } from "./lib/simli/simliSession";
 import { getStoredVisualMode, setStoredVisualMode, type VisualMode } from "./lib/visual/visualMode";
 import {
   type AppInfo,
@@ -21,6 +22,7 @@ import {
   clearAgentConversation,
   clearApiKey,
   clearElevenLabsKey,
+  clearSimliKey,
   createFollowUp,
   createTask,
   deleteWorkspaceFile,
@@ -30,8 +32,10 @@ import {
   getElevenLabsVoiceId,
   getHandsFreeSettings,
   getPendingAction,
+  getSimliFaceId,
   hasApiKey,
   hasElevenLabsKey,
+  hasSimliKey,
   isHalted,
   listAuditLog,
   listDueFollowUps,
@@ -44,6 +48,8 @@ import {
   saveElevenLabsKey,
   saveElevenLabsVoiceId,
   saveHandsFreePhrases,
+  saveSimliFaceId,
+  saveSimliKey,
   sendAgentMessage,
   setAutonomyLevel,
   setFollowUpStatus,
@@ -132,6 +138,9 @@ function App() {
   const [elevenLabsKeySaved, setElevenLabsKeySaved] = useState(false);
   const [elevenLabsKeyInput, setElevenLabsKeyInput] = useState("");
   const [elevenLabsVoiceIdInput, setElevenLabsVoiceIdInput] = useState("");
+  const [simliKeySaved, setSimliKeySaved] = useState(false);
+  const [simliKeyInput, setSimliKeyInput] = useState("");
+  const [simliFaceIdInput, setSimliFaceIdInput] = useState("");
   const [lastEmotion, setLastEmotion] = useState<string | null>(null);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
   const [handsFreeBusy, setHandsFreeBusy] = useState(false);
@@ -207,11 +216,12 @@ function App() {
     // others — a single Promise.all would let one rejection blank out
     // everything, including the API key badge that has nothing to do with
     // it. Each piece of state updates independently instead.
-    const [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList, pending] =
+    const [i, hasKey, hasElevenKey, hasSimli, level, killed, log, taskList, files, dueList, pending] =
       await Promise.allSettled([
         appInfo(),
         hasApiKey(),
         hasElevenLabsKey(),
+        hasSimliKey(),
         getAutonomyLevel(),
         isHalted(),
         listAuditLog(10),
@@ -223,6 +233,7 @@ function App() {
     if (i.status === "fulfilled") setInfo(i.value);
     if (hasKey.status === "fulfilled") setKeySaved(hasKey.value);
     if (hasElevenKey.status === "fulfilled") setElevenLabsKeySaved(hasElevenKey.value);
+    if (hasSimli.status === "fulfilled") setSimliKeySaved(hasSimli.value);
     if (level.status === "fulfilled") setAutonomy(level.value);
     if (killed.status === "fulfilled") setHalted(killed.value);
     if (log.status === "fulfilled") setAuditLog(log.value);
@@ -231,7 +242,7 @@ function App() {
     if (dueList.status === "fulfilled") setDueFollowUps(dueList.value);
     if (pending.status === "fulfilled") setPendingAction(pending.value);
 
-    const firstFailure = [i, hasKey, hasElevenKey, level, killed, log, taskList, files, dueList, pending].find(
+    const firstFailure = [i, hasKey, hasElevenKey, hasSimli, level, killed, log, taskList, files, dueList, pending].find(
       (r) => r.status === "rejected",
     );
     setError(firstFailure ? String((firstFailure as PromiseRejectedResult).reason) : null);
@@ -251,6 +262,7 @@ function App() {
         setClosePhraseInput(s.close_phrase);
       });
       getElevenLabsVoiceId().then(setElevenLabsVoiceIdInput);
+      getSimliFaceId().then(setSimliFaceIdInput);
       // Silent on failure (e.g. offline, or the update endpoint has
       // nothing newer) — this is a background convenience check, not
       // something that should ever interrupt Mona with an error banner
@@ -424,6 +436,22 @@ function App() {
     }
   }
 
+  async function handleSaveSimliKey() {
+    if (!simliKeyInput.trim()) return;
+    await saveSimliKey(simliKeyInput.trim());
+    setSimliKeyInput("");
+    await refresh();
+  }
+
+  async function handleClearSimliKey() {
+    await clearSimliKey();
+    await refresh();
+  }
+
+  async function handleSaveSimliFaceId() {
+    await saveSimliFaceId(simliFaceIdInput.trim());
+  }
+
   async function handleToggleHandsFree() {
     if (handsFreeBusy) return;
     setHandsFreeBusy(true);
@@ -462,24 +490,46 @@ function App() {
     await refresh();
   }
 
-  /** Speaks Amin's reply aloud. `voice://speaking-finished` (listened to
-   * above) resets aminState to idle when the real speech ends; the timeout
-   * here is only a safety net for when speaking never actually starts
-   * (engine missing, TTS failure) so Amin doesn't stay stuck mid-state. */
+  /** Speaks Amin's reply aloud. In Portrait Mode, tries Simli first so the
+   * live video actually lip-syncs to this reply — but Simli is a network
+   * service Mona hasn't necessarily configured (or that can fail for
+   * reasons unrelated to Amin himself), and a visual feature must never
+   * cost her the ability to hear Amin at all. Any Simli failure falls
+   * back to the exact same local playback 3D Mode always uses, with one
+   * disclosed banner rather than silent, unexplained silence.
+   * `voice://speaking-finished` (listened to above) resets aminState for
+   * the local path; the Simli path has no such event (it never goes
+   * through Rust's afplay thread), so its own promise resolving does the
+   * same reset here instead. The timeout is only a safety net for when
+   * speaking never actually starts on either path. */
   function speak(text: string, emotion?: string | null) {
     if (!inTauri) return;
-    speakText(text, emotion).catch((e) => {
+    const finishSpeaking = () => {
+      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+      resetAudioLevel();
+    };
+    const attempt =
+      visualMode === "portrait"
+        ? speakViaSimli(text, emotion)
+            .then(finishSpeaking)
+            .catch((simliError) => {
+              setVoiceError(
+                `Portrait Mode (Simli) ما اشتغلش، أمين هيتكلم بالطريقة العادية: ${String(simliError)}`,
+              );
+              return speakText(text, emotion);
+            })
+        : speakText(text, emotion);
+    attempt.catch((e) => {
       setVoiceError(`تعذّر نطق الرد: ${String(e)}`);
-      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+      finishSpeaking();
     });
-    setTimeout(() => {
-      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
-    }, 25000);
+    setTimeout(finishSpeaking, 25000);
   }
 
   /** Interrupts Amin mid-reply — there was no way to do this at all before;
    * only the "wait it out" option existed. */
   async function handleStopSpeaking() {
+    stopSimliSpeaking();
     try {
       await stopSpeaking();
     } catch (e) {
@@ -1120,6 +1170,52 @@ function App() {
                       </div>
                       {voiceIdSaveStatus && <p className="text-muted">{voiceIdSaveStatus}</p>}
                     </>
+                  )}
+
+                  <div className="field-row">
+                    <span className="field-label">أمين بصورة حقيقية بتتكلم (Simli — Portrait Mode)</span>
+                    <span className={simliKeySaved ? "badge badge-success" : "badge"}>
+                      {simliKeySaved ? "متحط" : "مش متحط"}
+                    </span>
+                  </div>
+                  <p className="text-muted">
+                    اختياري — بيحرّك شفاه صورة أمين لحظيًا مع كلامه الفعلي في وضع الصورة (Portrait
+                    Mode). محتاج حساب مجاني من simli.com: سجّلي، اعملي API key من الداشبورد،
+                    والصقيه هنا. المفتاح بيتحفظ على جهازك بس، وميترفعش على GitHub ولا يتحط في الكود
+                    أبدًا.
+                  </p>
+                  <div className="field-row">
+                    <input
+                      type="password"
+                      placeholder="Simli API key"
+                      value={simliKeyInput}
+                      onChange={(e) => setSimliKeyInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                    <button onClick={handleSaveSimliKey} disabled={!inTauri || !simliKeyInput.trim()}>
+                      حفظ
+                    </button>
+                    <button onClick={handleClearSimliKey} disabled={!inTauri || !simliKeySaved}>
+                      مسح
+                    </button>
+                  </div>
+                  {simliKeySaved && (
+                    <div className="field-row">
+                      <label className="field-label" htmlFor="simli-face-id-input">
+                        Simli Face ID (سيبيه فاضي = preset مجاني للاختبار)
+                      </label>
+                      <input
+                        id="simli-face-id-input"
+                        type="text"
+                        placeholder="مثال: preset مجاني افتراضيًا"
+                        value={simliFaceIdInput}
+                        onChange={(e) => setSimliFaceIdInput(e.currentTarget.value)}
+                        disabled={!inTauri}
+                      />
+                      <button onClick={handleSaveSimliFaceId} disabled={!inTauri}>
+                        حفظ
+                      </button>
+                    </div>
                   )}
 
                   <div className="field-row">
