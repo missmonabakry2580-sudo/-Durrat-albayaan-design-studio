@@ -65,7 +65,12 @@ export function AminPresence({
     >
       <div className="amin-presence-glow" aria-hidden="true" />
       {showThreeD ? (
-        <ThreeDAvatar className="amin-presence-portrait amin-presence-portrait-3d" state={state} onFailure={handleFailure} />
+        <ThreeDAvatar
+          className="amin-presence-portrait amin-presence-portrait-3d"
+          state={state}
+          emotion={emotion}
+          onFailure={handleFailure}
+        />
       ) : (
         <PortraitAvatar className="amin-presence-portrait" />
       )}

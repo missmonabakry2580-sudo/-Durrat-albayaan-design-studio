@@ -306,6 +306,26 @@ pub fn speak(app: AppHandle, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Kills whatever `afplay` process `AFPLAY_PID` currently points at, if
+/// any, and clears the slot. A real bug from a real Mac (2026-08-28, Mona:
+/// "كلام الـ3D بيتداخل صوته... كإن في صوتين داخلين جوه بعض" — the 3D's
+/// speech overlaps, like two voices inside each other): `AFPLAY_PID` only
+/// ever tracked the *latest* spawned process, so if `speak_text` somehow
+/// ran twice in close succession (e.g. Enter and a button both firing off
+/// one stale `agentBusy` read before either state update had committed —
+/// a real React race, not confirmed as *the* trigger here but a real one
+/// nonetheless), nothing ever stopped the first `afplay` before the second
+/// one started — both played the same reply on top of each other. Calling
+/// this immediately before spawning a new `afplay` (see
+/// `elevenlabs::play`) guarantees at most one is ever running, regardless
+/// of what caused a second `speak_text` call to happen.
+pub fn kill_current_afplay() {
+    let pid = AFPLAY_PID.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+    }
+}
+
 /// Stops any in-progress speech immediately — whichever voice is actually
 /// speaking, on-device or ElevenLabs. A no-op if nothing is speaking.
 /// Also clears hands-free's "Amin is currently saying X" state — without
@@ -321,10 +341,7 @@ pub fn stop_speaking() -> Result<(), String> {
             }
         }
     }
-    let pid = AFPLAY_PID.lock().ok().and_then(|mut guard| guard.take());
-    if let Some(pid) = pid {
-        let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
-    }
+    kill_current_afplay();
     set_audio_level_cancel(None);
     set_hands_free_speaking(None);
     Ok(())

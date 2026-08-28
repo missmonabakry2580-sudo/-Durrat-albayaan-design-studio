@@ -449,7 +449,15 @@ pub async fn synthesize_streaming(
 /// `commands::stop_speaking` can interrupt it — without this, "stop
 /// speaking" would only ever reach the on-device engine and silently do
 /// nothing while an ElevenLabs reply was playing.
+///
+/// Kills whatever `afplay` might already be running first (see
+/// `voice::kill_current_afplay`'s comment) — a real bug, a real Mac,
+/// Mona: "كلام الـ3D بيتداخل صوته... كإن في صوتين داخلين جوه بعض". Without
+/// this, two overlapping `speak_text` calls each spawn their own `afplay`
+/// and both play at once; this guarantees at most one ever runs.
 pub fn play(audio: &[u8]) -> Result<(), String> {
+    crate::voice::kill_current_afplay();
+
     let mut path = std::env::temp_dir();
     path.push(format!("amin-speech-{}.mp3", uuid::Uuid::new_v4()));
     std::fs::write(&path, audio).map_err(|e| format!("couldn't write speech audio: {e}"))?;

@@ -6,10 +6,113 @@ import type { AminState } from "./types";
 
 interface ThreeDAvatarProps {
   state: AminState;
+  /** The tone Claude tagged its own reply with (agent.rs's KNOWN_EMOTIONS —
+   * happy/calm/concerned/excited/apologetic/serious/playful/neutral), or
+   * null/undefined when the last reply carried none. Drives
+   * EMOTION_EXPRESSIONS below; an unrecognized value just falls through to
+   * no expression rather than guessing one. */
+  emotion?: string | null;
   className?: string;
   /** Fired once if the model fails to load or WebGL isn't available, so the
    * caller can fall back to Portrait mode instead of showing a blank box. */
   onFailure: (reason: string) => void;
+}
+
+/** A named subset of the rig's 52 ARKit blendshapes (see
+ * scripts/facial-rig/required-targets.mjs for the full list this model was
+ * validated against) — deliberately excludes every name the blink/gaze/
+ * mouth logic further down already owns every frame (eyeBlinkLeft/Right,
+ * eyeLook{Up,Down,In,Out}{Left,Right}, jawOpen, and every viseme_* name),
+ * so this expression layer and that one never fight over the same morph
+ * target.
+ *
+ * Real bug this fixes, a real Mac (2026-08-28), Mona: "مفيش اي تعبيرات
+ * بتصدر من وجهه إلا فم بيفتح لفوق وينزل لتحت فقط" (no expressions at all
+ * come from his face except a mouth that opens and closes) — accurate:
+ * before this, ThreeDAvatar never received the `emotion` prop at all
+ * (AminPresence tracked it but never passed it down), and nothing in the
+ * animate() loop touched a single brow/mouth-shape morph target tied to
+ * state or emotion. Both gaps are fixed here, not just one — the emotion
+ * plumbing (AminPresence → ThreeDAvatar) and the actual expression logic
+ * that uses it. */
+type ExpressionTargets = Record<string, number>;
+
+/** Amin's 8 real, disclosed emotions, each a resting facial expression.
+ * Claude tags at most one of these per reply — never invented, never
+ * guessed from tone-of-text analysis this file has no way to do.
+ *
+ * Intensities pushed toward the top of the 0-1 range deliberately, found
+ * by directly inspecting this exact .glb's own vertex data (not guessed):
+ * `mouthSmileLeft`'s sparse morph target moves its ~2500 affected
+ * vertices by at most ~8mm, versus `jawOpen`'s ~35mm — these blendshapes
+ * are real (present, correctly named, correctly wired — confirmed via
+ * morphTargetDictionary and by rendering a diff of two screenshots at
+ * 0.55, which did show a real, measured pixel difference), just visually
+ * subtle at Meshy's sculpted magnitude. A value that would read as an
+ * obvious smile on a rig with stronger deltas was imperceptible at a
+ * glance here; these values are calibrated against actual screenshots of
+ * this model, not a generic assumption about what "0.6" should look
+ * like. */
+const EMOTION_EXPRESSIONS: Record<string, ExpressionTargets> = {
+  happy: { mouthSmileLeft: 0.9, mouthSmileRight: 0.9, cheekSquintLeft: 0.6, cheekSquintRight: 0.6 },
+  excited: {
+    mouthSmileLeft: 0.8,
+    mouthSmileRight: 0.8,
+    browOuterUpLeft: 0.75,
+    browOuterUpRight: 0.75,
+    browInnerUp: 0.6,
+    eyeWideLeft: 0.55,
+    eyeWideRight: 0.55,
+  },
+  concerned: { browDownLeft: 0.65, browDownRight: 0.65, browInnerUp: 0.55, mouthFrownLeft: 0.55, mouthFrownRight: 0.55 },
+  apologetic: { browInnerUp: 0.75, mouthFrownLeft: 0.4, mouthFrownRight: 0.4, eyeSquintLeft: 0.25, eyeSquintRight: 0.25 },
+  serious: { browDownLeft: 0.55, browDownRight: 0.55, mouthPressLeft: 0.4, mouthPressRight: 0.4 },
+  // An asymmetric smile (left corner up more than right) reads as a smirk
+  // rather than a plain smile — the one deliberately lopsided expression
+  // here, matching what "playful" is supposed to feel like.
+  playful: { mouthSmileLeft: 0.85, mouthSmileRight: 0.5, browOuterUpRight: 0.6 },
+  calm: {},
+  neutral: {},
+};
+
+/** Amin's own cognitive state (types.ts), layered on top of whichever
+ * emotion expression above is currently resting — additive per morph
+ * target (summed, then clamped to 1 in the blend loop) rather than one
+ * replacing the other, so "thinking" while the last reply was "concerned"
+ * reads as both at once instead of either erasing the other. */
+const STATE_EXPRESSIONS: Record<AminState, ExpressionTargets> = {
+  idle: {},
+  // Kept deliberately mild — these two are meant to read as calm
+  // background attentiveness during long stretches of hands-free
+  // listening, not a strong expression fighting for attention.
+  armed: { browInnerUp: 0.2, eyeWideLeft: 0.15, eyeWideRight: 0.15 },
+  listening: { browInnerUp: 0.3, eyeWideLeft: 0.25, eyeWideRight: 0.25 },
+  thinking: { browInnerUp: 0.5, browDownLeft: 0.3 },
+  planning: { browInnerUp: 0.4, browDownLeft: 0.25 },
+  executing: { browDownLeft: 0.35, browDownRight: 0.35 },
+  speaking: {},
+  success: { mouthSmileLeft: 0.6, mouthSmileRight: 0.6, browOuterUpLeft: 0.35, browOuterUpRight: 0.35 },
+  warning: { browDownLeft: 0.65, browDownRight: 0.65, mouthFrownLeft: 0.45, mouthFrownRight: 0.45 },
+  waiting: { mouthShrugUpper: 0.25 },
+};
+
+/** Every blendshape name either map above ever targets — computed once so
+ * the animate() loop can lerp each of them toward 0 the instant neither
+ * the current emotion nor the current state asks for it anymore, instead
+ * of leaving a stale expression stuck on the face after a state change. */
+const ALL_EXPRESSION_NAMES = [
+  ...new Set([...Object.values(EMOTION_EXPRESSIONS), ...Object.values(STATE_EXPRESSIONS)].flatMap(Object.keys)),
+];
+
+/** Sums the emotion and state expression maps per blendshape name,
+ * clamping each to 1 — two mild expressions stacking shouldn't be able to
+ * exceed what a single strong one would look like. */
+function combineExpressions(emotion: ExpressionTargets, state: ExpressionTargets): Map<string, number> {
+  const combined = new Map<string, number>();
+  for (const name of ALL_EXPRESSION_NAMES) {
+    combined.set(name, Math.min(1, (emotion[name] ?? 0) + (state[name] ?? 0)));
+  }
+  return combined;
 }
 
 const MODEL_URL = "/models/amin_facial_rig.glb";
@@ -64,10 +167,12 @@ function lerp(current: number, target: number, damping: number): number {
  * documented tongueOut gap) and no facial-expression animation clips —
  * only what's listed above is real; nothing else is faked.
  */
-export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps) {
+export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAvatarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const emotionRef = useRef(emotion);
+  emotionRef.current = emotion;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -113,6 +218,11 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
     const sil = { current: 1 };
     const blink = { value: 0, timer: 1 + Math.random() * 2, phase: "waiting" as "waiting" | "closing" | "opening" };
     const gaze = { x: 0, y: 0, targetX: 0, targetY: 0, timer: 1 };
+    // This frame's smoothed value per expression blendshape (brows, mouth
+    // shape — never blink/gaze/jaw/viseme, which stay owned by the logic
+    // below). Persists across frames within this one mount so each morph
+    // eases toward its target instead of snapping.
+    const expressionCurrent = new Map<string, number>(ALL_EXPRESSION_NAMES.map((name) => [name, 0]));
     const clock = new THREE.Clock();
 
     function resize() {
@@ -298,6 +408,22 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
       setMorph(faceMeshes, "viseme_aa", jaw.current * wobble * 0.6);
       setMorph(faceMeshes, "viseme_oh", jaw.current * (1 - wobble) * 0.5);
 
+      // --- Facial expression: emotion + cognitive state, on real brow/
+      // mouth-shape blendshapes (see EMOTION_EXPRESSIONS/STATE_EXPRESSIONS
+      // above) — every other ARKit target this rig carries besides the
+      // blink/gaze/jaw/viseme ones already driven above. Eased toward its
+      // target rather than snapped, same damping style as the mouth.
+      const expressionTargets = combineExpressions(
+        EMOTION_EXPRESSIONS[emotionRef.current ?? "neutral"] ?? {},
+        STATE_EXPRESSIONS[currentState],
+      );
+      for (const name of ALL_EXPRESSION_NAMES) {
+        const target = expressionTargets.get(name) ?? 0;
+        const current = lerp(expressionCurrent.get(name) ?? 0, target, 1 - Math.pow(0.0006, dt));
+        expressionCurrent.set(name, current);
+        setMorph(faceMeshes, name, current);
+      }
+
       renderer.render(scene, camera);
     }
     animate();
@@ -319,8 +445,9 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
         container.removeChild(renderer.domElement);
       }
     };
-    // Deliberately mount once — `state` changes are read every frame via
-    // stateRef so a new turn never re-triggers a full model reload.
+    // Deliberately mount once — `state` and `emotion` changes are read
+    // every frame via stateRef/emotionRef so a new turn never re-triggers
+    // a full model reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

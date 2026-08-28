@@ -1709,6 +1709,85 @@ diacritized Arabic for any reply, not just the six known words — that is
 the concrete, visible thing to check for on her own Mac, separate from
 whether the audio itself sounds right.
 
+## Two real bugs from the same Mac session (2026-08-28): overlapping speech, and a face with no expressions
+
+Mona, verbatim: "كلام الـ3D بيتداخل صوته في بعض أكثر من مرة وكإن في صوتين
+داخلين جوه بعض" (the 3D's speech overlaps more than once, like two voices
+inside each other) and, separately, "مفيش اي تعبيرات بتصدر من وجهه إلا فم
+بيفتح لفوق وينزل ل تحت فقط... هي دي تعبيرات وجه اللي غلبتني وطلعت روحي
+عشان تخليني ابنيها لك في الملف؟؟؟" (no expressions at all come from his
+face except a mouth that opens and closes — is this what exhausted me
+building that rig file for you?). Both real, both fixed this session.
+
+**Overlapping speech.** `voice::AFPLAY_PID` only ever tracked the most
+recently spawned `afplay` process, with nothing stopping whichever one was
+already running before a new `speak_text` call spawned another —
+`elevenlabs::play` just wrote a new pid over the old one. If `speak_text`
+ever ran twice in close succession for any reason (a real candidate,
+though not confirmed as *the* trigger: `voice://final` and
+`voice://hands-free-barge-in` are two separate event listeners in
+`App.tsx` that can both call `handleSendToAgent`, and its `agentBusy`
+guard is a React state read that two handlers firing in the same tick
+could both see as stale `false`), the first `afplay` kept playing while
+the second one started — the same reply, twice, out of sync. Fixed with
+`voice::kill_current_afplay()`, called unconditionally at the top of
+`elevenlabs::play` before spawning anything: at most one `afplay` process
+can ever be alive now, regardless of what caused a second `speak_text`
+call. `stop_speaking` was refactored to call the same function rather
+than duplicating the kill logic.
+
+**No facial expressions.** Two separate gaps, both real, both needed
+fixing together — fixing only one would have looked the same as fixing
+neither:
+1. `AminPresence` tracked an `emotion` prop the whole time but never
+   passed it to `ThreeDAvatar` — the 3D renderer had literally no way to
+   know Claude's tagged mood for a reply.
+2. Even with emotion wired through, nothing in `ThreeDAvatar`'s
+   `animate()` loop ever touched a brow or mouth-shape blendshape tied to
+   state or emotion — only blink, gaze, head sway, and jaw/viseme (the
+   mouth Mona was seeing) were ever driven.
+
+Fixed by adding `EMOTION_EXPRESSIONS` (one resting expression per each of
+`agent.rs`'s 8 real, disclosed emotions) and `STATE_EXPRESSIONS` (one per
+`AminState`), combined additively and eased toward every frame — using
+only ARKit blendshape names the blink/gaze/mouth logic doesn't already
+own, so the two systems never fight over the same morph target.
+
+**A real near-miss in verifying this, worth recording honestly**: the
+first pass at intensities (~0.3-0.55) looked completely invisible in a
+640×640 test render — brows, frown, cheek squint all appeared to do
+nothing even at those values, while only `mouthSmile`/`mouthPress`
+visibly worked. Before concluding those blendshapes were broken, the
+morph target's own vertex data was inspected directly from the .glb (not
+assumed): `mouthSmileLeft`'s sparse morph target moves ~2500 vertices by
+at most ~8mm, versus `jawOpen`'s ~35mm — real, working displacement, just
+smaller. Values were raised toward 0.6-0.9 to compensate, and even then a
+full-frame 640×640 screenshot of "concerned" still looked barely
+different from neutral to the eye — until the exact same render was
+cropped and zoomed to just the brow/mouth region, where the lowered brows
+and flattened mouth were clearly, unambiguously visible. The lesson kept
+from this: a screenshot judged as "no visible change" at the wrong
+viewing scale is not evidence the underlying value isn't working — the
+same render, viewed at the scale a person's eye would actually focus on,
+told a different story. The values shipped (0.55-0.9 depending on shape)
+were calibrated against zoomed crops of this exact model, not a generic
+assumption about what "0.6" should look like on any rig.
+
+**What's verified vs. not**: `cargo test` (109 passed), `tsc`, and
+`npm run build` all pass. The expression system was verified visually —
+a temporary, untracked test harness (`facetest.html`/`.tsx`, deleted
+before committing) rendered `ThreeDAvatar` directly with forced
+`state`/`emotion` combinations outside the normal Tauri-gated app flow,
+confirmed via pixel-diffing against a neutral baseline and by directly
+reading live `morphTargetInfluences` values off the loaded mesh — real
+evidence, not assumed. **Not verified**: the audio-overlap fix, since
+reproducing it needs a real Mac's audio stack and the exact conditions
+that triggered the original double-`speak_text` call, neither of which
+exist in this sandbox; the fix (never allow two `afplay` processes at
+once) is unconditionally correct regardless of what caused the second
+call, but whether the underlying double-invoke can still happen at the
+React layer is a separate, still-open question worth watching for.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |
