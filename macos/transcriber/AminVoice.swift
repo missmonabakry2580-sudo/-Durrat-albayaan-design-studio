@@ -93,11 +93,17 @@
 //
 // The privacy trade-off in both flows is real and disclosed, not hidden:
 // the microphone stays open continuously while hands-free is on (macOS's
-// own orange mic indicator shows the whole time), and recognition is
-// HARD-REQUIRED to run on-device (`start()`'s own guard refuses to start
-// hands-free at all if the locale can't do on-device recognition) — no
-// silently streaming continuous audio to Apple's servers just to watch for
-// speech.
+// own orange mic indicator shows the whole time). Recognition runs
+// on-device whenever the Mac has the Arabic offline dictation pack
+// installed; when it doesn't, ALL THREE flows fall back to Apple's
+// server-based recognition — meaning continuous audio does reach Apple's
+// servers on such Macs while hands-free is on. This was originally a hard
+// on-device requirement (start() refused to run at all without the
+// pack), but that guard was the reason hands-free silently never worked
+// on a real Mac missing the pack (2026-08-28), and a feature that never
+// runs protects nothing. The honest posture now: prefer on-device, fall
+// back to server, disclose it — same trade-off push-to-talk has always
+// made.
 //
 // SELF-HEARING / BARGE-IN: the microphone stays live while Amin talks, so
 // without some defense it would happily transcribe its own TTS voice
@@ -522,6 +528,18 @@ private final class HandsFreeListener {
     private var passiveModeStartedAt: Date?
     private let passiveModeTimeoutSeconds: TimeInterval = 15 * 60
 
+    /// The phrase-free verified flow's counterpart to
+    /// `passiveModeStartedAt` (2026-08-28 code review finding: the
+    /// 15-minute hot-mic auto-off — added for a real trust problem Mona
+    /// hit in the field — silently didn't exist in the enrolled flow
+    /// that replaced the wake-phrase one, so the now-primary path kept
+    /// the mic open indefinitely). Refreshed whenever a verified command
+    /// actually goes through; past the same timeout with no accepted
+    /// command, the flow emits kind 8 and stops re-arming, exactly like
+    /// `armPassive` — the frontend's timeout handler does the real
+    /// teardown either way.
+    private var verifiedModeLastCommandAt: Date?
+
     /// See this file's VOICE-BIOMETRIC SPEAKER VERIFICATION header note and
     /// VoicePrint.swift. Fed continuously from the same tap `openTap`
     /// installs for speech recognition; read at the moment the wake phrase
@@ -744,6 +762,7 @@ private final class HandsFreeListener {
             // convenience.
             if VoicePrintEngine.shared.hasEnrolledSpeaker() {
                 self.emit(5)
+                self.verifiedModeLastCommandAt = Date()
                 self.runVerifiedListening(recognizer: recognizer)
             } else {
                 self.armPassive(recognizer: recognizer)
@@ -764,6 +783,11 @@ private final class HandsFreeListener {
     /// Barge-in handling is identical to `listenForCommand`'s.
     private func runVerifiedListening(recognizer: SFSpeechRecognizer) {
         guard !stopped else { return }
+        if let last = verifiedModeLastCommandAt,
+           Date().timeIntervalSince(last) > passiveModeTimeoutSeconds {
+            emit(8)
+            return
+        }
         mode = .active
         runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
             guard let self = self else { return }
@@ -785,6 +809,7 @@ private final class HandsFreeListener {
                     // mismatch is discarded exactly like an echo.
                     let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
                     if result.matched {
+                        self.verifiedModeLastCommandAt = Date()
                         self.emit(9, text)
                     } else {
                         self.emit(10, result.score.map { String($0) } ?? "")
@@ -813,6 +838,7 @@ private final class HandsFreeListener {
             }
             let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
             if result.matched {
+                self.verifiedModeLastCommandAt = Date()
                 self.emit(1, trimmed)
             } else {
                 self.emit(10, result.score.map { String($0) } ?? "")
@@ -849,7 +875,17 @@ private final class HandsFreeListener {
         }
         mode = .passive
         emit(5)
-        runRecognition(recognizer: recognizer, onDeviceOnly: true) { [weak self] text, isFinal in
+        // Was hard-coded `onDeviceOnly: true` (2026-08-28 code review):
+        // after start() dropped its supportsOnDeviceRecognition guard, a
+        // Mac without the ar-EG offline pack reached here and the
+        // recognition task failed instantly — and runRecognition's error
+        // branch re-arms armPassive, which fails again, forever: an
+        // infinite error loop on exactly the machines the guard removal
+        // was meant to fix. On-device is still used whenever it exists;
+        // when it doesn't, wake-phrase watching falls back to server
+        // recognition like the other two flows (see the header's privacy
+        // note, updated to disclose this honestly).
+        runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
             guard let self = self else { return }
             if self.currentlySpeakingText != nil {
                 if self.isLikelySelfEcho(text) {
@@ -921,8 +957,8 @@ private final class HandsFreeListener {
         // Command utterances go through Apple's server recognizer when
         // on-device isn't available for this locale — same fallback
         // `Transcriber` uses for ordinary push-to-talk, and the same
-        // trade-off already disclosed there. Only the passive wake-phrase
-        // phase above hard-requires on-device.
+        // trade-off already disclosed there (all three hands-free flows
+        // share it now; see the header's privacy note).
         runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
             guard let self = self else { return }
             if self.currentlySpeakingText != nil {
@@ -1053,8 +1089,18 @@ private final class HandsFreeListener {
                 // A dropped recognition task (a transient Speech framework
                 // error) shouldn't silently end hands-free mode — re-arm
                 // whichever phase we were in rather than going dark.
+                // SECURITY FIX (2026-08-28 code review): this branch used
+                // to know only the two-phase wake-phrase flow, so an error
+                // during the enrolled phrase-free flow (also mode .active)
+                // re-armed via listenForCommand — which emits every final
+                // as a command with NO voiceprint check, silently and
+                // permanently downgrading verified listening to "anyone in
+                // earshot commands Amin" until hands-free was toggled off.
+                // The enrolled flow must re-arm as itself.
                 if self.mode == .passive {
                     self.armPassive(recognizer: recognizer)
+                } else if VoicePrintEngine.shared.hasEnrolledSpeaker() {
+                    self.runVerifiedListening(recognizer: recognizer)
                 } else {
                     self.listenForCommand(recognizer: recognizer)
                 }

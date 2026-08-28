@@ -2332,6 +2332,69 @@ goal, only the broken "I'm not Amin" framing.
 **Verified**: `cargo test` (114 passed). Prompt-only change; its real
 effect on persona stability is only observable in live replies.
 
+## Full code review of the day's work: 10 real findings, all fixed (2026-08-28)
+
+Mona asked for a deep inspection ("افحص الكود في خلل رهيب"). A high-effort
+review over the day's 16 commits (b0e66d7..HEAD) found 10 real defects —
+several introduced by this same day's fixes interacting badly. All fixed
+in one pass, most severe first:
+
+1. **alt+A was a dead end** (`App.tsx`): the voice-only redesign kept the
+   `if (handsFreeEnabled)` gate on `voice://final`, so a push-to-talk
+   final landed in the deleted input box and was never sent — with
+   hands-free off there was NO working way to talk to Amin. Finals now
+   send unconditionally; a stale comment claiming `handleMicToggle`
+   "still exists" corrected.
+2. **Voiceprint silently bypassed after a transient error**
+   (`AminVoice.swift`): `runRecognition`'s error branch only knew the old
+   two-phase flow, so an error during verified listening re-armed via
+   `listenForCommand` — which emits every final as a command with no
+   voiceprint check. Anyone in earshot could then command Amin until
+   hands-free was toggled. The error branch now re-arms
+   `runVerifiedListening` when a voiceprint is enrolled.
+3. **Infinite error loop for the no-voiceprint fallback on Macs without
+   the ar-EG pack**: `armPassive` still hard-coded `onDeviceOnly: true`
+   after `start()`'s guard was dropped — instant task failure, error
+   branch re-arms, fails again, forever. Now falls back to server
+   recognition like the other two flows; the header's privacy note
+   rewritten to disclose the real posture (prefer on-device, server
+   fallback, mic-indicator always visible) instead of the now-false
+   "hard-required on-device" claim.
+4. **Error reporter could hang speech**: `error_report::report` used a
+   timeout-less reqwest client and was awaited inline on the very failure
+   paths a network outage triggers. Now has a 10s timeout and a
+   fire-and-forget `report_in_background` wrapper used by both call sites.
+5. **Chime on every overheard utterance**: the "Pop" chime was wired to
+   kind 5, which `armPassive` re-emits on every re-arm. Moved to
+   `start_hands_free`'s success path — once per actual start.
+6. **Diacritization silently disabled the pronunciation dictionary**:
+   alias rules are keyed on undiacritized spellings that stopped
+   appearing once every word carried harakat. The dictionary's words
+   (defaults + a new local record of Mona's custom additions) are now
+   passed to the diacritizer as protected words to leave untouched, so
+   both mechanisms compose instead of one defeating the other.
+7. **Stale-closure double-send**: the voice-event listeners froze
+   `agentBusy` at registration time, so two finals during one in-flight
+   send both passed the guard and ran overlapping conversations. Guarded
+   by `agentBusyRef` now (same pattern as `handsFreeSessionOpenRef`).
+8. **(part of 3)** — stale privacy documentation corrected.
+9. **The 15-minute hot-mic auto-off didn't exist in the verified flow**:
+   `passiveModeStartedAt` was never consulted there, so the now-primary
+   path kept the mic open indefinitely — the exact field-discovered trust
+   problem the timeout was built for. `verifiedModeLastCommandAt` now
+   times the flow out after 15 minutes with no accepted command, through
+   the same kind-8 → frontend teardown path.
+10. **Wasted API call on non-Arabic text**: diacritization now returns
+    immediately when the text contains no Arabic-block characters, and
+    the duplicated call-site block folded into one `diacritize_for_tts`.
+
+**What's verified vs. not**: `cargo check`, `cargo test` (114), `tsc`
+all pass; Swift brace/paren balance checked by hand (no `swiftc` here —
+published-dylib verification after CI, as always). Not verified on a
+real Mac: the verified-flow timeout, the protected-words instruction
+actually being followed by the diacritization model, and the re-arm
+paths under real Speech-framework errors.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

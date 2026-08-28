@@ -183,6 +183,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [agentInput, setAgentInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
+  // Mirrors agentBusy for the voice-event listeners (2026-08-28 code
+  // review finding): those listeners are registered once per
+  // [handsFreeEnabled, speakerEnrolled] change and close over that
+  // render's handleSendToAgent, whose `agentBusy` guard is frozen at
+  // registration-time `false` — so two finals arriving while a send was
+  // in flight both passed the guard and ran two overlapping
+  // sendAgentMessage calls against the same conversation. A ref reads
+  // the live value regardless of which render the closure came from
+  // (same pattern as handsFreeSessionOpenRef).
+  const agentBusyRef = useRef(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   // Real bug found 2026-08-28: Mona could hear the new "armed" chime but
   // hands-free still never acted on anything she said, with no way to tell
@@ -364,9 +374,17 @@ function App() {
       // the utterance landed in the input box and silently waited for
       // Mona to press "إرسال" instead of sending itself, defeating hands-
       // free mode's entire point.
+      // Unconditional since the voice-only redesign (2026-08-28 code
+      // review finding): the old `if (handsFreeEnabled)` gate made alt+A
+      // push-to-talk a dead end — its final landed in agentInput, whose
+      // input box and send button no longer exist, so a user without
+      // hands-free on had NO working way to talk to Amin at all. Every
+      // final is a deliberate utterance now (hands-free finals are
+      // voiceprint-checked in AminVoice.swift; alt+A finals are gated on
+      // physically holding the key), so every final sends.
       listen<string>("voice://final", (e) => {
         setAgentInput(e.payload);
-        if (handsFreeEnabled) handleSendToAgent(e.payload);
+        handleSendToAgent(e.payload);
       }),
       // Real barge-in: Mona started talking over Amin's own reply.
       // AminVoice.swift already told Rust to stop the playback before this
@@ -376,7 +394,7 @@ function App() {
       // same as a normal final while a hands-free session is open.
       listen<string>("voice://hands-free-barge-in", (e) => {
         setAgentInput(e.payload);
-        if (handsFreeEnabled) handleSendToAgent(e.payload);
+        handleSendToAgent(e.payload);
       }),
       listen<string>("voice://error", (e) => {
         setVoiceError(e.payload);
@@ -694,9 +712,10 @@ function App() {
    * otherwise be stale in the same tick it's set. */
   async function handleSendToAgent(overrideText?: string) {
     const text = (overrideText ?? agentInput).trim();
-    if (!text || agentBusy) return;
+    if (!text || agentBusyRef.current) return;
 
     setAgentInput("");
+    agentBusyRef.current = true;
     setAgentBusy(true);
     setAminState("thinking");
 
@@ -714,6 +733,7 @@ function App() {
       speak(`حصل خطأ: ${String(e)}`, "concerned");
       setTimeout(() => setAminState("idle"), 1400);
     } finally {
+      agentBusyRef.current = false;
       setAgentBusy(false);
       await refresh();
     }
@@ -1590,11 +1610,11 @@ function App() {
             enrolled, wake/close-phrase-gated as a fallback otherwise) for
             hands-free use, or the global alt+A push-to-talk shortcut
             (registered natively in lib.rs, works from anywhere, needs no
-            visible button) as the manual fallback. `handleSendToAgent`,
-            `handleMicToggle`, `agentInput`, and the rest of this state
-            still exist and still work exactly as before — only the
-            floating input/button UI and the chat-bubble log were removed,
-            not the underlying voice pipeline. Developer Mode's debug panel
+            visible button) as the manual fallback. Both routes reach the
+            agent through the same `voice://final` listener, which sends
+            every final via `handleSendToAgent` unconditionally — the
+            mic-toggle/send-button handlers were deleted along with their
+            UI, not kept. Developer Mode's debug panel
             (Settings) is still there for anyone who wants to see what was
             actually said/heard. */}
       </main>

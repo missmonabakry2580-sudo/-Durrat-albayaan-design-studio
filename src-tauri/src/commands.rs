@@ -437,9 +437,19 @@ pub async fn add_pronunciation_rule(word: String, correct_pronunciation: String,
     let Some(dictionary_id) = dictionary_id else {
         return Err("لسه مفيش قاموس نطق — أنشئيه الأول".to_string());
     };
-    let rule = elevenlabs::PronunciationRule { string_to_replace: word, alias: correct_pronunciation };
+    let rule = elevenlabs::PronunciationRule { string_to_replace: word.clone(), alias: correct_pronunciation };
     let dict = elevenlabs::add_pronunciation_rules(&key, &dictionary_id, &[rule]).await?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Record the word locally too, so the diacritizer knows to leave it
+    // untouched — see pronunciation_protected_words.
+    let mut stored = get_setting(&conn, PRONUNCIATION_PROTECTED_WORDS_KEY).unwrap_or_default();
+    if !stored.lines().any(|l| l.trim() == word.trim()) {
+        if !stored.is_empty() {
+            stored.push('\n');
+        }
+        stored.push_str(word.trim());
+        set_setting(&conn, PRONUNCIATION_PROTECTED_WORDS_KEY, &stored)?;
+    }
     set_setting(&conn, ELEVENLABS_PRONUNCIATION_DICT_VERSION_KEY, &dict.version_id)
 }
 
@@ -591,7 +601,7 @@ pub async fn send_agent_message(
                     None,
                 );
             }
-            error_report::report(&app, "agent_api", &e).await;
+            error_report::report_in_background(&app, "agent_api", &e);
             return Err(e);
         }
     };
@@ -982,6 +992,51 @@ fn emit_tts_debug(
     );
 }
 
+/// Local record of every custom word Mona has added to the ElevenLabs
+/// pronunciation dictionary (newline-separated) — the dictionary itself
+/// lives server-side and its rule keys can't be read back cheaply, but
+/// the diacritizer needs to know them to leave them untouched (see
+/// `pronunciation_protected_words`).
+pub(crate) const PRONUNCIATION_PROTECTED_WORDS_KEY: &str = "pronunciation_protected_words";
+
+/// Every word the ElevenLabs pronunciation dictionary has an alias rule
+/// for: the built-in defaults plus whatever Mona added by hand. These are
+/// handed to `agent::diacritize_arabic_text` as words to leave exactly
+/// as written, so the dictionary's exact-string keys still match the
+/// diacritized text (2026-08-28 code review finding: full diacritization
+/// was silently disabling every dictionary override, because the keys
+/// are undiacritized spellings that no longer appeared in the text).
+fn pronunciation_protected_words(conn: &rusqlite::Connection) -> Vec<String> {
+    let mut words: Vec<String> = elevenlabs::default_pronunciation_rules()
+        .into_iter()
+        .map(|r| r.string_to_replace)
+        .collect();
+    if let Some(stored) = get_setting(conn, PRONUNCIATION_PROTECTED_WORDS_KEY) {
+        for w in stored.lines().map(str::trim).filter(|w| !w.is_empty()) {
+            if !words.iter().any(|x| x == w) {
+                words.push(w.to_string());
+            }
+        }
+    }
+    words
+}
+
+/// The one shared diacritize-before-TTS step (was duplicated verbatim in
+/// speak_text and synthesize_pcm_for_simli). Best-effort by design: no
+/// Anthropic key or any failure falls back to the plain text.
+async fn diacritize_for_tts(
+    anthropic_key: &Option<String>,
+    text: String,
+    protected_words: &[String],
+) -> String {
+    match anthropic_key {
+        Some(k) => agent::diacritize_arabic_text(k, &text, protected_words)
+            .await
+            .unwrap_or(text),
+        None => text,
+    }
+}
+
 /// Speaks Amin's reply aloud. Prefers ElevenLabs (a more expressive,
 /// human-sounding voice Mona explicitly asked for) when she's added her
 /// own ElevenLabs key; otherwise falls back to the free, local, on-device
@@ -1002,13 +1057,14 @@ pub async fn speak_text(
     // the spoken copy is cleaned; the chat log keeps the original text.
     let text = agent::strip_markdown_for_speech(&text);
 
-    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key) = {
+    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key, protected_words) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
             load_pronunciation_dictionary(&conn),
             get_setting(&conn, ANTHROPIC_KEY_NAME).filter(|v| !v.trim().is_empty()),
+            pronunciation_protected_words(&conn),
         )
     };
 
@@ -1027,11 +1083,10 @@ pub async fn speak_text(
     // so she never has to hear a bad word and report it by hand for it to
     // get fixed. Best-effort: no Anthropic key, a network error, or a
     // malformed response all fall back to speaking the plain text rather
-    // than blocking speech on this extra call.
-    let text = match &anthropic_key {
-        Some(k) => agent::diacritize_arabic_text(k, &text).await.unwrap_or(text),
-        None => text,
-    };
+    // than blocking speech on this extra call. The dictionary's own words
+    // are passed through untouched (see diacritize_arabic_text's
+    // protected_words) so its hand-curated aliases still match.
+    let text = diacritize_for_tts(&anthropic_key, text, &protected_words).await;
 
     emit_tts_debug(
         &app,
@@ -1078,7 +1133,7 @@ pub async fn speak_text(
                     // than staying silent.
                     let combined = format!("ElevenLabs: {e} (streaming also failed: {streaming_err})");
                     let _ = app.emit("voice://error", combined.clone());
-                    error_report::report(&app, "elevenlabs_tts", &combined).await;
+                    error_report::report_in_background(&app, "elevenlabs_tts", &combined);
                     let on_device_text = agent::fix_pronunciation_for_speech(&text);
                     emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
                     return voice::speak(app, &on_device_text);
@@ -1187,13 +1242,14 @@ pub async fn synthesize_pcm_for_simli(
     // mechanism, not a second hand-written text substitution racing it.
     let text = agent::strip_markdown_for_speech(&text);
 
-    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key) = {
+    let (eleven_key, voice_id, pronunciation_dictionary, anthropic_key, protected_words) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         (
             get_setting(&conn, ELEVENLABS_KEY_NAME).filter(|v| !v.trim().is_empty()),
             get_setting(&conn, ELEVENLABS_VOICE_ID_KEY),
             load_pronunciation_dictionary(&conn),
             get_setting(&conn, ANTHROPIC_KEY_NAME).filter(|v| !v.trim().is_empty()),
+            pronunciation_protected_words(&conn),
         )
     };
     let Some(key) = eleven_key else {
@@ -1208,10 +1264,7 @@ pub async fn synthesize_pcm_for_simli(
     };
     // Same automatic full diacritization as speak_text — one Amin voice,
     // one pronunciation fix, regardless of which visual mode is showing.
-    let text = match &anthropic_key {
-        Some(k) => agent::diacritize_arabic_text(k, &text).await.unwrap_or(text),
-        None => text,
-    };
+    let text = diacritize_for_tts(&anthropic_key, text, &protected_words).await;
     elevenlabs::synthesize_pcm16(&key, &text, voice_id.as_deref(), emotion.as_deref(), pronunciation_dictionary.as_ref()).await
 }
 

@@ -225,23 +225,14 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         let _ = stop_speaking();
     }
 
-    // Real bug found 2026-08-28: Mona reported hands-free "never responds"
-    // with zero visible sign of anything happening — no error, no change.
-    // Two real, separate gaps turned out to compound: (1) `armed`'s only
-    // visual signal was a brow/eye blendshape at 0.15-0.2 intensity, well
-    // below the ~0.5+ this session already found necessary for this
-    // model's small blendshape deltas to read as visible at all (see this
-    // file's "small blendshape deltas" note in ARCHITECTURE.md); (2) once
-    // the chat UI was removed for the voice-only redesign, there was no
-    // replacement feedback at all for "Amin just started listening" — not
-    // even the old input box's live partial transcript. A short system
-    // chime the instant hands-free actually arms is unambiguous, doesn't
-    // depend on ElevenLabs/network/API keys (so it still fires even if
-    // those are broken), and turns "did it even start?" from a guess into
-    // something she can literally hear within a second of toggling it on.
-    if kind == 5 {
-        play_chime("Pop");
-    } else if kind == 1 {
+    // A short "heard and accepted you" chime on every real command —
+    // audible, key-independent feedback (see play_chime). The hands-free
+    // start chime moved to start_hands_free itself (2026-08-28 code
+    // review finding): it was wired to kind 5 here, but armPassive
+    // re-emits kind 5 on every re-arm — after every overheard non-wake
+    // utterance — so the fallback flow chimed at any ambient speech
+    // instead of once at startup.
+    if kind == 1 {
         play_chime("Tink");
     }
 
@@ -410,6 +401,10 @@ pub fn start_hands_free(
         return Err(format!("hands-free mode failed to start (code {rc})"));
     }
 
+    // The audible "hands-free is now on" cue — fired exactly once per
+    // successful start, here, rather than on kind-5 events (which the
+    // fallback wake-phrase flow re-emits on every re-arm).
+    play_chime("Pop");
     *active = true;
     Ok(())
 }

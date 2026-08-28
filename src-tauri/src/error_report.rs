@@ -59,6 +59,21 @@ fn mark_reported(category: &str) {
 /// called. `category` is a short, stable identifier (e.g.
 /// "elevenlabs_tts", "agent_api", "voice_engine_load") used only for the
 /// dedup window and the issue title, not shown to Mona anywhere.
+/// Fire-and-forget wrapper (2026-08-28 code review finding): `report` was
+/// being awaited inline on speech/agent failure paths, so a network outage
+/// — the very condition most likely to have caused the failure being
+/// reported — could stall the caller (e.g. delay `speak_text`'s on-device
+/// fallback) for as long as the GitHub POST took to fail. Reporting an
+/// error must never make the error's handling worse: spawn it and move on.
+pub fn report_in_background(app: &tauri::AppHandle, category: &str, detail: &str) {
+    let app = app.clone();
+    let category = category.to_string();
+    let detail = detail.to_string();
+    tauri::async_runtime::spawn(async move {
+        report(&app, &category, &detail).await;
+    });
+}
+
 pub async fn report(app: &tauri::AppHandle, category: &str, detail: &str) {
     if recently_reported(category) {
         return;
@@ -90,7 +105,15 @@ pub async fn report(app: &tauri::AppHandle, category: &str, detail: &str) {
         "labels": [REPORT_LABEL],
     });
 
-    let client = reqwest::Client::new();
+    // 10s cap for the same reason diacritize_arabic_text has its 8s one:
+    // the default reqwest client has NO timeout, and a black-holed
+    // connection would otherwise hold this task open indefinitely.
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    else {
+        return;
+    };
     let result = client
         .post(ISSUES_URL)
         .header("Authorization", format!("Bearer {token}"))

@@ -655,7 +655,33 @@ fn diacritization_preserves_text(original: &str, diacritized: &str) -> bool {
     strip_diacritics_and_whitespace(original) == strip_diacritics_and_whitespace(diacritized)
 }
 
-pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String, String> {
+/// True if `text` contains at least one character from the Arabic block —
+/// the cheap pre-check that lets pure-English replies skip the
+/// diacritization round-trip entirely (2026-08-28 code review finding: it
+/// used to run on EVERY utterance, adding up to 8s of latency and a paid
+/// API call to English text the model would just echo back unchanged).
+fn contains_arabic(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c))
+}
+
+/// `protected_words` (2026-08-28 code review finding): the ElevenLabs
+/// pronunciation dictionary's alias rules are keyed on exact undiacritized
+/// spellings ("منى", "المعبيلة") — once diacritization rewrites those words
+/// with harakat, the keys never match and the hand-curated overrides are
+/// silently disabled on exactly the utterances where diacritization
+/// succeeds. Passing the dictionary's keys here and telling the model to
+/// leave those words exactly as written keeps both mechanisms working:
+/// the diacritizer handles the general case, the dictionary keeps owning
+/// the words Mona explicitly corrected by ear. Leaving a word bare still
+/// passes diacritization_preserves_text (letters are unchanged either way).
+pub async fn diacritize_arabic_text(
+    api_key: &str,
+    text: &str,
+    protected_words: &[String],
+) -> Result<String, String> {
+    if !contains_arabic(text) {
+        return Ok(text.to_string());
+    }
     // A quality-of-speech nicety must never be able to block speech itself
     // outright — an unbounded network call here (the default reqwest
     // client has no timeout at all) would silently hang commands::speak_text
@@ -667,11 +693,21 @@ pub async fn diacritize_arabic_text(api_key: &str, text: &str) -> Result<String,
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| format!("couldn't build the HTTP client for diacritization: {e}"))?;
+    let system = if protected_words.is_empty() {
+        DIACRITIZATION_SYSTEM_PROMPT.to_string()
+    } else {
+        format!(
+            "{DIACRITIZATION_SYSTEM_PROMPT}\n\n\
+             الكلمات دي بالتحديد سيبيها بالظبط زي ما هي مكتوبة، من غير ما \
+             تضيفي عليها أي حركات (ليها نطق متسجل جاهز بره): {}",
+            protected_words.join("، ")
+        )
+    };
     let history = [ChatMessage::user_text(text)];
     let body = AnthropicRequest {
         model: DIACRITIZATION_MODEL_ID,
         max_tokens: diacritization_max_tokens(text),
-        system: DIACRITIZATION_SYSTEM_PROMPT,
+        system: &system,
         messages: &history,
         tools: &[],
     };
