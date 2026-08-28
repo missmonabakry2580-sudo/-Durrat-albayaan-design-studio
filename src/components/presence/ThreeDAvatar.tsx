@@ -163,10 +163,21 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
         // skeleton also carries — matches the tight crop the static
         // portrait already used in this same slot.
         if (headBone) {
+          // Distance/lookAt tuned empirically (Playwright screenshots
+          // against the real model, not guessed): the previous 0.62/24°
+          // combination put barely 0.26m of vertical extent in frame —
+          // less than head height alone — so it cropped off the top of
+          // the head and, per Mona's real Mac screenshot, the shoulders
+          // too. 0.85 frames hairline-to-collar with a little headroom,
+          // confirmed against the model's actual bounding box (head bone
+          // at y≈1.524, hair top at y≈1.698) rather than the full
+          // arms-out rest pose this rig has no idle animation to fix —
+          // framing tight enough to crop that out is also what keeps it
+          // from reading as a scarecrow pose.
           const headWorldPos = new THREE.Vector3();
           headBone.getWorldPosition(headWorldPos);
-          camera.position.set(headWorldPos.x, headWorldPos.y + 0.02, headWorldPos.z + 0.62);
-          camera.lookAt(headWorldPos.x, headWorldPos.y - 0.02, headWorldPos.z);
+          camera.position.set(headWorldPos.x, headWorldPos.y, headWorldPos.z + 0.85);
+          camera.lookAt(headWorldPos.x, headWorldPos.y, headWorldPos.z);
         } else {
           const box = new THREE.Box3().setFromObject(root);
           const center = box.getCenter(new THREE.Vector3());

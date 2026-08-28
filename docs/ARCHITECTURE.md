@@ -1117,6 +1117,35 @@ wired up the same way 3D Mode already is: swappable, same Amin Core.
 the new official photo, static — no blink, no lip movement yet. This is
 disclosed as incomplete, not presented as done.
 
+## 3D Mode's camera cropped the head and shoulders on the real Mac
+## (2026-08-28)
+
+A second real bug from the same round of Mac screenshots (Mona: **"و راسه
+و اكتافه مقصوصه ليه كده"** — why is his head and shoulders cropped like
+that): `ThreeDAvatar.tsx`'s camera framing, `camera.position.set(...,
+headWorldPos.z + 0.62)` with a 24° vertical FOV, put only about 0.26m of
+vertical extent in frame — less than the height of a head alone. The
+comment above it said "frame a bust shot (head + shoulders)"; the actual
+numbers didn't deliver that, and nothing in this sandbox's earlier testing
+(all done via forced state/blink checks, never a plain default-pose
+screenshot) had looked at the overall framing to catch it.
+
+**Reproduced and fixed the same way as the CSP bug** — against the real
+model, not guessed: read the rig's actual world coordinates (`Head` bone
+at y≈1.524, model bounding box top at y≈1.698 — so barely 0.17m of hair
+sits above the head joint) via a temporary debug log, then used Playwright
+screenshots of the real `amin_facial_rig.glb` at increasing camera
+distances until the framing actually matched "head and shoulders" — full
+hair with a little headroom, collar/upper-shoulders visible, cropped
+*before* the rig's arms-out rest pose comes into frame (this rig has no
+idle-standing animation, so anything wider than a tight bust crop shows it
+standing arms-out like a scarecrow — cropping tight enough for a proper
+bust shot incidentally hides that separate, undisclosed-until-now gap
+too). Landed on distance 0.85 at the same 24° FOV. Verified across three
+window aspect ratios (wide/square/narrow) since the container's real size
+on Mona's Mac wasn't known — vertical framing is FOV-driven and aspect-
+independent, confirmed by the screenshots rather than assumed.
+
 ## 3D Mode shipped textureless on the real Mac — a CSP bug this sandbox
 ## could never have caught (2026-08-28)
 
