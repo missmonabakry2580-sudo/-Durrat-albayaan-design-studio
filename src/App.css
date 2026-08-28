@@ -30,6 +30,16 @@
   pointer-events: auto;
 }
 
+/* Real complaint from a real Mac screenshot (2026-08-28): "الخلفية فاضية
+   بشكل غير احترافي... أمين ظاهر وكأنه معلق في فراغ" (the background reads
+   as an unprofessional void, like Amin is floating in nothing). The two
+   radial glows alone read as empty space once the character sits on top
+   of them at normal screen brightness. Adds two quiet, brand-consistent
+   technical layers underneath — a fine dot grid (circuit-board texture,
+   not distinct enough to compete with Amin) and a few faint diagonal
+   accent lines (gold + blue, the same restraint the tokens file already
+   asks for) — kept deliberately subtle per her own instruction ("لمسات
+   تقنية بسيطة، هادئة") rather than "زحمة مبالغ فيها" (overdone clutter). */
 .amin-world-ambient {
   position: absolute;
   inset: 0;
@@ -40,7 +50,20 @@
       color-mix(in srgb, var(--accent-blue) 12%, transparent),
       transparent 75%
     ),
-    radial-gradient(ellipse 90% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 5%, transparent), transparent 70%);
+    radial-gradient(ellipse 90% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 5%, transparent), transparent 70%),
+    radial-gradient(circle, color-mix(in srgb, var(--accent-blue) 14%, transparent) 1px, transparent 1.4px) 0 0 / 34px 34px,
+    linear-gradient(
+        128deg,
+        transparent 0%,
+        transparent 18%,
+        color-mix(in srgb, var(--accent-blue) 10%, transparent) 18.4%,
+        transparent 18.8%,
+        transparent 46%,
+        color-mix(in srgb, var(--gold-500) 9%, transparent) 46.4%,
+        transparent 46.8%,
+        transparent 100%
+      )
+      0 0 / 100% 100%;
 }
 
 .amin-world-stage {

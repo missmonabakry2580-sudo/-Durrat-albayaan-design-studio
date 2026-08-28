@@ -16,6 +16,14 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  /* Real complaint from a real Mac screenshot (2026-08-28): "شريط الإدخال
+     راكب على المشهد... يصطدم بالشخصية" (the input bar collides with the
+     character) — dead center in the full-bleed presence layer put Amin's
+     collar/tie directly behind the command bar at normal window heights,
+     with no real gap between them. Shifting the whole presence up gives
+     the command bar genuine background to sit on instead of overlapping
+     content-rich parts of the character. */
+  transform: translateY(-8%);
 }
 
 .amin-presence-glow {
