@@ -1858,6 +1858,65 @@ smile distortion, while the same emotion at `state=idle` still shows the
 full smile exactly as before — the suppression is speech-gated, not a
 blanket removal of the happy expression.
 
+## Hands-free without a wake/close phrase, once a voiceprint is enrolled (2026-08-28)
+
+Mona, verbatim: "أنا عايزه الاستماع الحر يكون مش مربوط بكلمة بداية وكلمة
+نهاية من فضلك و دلوقتي حالا بفعل له بصمة الصوت بتاعتي" (I want hands-free
+listening not tied to a start word and an end word please, and I'm
+enrolling its voiceprint right now). Once her own verified voice is the
+real security gate, requiring a spoken phrase on top of it is redundant
+friction, not extra safety — so the wake/close phrases stop being the
+primary flow the moment a voiceprint exists.
+
+`HandsFreeListener.openTap` now branches on
+`VoicePrintEngine.shared.hasEnrolledSpeaker()` the moment hands-free
+starts:
+- **Enrolled** (the intended path going forward): `runVerifiedListening`
+  runs continuously, no wake or close phrase at all. Every finalized
+  utterance is checked against the enrolled voiceprint (the same rolling-
+  buffer snapshot + `VoicePrintEngine.verify` the old wake-phrase gate
+  used, just run on every utterance instead of only ones containing a
+  phrase); a match is sent straight through as a command, a mismatch is
+  silently discarded and listening continues. Barge-in handling
+  (`isLikelySelfEcho`) is unchanged.
+- **Nothing enrolled** (`armPassive`/`openActiveSession`, unchanged): the
+  original phrase-gated flow, kept as the fallback for whenever there's no
+  voiceprint to gate on. Dropping the phrase gate with no voice gate
+  either would mean anyone in earshot commands Amin — the fallback exists
+  specifically so removing friction for Mona never means removing
+  security when she hasn't set the replacement up yet.
+
+The Settings UI (App.tsx) reflects both flows: the description text,
+the wake/close phrase field labels (marked "احتياطي" — fallback — once
+enrolled), the command-bar's hands-free tooltip, and the voice-rejection
+banner (`voice://hands-free-voice-rejected`) all branch on
+`speakerEnrolled` now — that last one specifically because in the new
+continuous flow a "rejection" fires on every ordinary bit of background
+speech that isn't her (a real, expected, frequent event, not the rare
+"someone said the phrase in the wrong voice" case it used to mean), so
+surfacing it as a visible error banner there would itself be the kind of
+noisy, intrusive behavior hands-free mode exists to avoid.
+
+**What's verified vs. not**: `tsc`/`npm run build` pass, and the new
+`speakerEnrolled` dependency was added to the `useEffect` whose closures
+read it (an easy staleness bug to miss otherwise — the array previously
+only listed `handsFreeEnabled`). **Not verified, and structurally can't
+be from this sandbox**: the Swift compiles at all. There is no Swift
+toolchain here (`swiftc` isn't installed — checked directly, not
+assumed), matching this file's own long-standing header disclosure, and
+`build-macos.yml`'s "Build the voice engine" step still has the same
+always-exits-0 fallback design documented earlier in this file (a
+compile failure silently bundles an empty placeholder dylib instead of
+failing the build) — exactly the gap that let three earlier releases ship
+a non-functional voice engine undetected. The new code reuses
+`VoicePrintEngine.shared.verify`/`hasEnrolledSpeaker` exactly as
+`armPassive` already calls them (a call site that has shipped and been
+confirmed working via a real dylib inspection before), and was read
+end-to-end for brace balance and structural correctness, but the only
+real confirmation is the same one this project settled on after the
+`AudioResampler` incident: download the actual published `.dylib` after
+this ships and inspect it directly, never trust the CI checkmark alone.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

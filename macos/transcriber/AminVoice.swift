@@ -36,23 +36,30 @@
 // kind 0 = partial transcript, 1 = final transcript, 2 = error (recognition
 // side); kind 3 = speech started (text is the sentence about to be spoken —
 // see `amin_voice_set_hands_free_speaking`), 4 = speech finished (text
-// always null); kind 5 = hands-free armed (passively watching for the wake
-// phrase, text is always null), 6 = wake phrase heard — a command session
-// just opened (text always null), 7 = the close phrase ended the command
-// session (text always null; any command text before the close phrase was
-// already sent as a normal kind-1 final), 8 = hands-free timed out after
+// always null); kind 5 = hands-free armed and listening (text always null —
+// fires once when hands-free starts; with a voiceprint enrolled this is the
+// only "now watching" event, since there's no separate wake-phrase phase
+// left to announce), 6 = (voiceprint-enrolled flow only reaches this via the
+// old path below) wake phrase heard — a command session just opened (text
+// always null), 7 = the close phrase ended the command session (text always
+// null; any command text before the close phrase was already sent as a
+// normal kind-1 final), 8 = hands-free timed out after
 // passiveModeTimeoutSeconds of no wake phrase (text always null; the audio
 // engine is still technically running at this instant — see armPassive's
 // comment for why the actual teardown happens on the Rust/frontend side
-// instead of here), 9 = a real barge-in — Mona started talking over Amin's
-// own reply (text is what she said; see HandsFreeListener's
-// isLikelySelfEcho and armPassive/listenForCommand for why this fires
-// instead of the recognition being discarded as an echo). 10 = the wake
-// phrase was heard but rejected because the enrolled voiceprint didn't
-// match (text always null; see VoicePrint.swift). 11 = speaker enrollment
-// succeeded (text always null). 12 = speaker enrollment failed (text is
-// why). The string is a NUL-terminated UTF-8 C string valid only for the
-// duration of the call — the Rust side must copy it before returning.
+// instead of here; not reachable once a voiceprint is enrolled — see
+// runVerifiedListening, which has no passive phase to time out), 9 = a real
+// barge-in — Mona started talking over Amin's own reply (text is what she
+// said; see HandsFreeListener's isLikelySelfEcho and
+// armPassive/listenForCommand/runVerifiedListening for why this fires
+// instead of the recognition being discarded as an echo). 10 = a wake
+// phrase was heard but rejected because the voiceprint didn't match (phrase-
+// gated flow), OR — with a voiceprint enrolled — any utterance at all whose
+// voice didn't match (text always null either way; see VoicePrint.swift).
+// 11 = speaker enrollment succeeded (text always null). 12 = speaker
+// enrollment failed (text is why). The string is a NUL-terminated UTF-8 C
+// string valid only for the duration of the call — the Rust side must copy
+// it before returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -62,18 +69,31 @@
 // silently work around.
 //
 // HANDS-FREE MODE: Mona asked for Amin to be reachable without pressing
-// anything — she says a wake phrase, Amin listens, she says a closing
-// phrase (or just goes quiet) when she's done. The privacy trade-off she'd
-// actually care about is real and disclosed, not hidden: while this mode
-// is on, the microphone stays open continuously (macOS's own orange mic
-// indicator will show the whole time), and the wake-phrase-watching phase
-// is HARD-REQUIRED to run on-device (`requiresOnDeviceRecognition` forced
-// true) — if the OS/locale can't do on-device recognition, hands-free mode
-// refuses to start rather than silently streaming continuous audio to
-// Apple's servers just to watch for a phrase. A spoken phrase is a shared
-// secret, not an identity check — anyone in earshot who knows it can open
-// a session. Voice-print/speaker verification (the actual fix for that) is
-// a separate, not-yet-built phase — see docs/SECURITY.md.
+// anything. Two flows now, chosen automatically by whether a voiceprint is
+// enrolled at the moment hands-free starts (VoicePrintEngine.hasEnrolledSpeaker):
+//
+//   - Voiceprint enrolled (the intended, current path — see
+//     runVerifiedListening): no wake phrase, no close phrase. Amin just
+//     listens continuously and treats every utterance whose voice matches
+//     her enrolled print as a command; anything else is silently discarded.
+//     Real request, a real Mac (2026-08-28): "أنا عايزه الاستماع الحر يكون
+//     مش مربوط بكلمة بداية وكلمة نهاية" (I want hands-free not tied to a
+//     start word and an end word) — once her voice itself is the gate, a
+//     phrase on top of it was redundant friction.
+//   - Nothing enrolled yet (armPassive/openActiveSession, the original
+//     design): she says a wake phrase to open a session, a close phrase (or
+//     going quiet) to end it. This is the fallback for whenever there's no
+//     voiceprint to gate on, not the primary design anymore — a spoken
+//     phrase is a shared secret, not an identity check, so anyone in
+//     earshot who knows it can open a session in this fallback.
+//
+// The privacy trade-off in both flows is real and disclosed, not hidden:
+// the microphone stays open continuously while hands-free is on (macOS's
+// own orange mic indicator shows the whole time), and recognition is
+// HARD-REQUIRED to run on-device (`start()`'s own guard refuses to start
+// hands-free at all if the locale can't do on-device recognition) — no
+// silently streaming continuous audio to Apple's servers just to watch for
+// speech.
 //
 // SELF-HEARING / BARGE-IN: the microphone stays live while Amin talks, so
 // without some defense it would happily transcribe its own TTS voice
@@ -102,17 +122,26 @@
 // VOICE-BIOMETRIC SPEAKER VERIFICATION (VoicePrint.swift): a spoken wake
 // phrase is a shared secret, not an identity check — anyone in earshot who
 // knows it could open a session, which is exactly the gap Mona flagged
-// ("بصمة الصوت... اريده يتعرف ع صوتي"). `HandsFreeListener` now keeps a
-// rolling 3-second buffer of the raw mic audio (`RollingPCMBuffer`,
-// resampled to the 16kHz mono ECAPA-TDNN expects) alongside the existing
-// speech-recognition tap, and — the moment the wake phrase is heard —
-// checks that buffer against Mona's enrolled voiceprint
-// (`VoicePrintEngine.verify`) before opening a session. A mismatch is
-// treated exactly like not having heard the wake phrase at all (kind 10,
-// stays passive); nothing enrolled yet, or the model failing to load for
-// any reason, fails OPEN (behaves like before this feature existed) rather
-// than silently locking Mona out of her own app — see `verify`'s doc
-// comment.
+// ("بصمة الصوت... اريده يتعرف ع صوتي"). `HandsFreeListener` keeps a rolling
+// 3-second buffer of the raw mic audio (`RollingPCMBuffer`, resampled to the
+// 16kHz mono ECAPA-TDNN expects) alongside the existing speech-recognition
+// tap, and checks it against Mona's enrolled voiceprint
+// (`VoicePrintEngine.verify`) before treating anything as a command. Once
+// this became the real security gate, the wake phrase on top of it stopped
+// pulling its weight for someone who has enrolled — see `runVerified
+// listening`, the flow that now runs whenever a voiceprint exists at
+// startup, checking every utterance instead of only ones containing a
+// phrase. The older phrase-gated flow (`armPassive`/`openActiveSession`)
+// remains as the fallback for whenever nothing is enrolled — there,
+// `verify` still checks the wake phrase's moment specifically, and a
+// mismatch is treated exactly like not having heard the phrase at all (kind
+// 10, stays passive). Either way, nothing enrolled yet, or the model
+// failing to load for any reason, fails OPEN (behaves like before this
+// feature existed) rather than silently locking Mona out of her own app —
+// see `verify`'s doc comment. That "fails open" behavior is also exactly
+// why the phrase-free flow only ever runs once `hasEnrolledSpeaker()` is
+// true: skipping the phrase gate with nothing enrolled to fall back on
+// would mean anyone's speech becomes a command.
 
 import Foundation
 import Speech
@@ -652,7 +681,69 @@ private final class HandsFreeListener {
                 self.emit(2, "couldn't start the audio engine: \(error.localizedDescription)")
                 return
             }
-            self.armPassive(recognizer: recognizer)
+            // Real request, a real Mac (2026-08-28), Mona: "أنا عايزه
+            // الاستماع الحر يكون مش مربوط بكلمة بداية وكلمة نهاية... ودلوقتي
+            // حالا بفعل له بصمة الصوت بتاعتي" (I want hands-free listening
+            // not tied to a start word and an end word — and I'm enrolling
+            // its voiceprint right now). With a voiceprint enrolled, her own
+            // verified voice IS the security gate the wake phrase used to
+            // provide, so requiring the phrase on top of it is redundant
+            // friction, not extra safety. Wake/close phrases stay as the
+            // fallback for whenever nothing is enrolled — dropping the
+            // phrase gate with no voiceprint gate either would mean anyone
+            // in earshot commands Amin, which is a real regression, not a
+            // convenience.
+            if VoicePrintEngine.shared.hasEnrolledSpeaker() {
+                self.emit(5)
+                self.runVerifiedListening(recognizer: recognizer)
+            } else {
+                self.armPassive(recognizer: recognizer)
+            }
+        }
+    }
+
+    /// Continuous, phrase-free listening: every finalized utterance is
+    /// checked against the enrolled voiceprint (the same rolling-buffer
+    /// snapshot + `VoicePrintEngine.verify` the old wake-phrase gate used,
+    /// just run on every utterance instead of only the ones containing a
+    /// magic phrase) — a match is sent straight through as a command (kind
+    /// 1, no kind 6 "session opened" first, since there's no separate
+    /// session phase to open anymore); a mismatch is discarded (kind 10,
+    /// same event the old flow used for a wake phrase said in someone
+    /// else's voice) and listening simply continues. No close phrase either
+    /// — this keeps running for as long as hands-free mode itself is on.
+    /// Barge-in handling is identical to `listenForCommand`'s.
+    private func runVerifiedListening(recognizer: SFSpeechRecognizer) {
+        guard !stopped else { return }
+        mode = .active
+        runRecognition(recognizer: recognizer, onDeviceOnly: recognizer.supportsOnDeviceRecognition) { [weak self] text, isFinal in
+            guard let self = self else { return }
+            if self.currentlySpeakingText != nil {
+                if self.isLikelySelfEcho(text) {
+                    if isFinal { self.runVerifiedListening(recognizer: recognizer) }
+                    return
+                }
+                if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.emit(9, text)
+                    self.runVerifiedListening(recognizer: recognizer)
+                }
+                return
+            }
+            guard isFinal else {
+                self.emit(0, text)
+                return
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                self.runVerifiedListening(recognizer: recognizer)
+                return
+            }
+            if VoicePrintEngine.shared.verify(samples: self.voiceBuffer.snapshot()) {
+                self.emit(1, trimmed)
+            } else {
+                self.emit(10)
+            }
+            self.runVerifiedListening(recognizer: recognizer)
         }
     }
 

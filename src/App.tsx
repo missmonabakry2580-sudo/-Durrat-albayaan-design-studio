@@ -421,13 +421,21 @@ function App() {
         setVoiceError("تم إيقاف الاستماع الحر تلقائيًا بعد ١٥ دقيقة من غير استخدام، حفاظًا على خصوصيتك.");
       }),
       // Voice-biometric speaker verification (see
-      // macos/transcriber/VoicePrint.swift) — the wake phrase was heard,
-      // but the voice didn't match Mona's enrolled voiceprint, so
-      // HandsFreeListener stayed passive instead of opening a session.
-      // Purely informational here; nothing to open/close in the UI since
-      // no session ever started.
+      // macos/transcriber/VoicePrint.swift) — fires on a voice mismatch.
+      // With no voiceprint-driven phrase-free flow running (the fallback,
+      // phrase-gated path), this means the wake phrase was heard in
+      // someone else's voice — rare and worth telling her about. Once a
+      // voiceprint is enrolled and the phrase-free flow (AminVoice.swift's
+      // runVerifiedListening) takes over, this fires on *any* non-matching
+      // utterance — background chatter, a TV, someone else in the room —
+      // which is the normal, expected case there, not an error: showing a
+      // banner for every one of those would be exactly the kind of noisy,
+      // intrusive behavior hands-free mode is supposed to avoid, so it's
+      // silently ignored in that mode instead.
       listen("voice://hands-free-voice-rejected", () => {
-        setVoiceError("سمعت عبارة الفتح لكن الصوت مش متطابق مع بصمتك الصوتية المسجّلة.");
+        if (!speakerEnrolled) {
+          setVoiceError("سمعت عبارة الفتح لكن الصوت مش متطابق مع بصمتك الصوتية المسجّلة.");
+        }
       }),
       listen("voice://speaker-enrolled", () => {
         setEnrollmentBusy(false);
@@ -447,7 +455,12 @@ function App() {
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
     };
-  }, [handsFreeEnabled]);
+    // speakerEnrolled added: the "voice://hands-free-voice-rejected"
+    // listener above reads it to decide whether a rejection is worth
+    // surfacing — without it in the deps, enrolling/clearing a voiceprint
+    // mid-session would leave that listener's closure holding a stale
+    // value until handsFreeEnabled itself happened to change too.
+  }, [handsFreeEnabled, speakerEnrolled]);
 
   async function handleSaveKey() {
     if (!keyInput.trim()) return;
@@ -1344,14 +1357,27 @@ function App() {
                   </div>
                   <p className="text-muted">
                     لو شغّلتيه، المايك هيفضل شغّال باستمرار (هتشوفي مؤشر المايك في الماك شغّال طول
-                    الوقت) وهو بيراقب محليًا على جهازك بس عشان يسمع عبارة الفتح — مفيش صوت بيتبعت
-                    لحد قبل ما تقوليها. أمين هيبدأ يسمعك فعليًا لما تقولي عبارة الفتح، وهيفضل سامعك
-                    لحد ما تقولي عبارة القفل أو تسكتي شوية. العبارة دي سر بينك وبينه بس — أي حد يعرفها
-                    يقدر يفتحه، فاختاري عبارة مش سهل حد يخمنها.
+                    الوقت).{" "}
+                    {speakerEnrolled ? (
+                      <>
+                        بما إن بصمة صوتك متسجّلة، أمين بيسمع كل كلامك على طول من غير أي عبارة فتح —
+                        أي جملة تقوليها بصوتك بتتبعت كأمر فورًا، وأي صوت تاني (مش صوتك) بيتجاهل
+                        تلقائي. عبارتَي الفتح والقفل تحت دول بقوا احتياطي بس، وبيُستخدموا لو مسحتي
+                        بصمة صوتك.
+                      </>
+                    ) : (
+                      <>
+                        وهو بيراقب محليًا على جهازك بس عشان يسمع عبارة الفتح — مفيش صوت بيتبعت لحد
+                        قبل ما تقوليها. أمين هيبدأ يسمعك فعليًا لما تقولي عبارة الفتح، وهيفضل سامعك
+                        لحد ما تقولي عبارة القفل أو تسكتي شوية. العبارة دي سر بينك وبينه بس — أي حد
+                        يعرفها يقدر يفتحه، فاختاري عبارة مش سهل حد يخمنها. سجّلي بصمة صوتك تحت عشان
+                        تستغني عن العبارتين دول خالص.
+                      </>
+                    )}
                   </p>
                   <div className="field-row">
                     <label className="field-label" htmlFor="wake-phrase-input">
-                      عبارة الفتح
+                      عبارة الفتح {speakerEnrolled && "(احتياطي)"}
                     </label>
                     <input
                       id="wake-phrase-input"
@@ -1363,7 +1389,7 @@ function App() {
                   </div>
                   <div className="field-row">
                     <label className="field-label" htmlFor="close-phrase-input">
-                      عبارة القفل
+                      عبارة القفل {speakerEnrolled && "(احتياطي)"}
                     </label>
                     <input
                       id="close-phrase-input"
@@ -1393,8 +1419,8 @@ function App() {
                   </div>
                   <p className="text-muted">
                     {speakerEnrolled
-                      ? "بصمة صوتك مسجّلة — عبارة الفتح لازم تتقال بصوتك عشان تفتح جلسة."
-                      : "لسه مفيش بصمة صوت مسجّلة — أي حد يعرف عبارة الفتح يقدر يفتح جلسة حاليًا. دوسي \"سجّلي صوتك\" وقولي جملة قصيرة لمدة ٤ ثواني."}
+                      ? "بصمة صوتك مسجّلة — الاستماع الحر بيسمعك على طول من غير عبارة فتح، وبيتحقق من صوتك في كل جملة."
+                      : "لسه مفيش بصمة صوت مسجّلة — أي حد يعرف عبارة الفتح يقدر يفتح جلسة حاليًا. دوسي \"سجّلي صوتك\" وقولي جملة قصيرة لمدة ٤ ثواني عشان تلغي الحاجة لعبارة الفتح خالص."}
                     {enrollmentStatus && <><br />{enrollmentStatus}</>}
                   </p>
 
@@ -1563,9 +1589,11 @@ function App() {
             disabled={!inTauri || agentBusy || handsFreeEnabled}
             title={
               handsFreeEnabled
-                ? handsFreeSessionOpen
-                  ? "أمين سامعك دلوقتي — قولي عبارة القفل أو استني شوية لما تخلصي"
-                  : "الاستماع الحر شغّال — كلّمي أمين بعبارة الفتح من غير ما تدوسي حاجة"
+                ? speakerEnrolled
+                  ? "الاستماع الحر شغّال — كلّمي أمين على طول من غير عبارة فتح، صوتك نفسه هو المفتاح"
+                  : handsFreeSessionOpen
+                    ? "أمين سامعك دلوقتي — قولي عبارة القفل أو استني شوية لما تخلصي"
+                    : "الاستماع الحر شغّال — كلّمي أمين بعبارة الفتح من غير ما تدوسي حاجة"
                 : isListening
                   ? "دوسي تاني لو خلصتي كلامك — أو استنيه يوقف من نفسه"
                   : "دوسي وابدئي الكلام — أو استخدمي alt+A من أي مكان"
