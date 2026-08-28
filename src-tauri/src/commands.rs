@@ -9,8 +9,8 @@ use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::{HandsFreeSession, VoiceSession};
 use crate::{
-    agent, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks, tools,
-    verification, voice,
+    agent, audio_level, audit, brief, browser, elevenlabs, files, followups, memory, notify, tasks,
+    tools, verification, voice,
 };
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
@@ -813,6 +813,11 @@ pub async fn speak_text(
     // isLikelySelfEcho).
     voice::set_hands_free_speaking(Some(&text));
     let _ = app.emit("voice://speaking-started", text.clone());
+    // Real-time mouth movement for whichever visual mode the frontend is
+    // showing (see audio_level.rs) — decoded from the exact same MP3 bytes
+    // afplay is about to play, not a separate/approximate source. Cloned
+    // before the afplay thread below takes ownership of the original.
+    audio_level::spawn_level_emitter(app.clone(), audio.clone());
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
         if let Err(e) = elevenlabs::play(&audio) {

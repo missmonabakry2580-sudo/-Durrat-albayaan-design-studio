@@ -83,6 +83,24 @@ pub fn set_afplay_pid(pid: Option<u32>) {
         *guard = pid;
     }
 }
+
+/// Mirrors AFPLAY_PID immediately above, for the audio-level emitter thread
+/// audio_level::spawn_level_emitter starts alongside this utterance's
+/// afplay playback (see commands::speak_text). `stop_speaking` flips
+/// whatever flag is registered here so that thread stops sending
+/// voice://audio-level events the instant playback is interrupted, instead
+/// of continuing to animate the 3D avatar's mouth after Amin's voice has
+/// actually gone silent.
+static AUDIO_LEVEL_CANCEL: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> = Mutex::new(None);
+
+pub fn set_audio_level_cancel(flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) {
+    if let Ok(mut guard) = AUDIO_LEVEL_CANCEL.lock() {
+        if let Some(old) = guard.take() {
+            old.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        *guard = flag;
+    }
+}
 /// Set on the first `start_listening` call so the plain C callback below
 /// (which, being `extern "C"`, cannot capture any Rust state) has a way to
 /// reach the app and emit events. Amin only ever runs one app instance, so
@@ -268,6 +286,7 @@ pub fn stop_speaking() -> Result<(), String> {
     if let Some(pid) = pid {
         let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
     }
+    set_audio_level_cancel(None);
     set_hands_free_speaking(None);
     Ok(())
 }

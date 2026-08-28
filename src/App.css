@@ -20,6 +20,16 @@
   z-index: 0;
 }
 
+.visual-mode-toggle {
+  position: fixed;
+  top: var(--space-4, 16px);
+  left: var(--space-4, 16px);
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+}
+
 .amin-world-ambient {
   position: absolute;
   inset: 0;

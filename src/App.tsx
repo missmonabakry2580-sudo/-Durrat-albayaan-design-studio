@@ -6,6 +6,8 @@ import type { AminState } from "./components/presence/types";
 import { Splash } from "./components/splash/Splash";
 import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
+import { resetAudioLevel, setAudioLevel } from "./lib/visual/audioLevelBus";
+import { getStoredVisualMode, setStoredVisualMode, type VisualMode } from "./lib/visual/visualMode";
 import {
   type AppInfo,
   type AuditEntry,
@@ -177,6 +179,22 @@ function App() {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [upToDateMessage, setUpToDateMessage] = useState(false);
+  const [visualMode, setVisualModeState] = useState<VisualMode>(() => getStoredVisualMode());
+  const [visualModeError, setVisualModeError] = useState<string | null>(null);
+
+  /** The only thing that changes when Mona switches modes — Amin Core
+   * (conversation, memory, voice) lives entirely above this and never
+   * touches visualMode, so there's no session/context to lose. */
+  function setVisualMode(mode: VisualMode) {
+    setVisualModeState(mode);
+    setStoredVisualMode(mode);
+    setVisualModeError(null);
+  }
+
+  function handleVisualModelFailure(reason: string) {
+    setVisualMode("portrait");
+    setVisualModeError(`تعذّر تشغيل الوضع ثلاثي الأبعاد، رجعنا للصورة: ${reason}`);
+  }
 
   function togglePanel(key: PanelKey) {
     setActivePanel((current) => (current === key ? null : key));
@@ -325,9 +343,17 @@ function App() {
         setIsListening(e.payload === "listening");
         setAminState(e.payload === "listening" ? "listening" : "idle");
       }),
-      listen("voice://speaking-finished", () =>
-        setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s)),
-      ),
+      listen("voice://speaking-finished", () => {
+        setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+        resetAudioLevel();
+      }),
+      // Real-time loudness of the audio Mona is actually hearing (see
+      // src-tauri/src/audio_level.rs) — drives ThreeDAvatar's mouth via
+      // audioLevelBus. Bypasses React state deliberately (see that
+      // module's own comment): this can fire ~25 times/second while Amin
+      // talks, and re-rendering the component tree at that rate for a
+      // value only the 3D render loop reads would be pure waste.
+      listen<number>("voice://audio-level", (e) => setAudioLevel(e.payload)),
       // Hands-free: armed = passively watching for the wake phrase (nothing
       // said yet reaches the input box or the agent); "listening" fires
       // once the wake phrase opens an actual command session.
@@ -460,6 +486,7 @@ function App() {
       setVoiceError(String(e));
     }
     setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+    resetAudioLevel();
   }
 
   /** `overrideText` lets hands-free mode send a just-heard command straight
@@ -662,9 +689,32 @@ function App() {
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
       <main className="amin-world">
         <div className="amin-world-presence">
-          <AminPresence state={aminState} emotion={lastEmotion} />
+          <AminPresence
+            state={aminState}
+            emotion={lastEmotion}
+            visualMode={visualMode}
+            onModelFailure={handleVisualModelFailure}
+          />
         </div>
         <div className="amin-world-ambient" aria-hidden="true" />
+        <div className="visual-mode-toggle" role="group" aria-label="طريقة عرض أمين">
+          <button
+            type="button"
+            className={visualMode === "3d" ? "chip chip-active" : "chip"}
+            onClick={() => setVisualMode("3d")}
+            title="أمين ثلاثي الأبعاد"
+          >
+            3D
+          </button>
+          <button
+            type="button"
+            className={visualMode === "portrait" ? "chip chip-active" : "chip"}
+            onClick={() => setVisualMode("portrait")}
+            title="صورة أمين الأصلية"
+          >
+            🖼
+          </button>
+        </div>
 
         <div className="amin-world-stage">
           {!inTauri && (
@@ -675,6 +725,7 @@ function App() {
           )}
           {error && <p className="banner banner-danger">{error}</p>}
           {voiceError && <p className="banner banner-warning">🎤 {voiceError}</p>}
+          {visualModeError && <p className="banner banner-warning">🎭 {visualModeError}</p>}
           {availableUpdate && (
             <p className="banner banner-info">
               ⬆️ في تحديث جديد لأمين (نسخة {availableUpdate.version}) — تحديث تلقائي، من غير ما

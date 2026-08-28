@@ -80,6 +80,20 @@
   }
 }
 
+/* 3D Mode: a rendered, opaque bust — screen-blending it like the
+   translucent wireframe portrait would wash it out to nothing, so it gets
+   normal blending instead. The edge-feather mask and the glow/pulse
+   chrome around it stay identical to Portrait Mode, so switching modes
+   changes only what's inside the frame. */
+.amin-presence-portrait-3d {
+  mix-blend-mode: normal;
+  overflow: hidden;
+  border-radius: 50%;
+}
+.amin-presence-portrait-3d canvas {
+  display: block;
+}
+
 /* Fallback for engines without color-mix(): plain rgba, close enough. */
 @supports not (color: color-mix(in srgb, red, blue)) {
   .amin-presence-glow {

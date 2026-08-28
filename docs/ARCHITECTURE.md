@@ -890,6 +890,168 @@ falsely thinks I'm interrupting when I'm not" and "it doesn't notice when
 I do," both of which are real possible outcomes, not just the success
 case.
 
+## Visual modes: 3D avatar and Portrait, one Amin Core (2026-08-28)
+
+Mona asked for two ways to *see* Amin — a real 3D facial-rig avatar and her
+originally-approved reference artwork animated as a talking portrait —
+switchable at any time without starting a new conversation, resetting
+memory, or changing voice. The architecture keeps this literal: nothing
+about the conversation, agent, tools, memory, or voice pipeline knows or
+cares which renderer is on screen.
+
+```
+Amin Core (App.tsx state: agentLog, voice events, tasks, settings — unchanged)
+      │
+      └── AminPresence (src/components/presence/AminPresence.tsx)
+              │
+              ├── visualMode === "3d"       → ThreeDAvatar.tsx
+              └── visualMode === "portrait" → the original <img> (unchanged)
+```
+
+`visualMode` (`src/lib/visual/visualMode.ts`) is a single `"3d" | "portrait"`
+value read from/written to `localStorage` (key `amin.visualMode`) — a
+display preference with no security or audit relevance, unlike every other
+durable setting in this app (hands-free, API keys) which goes through a
+Rust-side command specifically *because* those carry a trust decision.
+Persists across restarts the same way those do (WKWebView keeps
+localStorage in the app's own data directory); defaults to `"portrait"` on
+first launch. A small toggle (top-left, `.visual-mode-toggle` in
+`App.css`) is the only new UI — deliberately not a settings panel or a new
+screen. Switching modes only ever swaps which component renders inside
+`AminPresence`'s existing slot; `agentLog`, `aminState`, and every voice
+event listener live in `App.tsx` above that slot and are never touched.
+
+### 3D Mode: the real facial-rig GLB, not a placeholder
+
+`public/models/amin_facial_rig.glb` is the exact file produced and
+validated in this session's facial-rig work (see the git history for
+`scripts/facial-rig/`) — 51/52 ARKit blendshapes, 15/15 Oculus visemes,
+`tongueOut` genuinely absent (no tongue geometry in the source FBX; see the
+facial-rig section this repo already carries for that decision). Amin
+himself did the FBX→GLB conversion and viseme renaming with a real,
+headless Blender install, not by asking Mona to do it — this is the same
+file, unedited, reused as the app's actual 3D asset.
+
+`src/components/presence/ThreeDAvatar.tsx` renders it with plain `three.js`
+(GLTFLoader), not React Three Fiber — this app has no other WebGL usage,
+so an imperative scene (mounted once in a `useEffect`, disposed on
+unmount) gives direct, precise control over specific bones and morph
+target names without an extra abstraction layer. Every motion is driven by
+a real, disclosed signal:
+
+- **Blink** — a randomized 2.5-6s timer, the standard idle-blink technique;
+  not tied to state or audio.
+- **Eye saccades** — small randomized gaze targets applied to the rig's
+  real `LeftEye`/`RightEye` bones (this is a full Mixamo-style skeleton
+  bundled with the face mesh, not a face-only asset).
+- **Head sway** — a low-amplitude sine composite on the real `Head` bone,
+  capped under ~2° so it reads as breathing, not nodding.
+- **Mouth while speaking** — driven by real, decoded audio loudness (see
+  "Real-time mouth movement" below), blended across a couple of open-mouth
+  visemes for shape variety. This is honestly **amplitude-reactive mouth
+  movement, not phoneme-accurate lip sync** — there is no real-time
+  phoneme alignment anywhere in this pipeline, and none was added. Said
+  plainly rather than oversold.
+
+**A real bug found and fixed by actually testing this in a browser, not
+assumed working from the code:** forcing `eyeBlinkLeft`/`eyeBlinkRight` to
+their maximum value produced *no visible change at all* — eyes stayed
+open. Before assuming a rendering bug, the raw glTF morph-target accessor
+was inspected directly (Python, reading the binary buffer): the blend
+shape carries real, correctly-sized vertex displacement (up to ~1cm across
+525 vertices — anatomically plausible for a human-scale head), and
+three.js's GLTFLoader parses it correctly (confirmed via
+`geometry.morphAttributes`, not assumed). A control test —
+forcing `jawOpen` instead — rendered perfectly, opening the mouth
+correctly (and incidentally revealing a mouth-interior/gum mesh that looks
+tongue-like at a glance; still not a riggable tongue with its own
+blendshape, so the `tongueOut` gap stands). That isolated the bug to the
+eye region specifically: the static, non-morphing cornea (eyeball) sphere
+sits in front of the eyelid's closed position, so a real, correctly-applied
+blink is fully occluded by the eyeball Meshy's export never made shrink or
+retreat. `ThreeDAvatar.tsx` now hides `AvatarLeftCornea`/`AvatarRightCornea`
+whenever `blink.value > 0.6`, exactly when the eyelid should be covering
+them anyway — verified by polling the real animation loop's own morph
+value until it caught an actual blink mid-cycle and screenshotting that
+exact frame, not just eyeballing a few random frames.
+
+**Real-time mouth movement**: `src-tauri/src/audio_level.rs` decodes the
+same MP3 bytes ElevenLabs returns (via `symphonia`, pure Rust — no system
+codec to bundle) into PCM, computes short-window (40ms) RMS loudness
+normalized to 0.0-1.0, and `commands::speak_text` spawns a background
+thread emitting `voice://audio-level` at that cadence alongside the
+existing `afplay` playback thread — cloned from the exact same audio
+bytes, not a separate/approximate source. `stop_speaking` cancels it via
+the same `Arc<AtomicBool>` pattern already used for the afplay PID, so a
+manual stop or a real barge-in doesn't leave the mouth animating after
+Amin's voice has actually gone silent. The frontend reads this through
+`src/lib/visual/audioLevelBus.ts` — a plain module-level pub/sub, not React
+state, since it updates ~25 times/second while Amin talks and only
+`ThreeDAvatar`'s own `requestAnimationFrame` loop needs to read it, once
+per frame; running that through `useState` would re-render the whole
+component tree at that rate for a value nothing else needs.
+
+**Only wired up for the ElevenLabs voice.** The on-device
+`AVSpeechSynthesizer` path (see "Voice pipeline" above) never hands Rust
+any audio bytes at all — there is nothing to decode. On that path the 3D
+avatar's mouth simply stays at rest during speech, which is more honest
+than inventing motion with no real signal behind it.
+
+**Fallback**: if the GLB fails to load or WebGL isn't available,
+`ThreeDAvatar` calls `onFailure`, and `AminPresence`/`App.tsx` switch back
+to Portrait mode automatically with a banner explaining why — Amin Core
+(voice, conversation) is entirely unaffected either way, matching Mona's
+explicit requirement that a renderer failure never stops Amin from talking.
+
+**What's verified vs. what still needs Mona's Mac**: the GLB loading,
+camera framing, blink (including the cornea fix), eye saccades, head sway,
+mode toggle, and localStorage persistence-across-reload were all tested in
+a real headless Chromium browser this session (`npm run dev` + Playwright,
+screenshots taken and inspected, not assumed) — see the session's own
+screenshots for the exact evidence. What's *not* verifiable here: real GPU
+performance on her actual Mac, and whether the amplitude-driven mouth looks
+natural against her real ElevenLabs voice output, since this sandbox has
+no audio device and Tauri's Rust backend doesn't run here at all — `speak_text`
+and the whole `voice://audio-level` pipeline were verified by `cargo test`
+(the RMS math itself, against synthetic sine waves) and by reading the
+integration code, not by hearing it.
+
+### Portrait Mode: the honest current state
+
+Portrait Mode today renders exactly what it always has —
+`src/assets/amin-identity.jpg`, Mona's approved reference artwork — with
+no changes. Building real dynamic lip-sync/blink animation on top of it
+turned up a blocker worth stating plainly rather than working around
+quietly: **that artwork is a side-profile, translucent wireframe
+illustration with no clearly rendered mouth and no distinct eyelid** — it's
+a stylized brand image, not a frontal photographic face. Every real-time
+talking-portrait technique (a manual eyelid-mask overlay, or any neural
+lip-sync provider) needs a roughly frontal face with a visible mouth to
+drive; there is nothing in this specific image to animate without
+inventing geometry that isn't there, which is exactly the kind of fake
+success this project doesn't do. Provider research (below) still stands
+independent of this, but using it against *this exact image* would very
+likely just fail or look broken.
+
+**Provider research** (bring-your-own-audio real-time avatar APIs, so
+Portrait Mode keeps the same shared ElevenLabs voice rather than a
+provider's own TTS):
+
+| Provider | Fit | Notes |
+|---|---|---|
+| **Simli** (recommended) | Best | Purpose-built for external audio → single-photo lip-sync; PCM16 over WebSocket in, WebRTC video out. ~$0.05/min pay-as-you-go, $10 free credit. Cheapest, simplest integration found. |
+| **D-ID** (fallback) | Good, unverified detail | Mature single-photo workflow, documented Arabic support, but its audio-driven Streams API is labeled "legacy" in D-ID's own docs and pricing sources conflict — needs a real quote and a POC before committing. |
+| HeyGen LiveAvatar | Not recommended yet | Two unconfirmed gaps sit exactly on the hard requirements: whether raw external audio (vs. HeyGen's own TTS) is accepted, and whether a custom single photo works in the *real-time* pipeline at all. |
+
+None of this can be integrated without Mona creating an account and
+providing an API key/payment — not something Amin can do on her behalf.
+
+**Today, until both (a) a new frontal reference image exists and (b) a
+provider + credential are chosen**: Portrait Mode stays exactly as it was
+before this session — the static artwork, no blink, no lip movement. This
+is disclosed as incomplete, not presented as done. See the session's
+report to Mona for the two decisions this is waiting on.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

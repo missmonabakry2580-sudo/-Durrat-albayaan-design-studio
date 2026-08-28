@@ -64,6 +64,11 @@ tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"]
 tokio = { version = "1", features = ["sync"] }
 futures-util = "0.3.34"
 base64 = "0.23.1"
+# Decodes ElevenLabs' MP3 reply into PCM so audio_level.rs can compute a
+# real loudness envelope for the 3D avatar's mouth (see
+# docs/ARCHITECTURE.md's "Visual modes" section) — pure Rust, no system
+# codec dependency to bundle or notarize alongside afplay.
+symphonia = { version = "0.5", features = ["mp3"] }
 
 [dev-dependencies]
 # tauri::test::mock_app — used by tools.rs's unit tests, which need a real
