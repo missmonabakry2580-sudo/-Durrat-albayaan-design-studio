@@ -1457,7 +1457,32 @@ Fixed by removing `private` from `AudioResampler`'s declaration — verified
 the real cause the same way as the CSP bug earlier this session: not by
 reasoning about what *should* work, but by downloading the next build's
 actual `.app.tar.gz` and confirming `libaminvoice.dylib` is no longer
-0 bytes (see the commit that fixes this for the exact byte count found).
+0 bytes. **Confirmed, not assumed**: the next published build's
+`libaminvoice.dylib` was downloaded and inspected directly — a real
+400KB universal Mach-O binary (x86_64 + arm64), not a placeholder.
+
+### The 3D avatar's T-pose arms, properly fixed (not just hidden) (2026-08-28)
+
+The camera-framing fix (above, same day) only hid this rig's arms-out rest
+pose at the specific aspect ratio it was tested against. Mona's next real
+Mac screenshot — a wider window, closer to an actual MacBook's — showed
+the arms poking back into frame as odd dark triangular shapes at the
+shoulders, and her reaction named the real issue precisely: **"أنا بنيت
+ليك جسم كامل ليه انت دمرت الشكل كده"** (I built you a full body, why did
+you destroy the shape like that). Cropping around a bad pose was never
+going to hold at every window size a real Mac might use; the actual fix is
+posing the body correctly, not hiding more of it.
+
+`ThreeDAvatar.tsx` now rotates the `LeftArm`/`RightArm` bones 90° around Z
+right after the model loads — a one-time static pose correction, not part
+of the per-frame idle animation — bringing both arms down from the rig's
+T-pose to a natural at-the-sides stance. Confirmed with Playwright
+screenshots across three aspect ratios, including a deliberately extreme
+1800×650 chosen to stress-test wider-than-tested windows: a clean shoulder
+silhouette with no visible artifact at any of them, not just the one this
+was first checked against — the same lesson as the camera-framing fix
+itself, applied this time before shipping rather than after another
+screenshot.
 
 ## ElevenLabs Arabic pronunciation audit (2026-08-28)
 

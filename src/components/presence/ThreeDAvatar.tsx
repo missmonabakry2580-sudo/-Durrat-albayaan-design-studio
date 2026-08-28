@@ -159,6 +159,34 @@ export function ThreeDAvatar({ state, className, onFailure }: ThreeDAvatarProps)
           onFailure("الملف اتحمّل لكن مفيش meshes بها morph targets — فحصي public/models/amin_facial_rig.glb");
         }
 
+        // Real bug from a real Mac screenshot (2026-08-28, Mona: "أنا بنيت
+        // ليك جسم كامل ليه انت دمرت الشكل كده" — I built you a full body,
+        // why did you destroy the shape): this rig's rest pose is a T-pose
+        // (arms out to the sides), and it ships with no idle-standing
+        // animation to fix that. The camera-framing fix earlier the same
+        // day only hid this at the aspect ratios it happened to be tested
+        // at — a wider window (much closer to a real MacBook's) still
+        // pulled the outstretched arms into frame as the odd dark
+        // triangular shapes she circled. Cropping around the problem was
+        // never going to hold at every window size; posing it properly
+        // does. Rotating LeftArm/RightArm 90° around Z brings both arms
+        // down to a natural at-the-sides pose — confirmed with Playwright
+        // screenshots across three aspect ratios (including a deliberately
+        // extreme 1800×650) showing a clean shoulder silhouette with no
+        // artifacts at any of them, not just the one this was first tested
+        // against.
+        const leftArm = root.getObjectByName("LeftArm");
+        const rightArm = root.getObjectByName("RightArm");
+        const armDropAngle = Math.PI / 2;
+        if (leftArm) {
+          leftArm.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), armDropAngle));
+        }
+        if (rightArm) {
+          rightArm.quaternion.multiply(
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -armDropAngle),
+          );
+        }
+
         // Frame a bust shot (head + shoulders), not the full body this
         // skeleton also carries — matches the tight crop the static
         // portrait already used in this same slot.
