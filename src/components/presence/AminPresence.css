@@ -56,12 +56,14 @@
      ("أمين"/"Amin") rather than splitting the loss evenly with the
      character's face on the left. */
   object-position: 68% 42%;
-  /* The artwork is glowing detail on a near-black field. Screen-blending
-     it onto the app's own navy/blue background — instead of laying it
-     down as an opaque rectangle — makes that black dissolve into
-     whatever is behind it, so the glow itself reads as fused into the
-     interface rather than a photo sitting on top of it. */
-  mix-blend-mode: screen;
+  /* Normal blend, not screen: this is a real opaque photograph (updated
+     2026-08-28 to Mona's chosen photorealistic portrait, replacing the
+     earlier translucent wireframe artwork that screen-blending was
+     designed for). Screen-blending a normal face photo would wash the
+     skin tones out toward white instead of dissolving into the
+     background — see the "-3d" rule below, which already made this same
+     call for the 3D avatar canvas. */
+  mix-blend-mode: normal;
   /* A gentle rim feather on top of the blend, so even the artwork's own
      non-black detail right at the frame's edge dissolves rather than
      ending in a visible straight line. */
@@ -80,13 +82,12 @@
   }
 }
 
-/* 3D Mode: a rendered, opaque bust — screen-blending it like the
-   translucent wireframe portrait would wash it out to nothing, so it gets
-   normal blending instead. The edge-feather mask and the glow/pulse
-   chrome around it stay identical to Portrait Mode, so switching modes
-   changes only what's inside the frame. */
+/* 3D Mode: the canvas needs its own clipping (a <canvas> isn't naturally
+   circular like the masked <img> above) — blend mode is already "normal"
+   on the shared base rule, so only the clip is added here. The edge-
+   feather mask and glow/pulse chrome stay identical to Portrait Mode, so
+   switching modes changes only what's inside the frame. */
 .amin-presence-portrait-3d {
-  mix-blend-mode: normal;
   overflow: hidden;
   border-radius: 50%;
 }
