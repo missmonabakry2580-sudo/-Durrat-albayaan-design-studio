@@ -379,6 +379,23 @@ Fixed two ways, not just bumped once:
    shipping a build the updater will never offer. A one-time fix without
    this guard is just next week's repeat of the same bug.
 
+**A real gap this guard has, found by auditing its own first day of use**:
+it only compares against the *currently published* `latest.json` — it has
+no way to see another run's in-flight, not-yet-published version. The very
+next commit after this one (the `setVoiceProcessingEnabled` revert) was
+pushed with its version accidentally still at `0.2.15` — the same mistake
+this guard exists to catch — but its check happened to run while `0.2.15`'s
+own build was still mid-flight, before that one had published. It compared
+against the still-older previously-published version, saw a difference,
+and passed. No real harm here (the two commits are linearly ordered, so
+the later one's release is a strict superset of the earlier one's code —
+whichever finished publishing last, `0.2.16`, is what's actually live), but
+it's worth naming plainly rather than quietly relying on luck: two pushes
+within the same few minutes, both forgetting to bump, can both pass this
+guard. The actual protection is still "bump the version every push" as a
+habit; this guard catches forgetting after the fact, not a race between
+two simultaneous forgettings.
+
 ## Realtime voice: the architecture decision, and why it isn't ElevenAgents
 
 Mona's real ask isn't "Amin can speak" — it's a natural back-and-forth
