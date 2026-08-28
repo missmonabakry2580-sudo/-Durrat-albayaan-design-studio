@@ -1206,7 +1206,7 @@ function App() {
                       <div className="field-row">
                         <input
                           type="text"
-                          placeholder="ElevenLabs Voice ID"
+                          placeholder="مثال: 21m00Tcm4TlvDq8ikWAM — ده Voice ID، مش المفتاح اللي فوق"
                           value={elevenLabsVoiceIdInput}
                           onChange={(e) => {
                             setElevenLabsVoiceIdInput(e.currentTarget.value);
@@ -1252,12 +1252,12 @@ function App() {
                   {simliKeySaved && (
                     <div className="field-row">
                       <label className="field-label" htmlFor="simli-face-id-input">
-                        Simli Face ID (سيبيه فاضي = preset مجاني للاختبار)
+                        Simli Face ID (سيبيه فاضي = preset مجاني للاختبار — ده مش الـ API key اللي فوق)
                       </label>
                       <input
                         id="simli-face-id-input"
                         type="text"
-                        placeholder="مثال: preset مجاني افتراضيًا"
+                        placeholder="سيبيه فاضي عشان تستخدمي الـ preset المجاني"
                         value={simliFaceIdInput}
                         onChange={(e) => setSimliFaceIdInput(e.currentTarget.value)}
                         disabled={!inTauri}
