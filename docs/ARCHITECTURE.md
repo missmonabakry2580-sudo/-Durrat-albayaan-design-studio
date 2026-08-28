@@ -2130,6 +2130,41 @@ actually works now on her Mac — that's still an open question this
 change is designed to get a real, unambiguous answer to on the next
 test, not a claim that hands-free itself is fixed.
 
+## The armed chime worked — narrowing to recognition/verification (2026-08-28)
+
+Mona confirmed hearing the new "armed" chime (0.2.30), which rules out
+the engine failing to start at all. She still heard nothing when she
+actually spoke to it — no "heard you" chime, no reply. That narrows the
+problem to one of two places, and there was no way to tell them apart
+from outside the app: (1) speech recognition genuinely isn't
+transcribing anything, or (2) it's transcribing fine but
+`VoicePrintEngine.verifyWithScore` keeps rejecting her own voice —
+which, once a voiceprint is enrolled, is *deliberately* silent (no
+banner, no chime) so ordinary background noise doesn't interrupt hands-
+free mode. That silence is exactly right for normal use and exactly
+wrong for debugging this: a real false-rejection looks identical to "not
+listening at all" from her side.
+
+Rather than guess a fourth time, extended the existing Developer Mode
+panel (`App.tsx`, already used for TTS debug info) to always record —
+never shown unless she turns Developer Mode on — the last partial
+transcript hands-free heard (`voice://partial`) and the last voiceprint
+match score on any rejection (`voice://hands-free-voice-rejected`),
+regardless of whether a banner is shown for it. Turning Developer Mode
+on and trying hands-free again now gives a real three-way split instead
+of another blind fix: nothing in either field means recognition itself
+never produced a result; a partial transcript with no rejection score
+recorded means something else swallowed it after recognition; a partial
+transcript *and* a low match score means the fix is tuning
+`matchThreshold` (or diagnosing why her enrolled embedding doesn't match
+her own voice well) — a completely different, much narrower problem than
+"hands-free doesn't work."
+
+**What's verified vs. not**: `tsc` and `npm run build` pass. **Not
+verified**: which of the three cases above is actually happening — this
+change exists specifically to answer that from real data on her Mac
+instead of another guess.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

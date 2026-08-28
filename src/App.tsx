@@ -184,6 +184,17 @@ function App() {
   const [agentInput, setAgentInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Real bug found 2026-08-28: Mona could hear the new "armed" chime but
+  // hands-free still never acted on anything she said, with no way to tell
+  // apart "recognition never heard a word" from "it heard her but the
+  // voiceprint kept rejecting it" — the latter is deliberately silent (no
+  // banner, no chime) once a voiceprint is enrolled, on purpose, so normal
+  // hands-free use isn't interrupted by every rejected background noise.
+  // Developer Mode is the right place to break that silence back open:
+  // opt-in, not shown to her normally, but gives real data instead of
+  // another guess the next time something like this happens.
+  const [handsFreeLastPartial, setHandsFreeLastPartial] = useState<string | null>(null);
+  const [handsFreeLastRejection, setHandsFreeLastRejection] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskInput, setTaskInput] = useState("");
   const [showDoneTasks, setShowDoneTasks] = useState(false);
@@ -329,7 +340,10 @@ function App() {
   useEffect(() => {
     if (!inTauri) return;
     const unlistenPromises = [
-      listen<string>("voice://partial", (e) => setAgentInput(e.payload)),
+      listen<string>("voice://partial", (e) => {
+        setAgentInput(e.payload);
+        setHandsFreeLastPartial(e.payload);
+      }),
       // Manual tap-to-toggle only fills the input box — Mona still presses
       // "إرسال". During an open hands-free session (handsFreeSessionOpen)
       // the same event instead sends itself straight to the agent, since
@@ -429,6 +443,14 @@ function App() {
       // intrusive behavior hands-free mode is supposed to avoid, so it's
       // silently ignored in that mode instead.
       listen<string>("voice://hands-free-voice-rejected", (e) => {
+        // Always recorded for Developer Mode (see handsFreeLastRejection's
+        // declaration) even though the banner below stays gated on
+        // !speakerEnrolled — a rejection once a voiceprint is enrolled is
+        // the normal, expected case for background noise, but it's also
+        // exactly the failure mode that looks identical to "not listening
+        // at all" from the outside. Silent in the UI, visible in Developer
+        // Mode.
+        setHandsFreeLastRejection(e.payload || "0");
         if (!speakerEnrolled) {
           // The payload is the real cosine similarity score (see
           // VoicePrint.swift's verifyWithScore) — surfaced in the message
@@ -1473,6 +1495,11 @@ function App() {
                       ) : (
                         "لسه مفيش رد اتقال — هيظهر هنا تفاصيل آخر رد صوتي."
                       )}
+                      <br />
+                      <br />
+                      hands-free last partial heard: {handsFreeLastPartial ?? "(none yet)"}
+                      <br />
+                      hands-free last voiceprint score: {handsFreeLastRejection ?? "(no rejection yet)"}
                     </p>
                   )}
 
