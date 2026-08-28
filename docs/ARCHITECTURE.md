@@ -791,6 +791,49 @@ Mona typing "موافقة" back, Amin executing and narrating — has not been
 run against the live Anthropic API or on a real Mac. That's the natural
 next thing to try together once she's at the keyboard.
 
+**Update, 2026-08-28: two real hands-free trust problems, found by Mona
+actually using it, not by review.** She left hands-free on and moved to
+unrelated, confidential work (drafting official government correspondence
+in Chrome); noticing the mic had stayed hot the whole time via macOS's own
+privacy indicator was, in her words, a serious problem — a live
+microphone she'd forgotten about while handling ministry work is a real
+trust failure, not a cosmetic one. Investigating turned up two separate
+issues, not one:
+
+1. **No inactivity timeout.** Hands-free, once on, listened forever with
+   no automatic stop. Fixed in `AminVoice.swift`: `HandsFreeListener`
+   tracks `passiveModeStartedAt`, reset on every real wake-phrase
+   engagement (`openActiveSession`), and after 15 minutes of continuous
+   passive listening with no engagement, `armPassive` emits a new kind 8
+   instead of re-arming. It deliberately does *not* call its own `stop()`
+   at that point — tearing down `audioEngine`/`removeTap` from inside its
+   own recognition callback risked a double-stop if the normal stop path
+   then ran anyway against stale state. Instead, kind 8 → Rust's
+   `voice::on_voice_event` → `voice://hands-free-timeout` → a new frontend
+   listener that calls `setHandsFreeMode(false)`, the same
+   `set_hands_free_mode` Tauri command a manual toggle-off already uses —
+   one real, already-correct teardown path, not two.
+2. **The toggle could lie after a restart.** `set_hands_free_mode`
+   persisted its on/off state to the settings table, and
+   `get_hands_free_settings` read it back into the frontend's initial
+   `handsFreeEnabled` — but `lib.rs`'s `setup` never called
+   `voice::start_hands_free` on launch. A previous session's "on" would
+   make a fresh launch's UI claim hands-free was running when the native
+   listener had never actually restarted. The fix is not "make it actually
+   auto-resume the microphone on launch" — silently starting a live mic
+   without an explicit action that session is exactly the kind of thing
+   Mona was just alarmed by — so `get_hands_free_settings` now always
+   reports `enabled: false`, and `set_hands_free_mode` no longer persists
+   the flag at all (dead once nothing reads it back). Hands-free is now a
+   per-session choice, full stop: she turns it on when she wants it, every
+   time, and it never resumes on its own.
+
+Not verified on a real Mac yet (the Swift side can't be compiled in this
+sandbox at all — no `swiftc`, same limitation as every other AminVoice.swift
+change) — Mona should confirm the 15-minute timeout actually fires and
+stops the mic, and that a relaunch genuinely shows hands-free off with no
+stale "on" state anywhere.
+
 ## Roadmap (for orientation — each phase gets its own design notes)
 
 | Phase | Scope |

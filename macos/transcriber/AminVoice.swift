@@ -39,9 +39,13 @@
 // phrase, text is always null), 6 = wake phrase heard — a command session
 // just opened (text always null), 7 = the close phrase ended the command
 // session (text always null; any command text before the close phrase was
-// already sent as a normal kind-1 final). The string is a NUL-terminated
-// UTF-8 C string valid only for the duration of the call — the Rust side
-// must copy it before returning.
+// already sent as a normal kind-1 final), 8 = hands-free timed out after
+// passiveModeTimeoutSeconds of no wake phrase (text always null; the audio
+// engine is still technically running at this instant — see armPassive's
+// comment for why the actual teardown happens on the Rust/frontend side
+// instead of here). The string is a NUL-terminated UTF-8 C string valid
+// only for the duration of the call — the Rust side must copy it before
+// returning.
 //
 // KNOWN LIMITATION: SFSpeechRecognizer is locale-based (one language per
 // recognizer), not free code-switching — it does not natively handle the
@@ -424,6 +428,20 @@ private final class HandsFreeListener {
     /// treated as a wake phrase, a command, or the close phrase.
     private var muted = false
 
+    /// When continuous passive (wake-phrase-only) listening last began, or
+    /// `nil` while an active command session is open. Found in the field
+    /// on 2026-08-28: Mona left hands-free on, moved to unrelated work
+    /// (typing an official government letter in Chrome), and only then
+    /// noticed the mic had stayed hot the whole time via macOS's own
+    /// privacy indicator — a real trust problem for someone whose actual
+    /// job involves confidential correspondence, not a hypothetical one.
+    /// `armPassive` checks this against `passiveModeTimeoutSeconds` and,
+    /// past it, emits kind 8 instead of re-arming — see its own comment for
+    /// why the Rust/frontend layer does the actual stopping rather than
+    /// this class calling `stop()` on itself.
+    private var passiveModeStartedAt: Date?
+    private let passiveModeTimeoutSeconds: TimeInterval = 15 * 60
+
     private enum Mode: Equatable { case passive, active }
 
     func setMuted(_ value: Bool) {
@@ -544,8 +562,28 @@ private final class HandsFreeListener {
     /// command — partial/final transcripts are checked locally and never
     /// forwarded as kind 0/1, so nothing reaches Amin's input box until she
     /// actually opens a session.
+    ///
+    /// Also where the inactivity timeout is checked (see
+    /// `passiveModeStartedAt`'s comment): past `passiveModeTimeoutSeconds`
+    /// of continuous passive listening with no wake phrase heard, this
+    /// emits kind 8 and returns without re-arming, instead of calling
+    /// `stop()` itself. Deliberately: the audio engine/tap stay running for
+    /// the brief moment until the frontend's `voice://hands-free-timeout`
+    /// handler calls the real `stop_hands_free` Tauri command — the same
+    /// single, already-correct teardown path a manual toggle-off uses —
+    /// rather than this class tearing itself down and risking a
+    /// double-stop (`removeTap`/`audioEngine.stop()` called twice) if that
+    /// command then runs anyway against stale `HandsFreeSession` state.
     private func armPassive(recognizer: SFSpeechRecognizer) {
         guard !stopped else { return }
+        if let startedAt = passiveModeStartedAt {
+            if Date().timeIntervalSince(startedAt) > passiveModeTimeoutSeconds {
+                emit(8)
+                return
+            }
+        } else {
+            passiveModeStartedAt = Date()
+        }
         mode = .passive
         emit(5)
         runRecognition(recognizer: recognizer, onDeviceOnly: true) { [weak self] text, isFinal in
@@ -570,6 +608,10 @@ private final class HandsFreeListener {
     /// phrase is heard.
     private func openActiveSession(recognizer: SFSpeechRecognizer) {
         guard !stopped else { return }
+        // Real engagement — reset the inactivity clock so it measures idle
+        // passive time since this moment, not since hands-free first
+        // turned on.
+        passiveModeStartedAt = nil
         mode = .active
         emit(6)
         listenForCommand(recognizer: recognizer)

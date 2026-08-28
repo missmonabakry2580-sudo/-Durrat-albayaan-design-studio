@@ -26,10 +26,11 @@ const ELEVENLABS_KEY_NAME: &str = "elevenlabs_api_key";
 const ELEVENLABS_VOICE_ID_KEY: &str = "elevenlabs_voice_id";
 
 /// Hands-free mode settings — see voice::start_hands_free and
-/// AminVoice.swift's `HandsFreeListener`. Off by default: it means the
-/// microphone stays open continuously while enabled, which is a real
-/// privacy trade-off Mona opts into explicitly, not a default.
-const HANDS_FREE_ENABLED_KEY: &str = "hands_free_enabled";
+/// AminVoice.swift's `HandsFreeListener`. Off by default, every launch, on
+/// purpose: it means the microphone stays open continuously while enabled,
+/// which is a real privacy trade-off Mona opts into explicitly each
+/// session, never something that persists or silently resumes on its own
+/// — see `get_hands_free_settings`'s doc comment.
 const WAKE_PHRASE_KEY: &str = "wake_phrase";
 const CLOSE_PHRASE_KEY: &str = "close_phrase";
 const DEFAULT_WAKE_PHRASE: &str = "يا أمين";
@@ -833,11 +834,23 @@ pub struct HandsFreeSettings {
     pub close_phrase: String,
 }
 
+/// `enabled` is deliberately always `false` here — never read from the
+/// persisted `hands_free_enabled` setting `set_hands_free_mode` still
+/// writes below. A real, found-in-the-field bug: `lib.rs`'s `setup` never
+/// calls `voice::start_hands_free` on launch, so a persisted "on" from a
+/// previous session used to make this command tell the frontend hands-free
+/// was running when the native listener never actually restarted — the
+/// toggle lied. Rather than fix that by making hands-free silently
+/// auto-resume a live microphone on every app launch (exactly the kind of
+/// "was this listening the whole time without me noticing" mona was
+/// alarmed by, mid-way through official government correspondence, on
+/// 2026-08-28), the safer call is: it never resumes on its own. She always
+/// has to turn it on again this session, deliberately, every time.
 #[tauri::command]
 pub fn get_hands_free_settings(db: State<Db>) -> Result<HandsFreeSettings, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     Ok(HandsFreeSettings {
-        enabled: get_setting(&conn, HANDS_FREE_ENABLED_KEY).as_deref() == Some("on"),
+        enabled: false,
         wake_phrase: get_setting(&conn, WAKE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_WAKE_PHRASE.to_string()),
         close_phrase: get_setting(&conn, CLOSE_PHRASE_KEY)
             .unwrap_or_else(|| DEFAULT_CLOSE_PHRASE.to_string()),
@@ -911,12 +924,14 @@ mod hands_free_phrase_tests {
     }
 }
 
-/// Turns hands-free mode on or off and persists the choice. The persisted
-/// `enabled` flag is set optimistically here — if the native side then
-/// fails asynchronously (e.g. on-device recognition unavailable, mic/speech
-/// permission denied), that failure only surfaces later as a
-/// `voice://error` event, same unresolved gap as the rest of this voice
-/// pipeline (see AminVoice.swift's header). Not yet verified on a real Mac.
+/// Turns hands-free mode on or off for this session only — deliberately
+/// not persisted (see `get_hands_free_settings`'s doc comment for why: it
+/// never silently resumes a live microphone on the next launch). If the
+/// native side then fails asynchronously (e.g. on-device recognition
+/// unavailable, mic/speech permission denied), that failure only surfaces
+/// later as a `voice://error` event, same unresolved gap as the rest of
+/// this voice pipeline (see AminVoice.swift's header). Not yet verified on
+/// a real Mac.
 #[tauri::command]
 pub fn set_hands_free_mode(
     enabled: bool,
@@ -930,7 +945,6 @@ pub fn set_hands_free_mode(
     }
     let (wake_phrase, close_phrase) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        set_setting(&conn, HANDS_FREE_ENABLED_KEY, if enabled { "on" } else { "off" })?;
         (
             get_setting(&conn, WAKE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_WAKE_PHRASE.to_string()),
             get_setting(&conn, CLOSE_PHRASE_KEY).unwrap_or_else(|| DEFAULT_CLOSE_PHRASE.to_string()),

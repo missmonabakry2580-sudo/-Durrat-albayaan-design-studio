@@ -153,6 +153,14 @@ unsafe extern "C" fn on_voice_event(kind: c_int, text: *const c_char) {
         5 => app.emit("voice://hands-free-armed", text),
         6 => app.emit("voice://hands-free-listening", text),
         7 => app.emit("voice://hands-free-closed", text),
+        // AminVoice.swift's HandsFreeListener stopped re-arming on its own
+        // after its inactivity timeout, but deliberately didn't tear down
+        // its own audio engine/tap (see its comment on this — re-entrant
+        // native calls from inside its own recognition callback). The
+        // frontend's listener for this event is what actually finishes the
+        // job, by calling the normal set_hands_free_mode(false) command —
+        // the same already-correct stop path a manual toggle-off uses.
+        8 => app.emit("voice://hands-free-timeout", text),
         _ => app.emit("voice://error", text),
     };
 }

@@ -332,6 +332,22 @@ function App() {
       listen("voice://hands-free-closed", () => {
         setHandsFreeSessionOpen(false);
       }),
+      // Real bug found 2026-08-28: Mona left hands-free on and moved to
+      // unrelated, sensitive work with no idea the mic was still hot —
+      // AminVoice.swift now auto-stops passive listening after 15 minutes
+      // of no wake phrase and emits this instead of re-arming. It doesn't
+      // tear down its own audio engine (see its comment on why) — this is
+      // what actually finishes the job, through the same
+      // setHandsFreeMode(false) path a manual toggle-off uses, and tells
+      // her plainly why it stopped so a mic that goes quiet on its own
+      // doesn't read as a different, more alarming problem.
+      listen("voice://hands-free-timeout", () => {
+        setHandsFreeMode(false).catch(() => {});
+        setHandsFreeEnabled(false);
+        setHandsFreeSessionOpen(false);
+        setAminState((s) => (s === "armed" || s === "listening" ? "idle" : s));
+        setVoiceError("تم إيقاف الاستماع الحر تلقائيًا بعد ١٥ دقيقة من غير استخدام، حفاظًا على خصوصيتك.");
+      }),
     ];
     return () => {
       unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));

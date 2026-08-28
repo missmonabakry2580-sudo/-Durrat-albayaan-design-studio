@@ -315,11 +315,32 @@ docs/ARCHITECTURE.md's "Hands-free mode: wake phrase / close phrase"). The
 trade-off here is the one Mona raised herself, unprompted, and it's real —
 disclosed plainly, not minimized:
 
-- **Off by default, opt-in only.** `set_hands_free_mode` is never called on
-  startup or silently — Mona turns it on herself from Settings, and the UI
-  states plainly what that means: the microphone stays open continuously
-  (macOS's own mic indicator reflects this honestly, it isn't hidden) for
-  as long as the mode is on, not just while a key is held.
+- **Off by default every session, opt-in only, never persisted.** Mona
+  turns it on herself from Settings, and the UI states plainly what that
+  means: the microphone stays open continuously (macOS's own mic indicator
+  reflects this honestly, it isn't hidden) for as long as the mode is on,
+  not just while a key is held. Found in the field on 2026-08-28, not
+  caught by review: `get_hands_free_settings` used to read a *persisted*
+  on/off flag into the frontend's initial state, but `voice::start_hands_free`
+  was never actually called on launch — so a previous session's "on" could
+  make a fresh launch's toggle claim hands-free was running when the
+  native listener never restarted. Fixed the trust problem, not just the
+  inconsistency: `get_hands_free_settings` now always reports `enabled:
+  false` and nothing persists the flag at all. The alternative fix — making
+  it actually auto-resume a live microphone on launch to match what was
+  persisted — was rejected on purpose: silently starting to listen without
+  an explicit action that session is the exact failure mode this whole
+  section exists to prevent.
+- **A 15-minute inactivity timeout, because "opt-in" isn't "remembers to
+  opt back out."** Also found on 2026-08-28: Mona turned hands-free on,
+  moved to unrelated confidential work, and didn't notice the mic had
+  stayed hot until macOS's own indicator caught her eye — for someone
+  whose job includes official correspondence, a forgotten live microphone
+  is a real problem, not a hypothetical one. `HandsFreeListener` now stops
+  re-arming its passive (wake-phrase) phase after 15 minutes with no wake
+  phrase heard, resetting that clock only on genuine engagement (a command
+  session actually opening) — so leaving it on by accident self-corrects
+  within 15 minutes instead of running indefinitely.
 - **The wake-phrase watch stays on-device, always.** `HandsFreeListener`
   forces `requiresOnDeviceRecognition = true` for the passive phase
   regardless of what the OS default would pick, and refuses to start at
