@@ -89,6 +89,22 @@ jobs:
             printf '' > "$DEST"
           fi
 
+      # Copies the committed ECAPA-TDNN model (macos/transcriber/Resources/,
+      # see VoicePrint.swift and scripts/voiceprint/convert_ecapa_to_coreml.py)
+      # into src-tauri/ so tauri.conf.json's bundle.resources can reference
+      # it with a plain filename — same reason libaminvoice.dylib is placed
+      # here rather than referenced from its own source directory. A real
+      # bug on a real Mac (2026-08-28): the previous config referenced this
+      # file via a "../macos/transcriber/..." resource path, and the very
+      # next build was the first time Mona's Mac failed to dlopen
+      # libaminvoice.dylib at all ("no such file" for every candidate path
+      # tried) — strong evidence that a resource path escaping src-tauri
+      # broke bundling for the *whole* Resources folder, not just this one
+      # entry. Copying it in-tree instead avoids relying on tauri-bundler's
+      # unclear behavior for out-of-tree resource paths.
+      - name: Copy the voiceprint model into src-tauri
+        run: cp -R macos/transcriber/Resources/ECAPA_TDNN.mlpackage src-tauri/ECAPA_TDNN.mlpackage
+
       # Notarization scans every Mach-O binary inside the .app, not just the
       # main executable — libaminvoice.dylib is bundled as a plain resource
       # (tauri.conf.json's bundle.resources), which tauri-bundler's signing

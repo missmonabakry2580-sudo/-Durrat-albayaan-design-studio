@@ -1404,6 +1404,38 @@ averaged utterances) — a reasonable v1 given there's no way to iterate on
 recording quality without a real Mac in the loop, but a likely first
 improvement once real accuracy data comes back.
 
+### A real regression this shipped: the whole voice engine stopped loading (2026-08-28)
+
+The 0.2.18 release Mona updated to reported, on every voice feature at
+once: **"couldn't load the voice engine: dlopen(...libaminvoice.dylib):
+tried: ... (no such file) ..."** — the dylib itself missing from the
+installed `.app`, not a code bug inside it. This release's only bundling
+change was adding the ECAPA-TDNN model above as a second
+`bundle.resources` entry, referenced via a path escaping `src-tauri`
+(`"../macos/transcriber/Resources/ECAPA_TDNN.mlpackage"`). Tauri's own
+docs say array-format resources bundle with "the original directory
+structure preserved" — for a source path that starts with `../`, what
+that resolves to inside the app's `Resources/` folder is genuinely
+unclear, and the timing (this is the first release where any voice
+feature failed to load at all, immediately after this entry was added) is
+strong circumstantial evidence it broke resource bundling for the *whole*
+`Resources/` folder, not just its own entry. Not proven with certainty —
+no way to inspect a shipped `.app`'s actual bundle contents from this
+sandbox — but treated as the working theory rather than left unaddressed.
+
+Fixed by removing the cross-directory reference entirely: a new CI step
+("Copy the voiceprint model into src-tauri") copies the committed
+`macos/transcriber/Resources/ECAPA_TDNN.mlpackage` into `src-tauri/`
+(git-ignored there, same treatment as `libaminvoice.dylib` itself — a
+build-time copy, never a source file) right before the bundling step, and
+`tauri.conf.json`'s resource entry is now a plain `"ECAPA_TDNN.mlpackage"`
+— matching `libaminvoice.dylib`'s own entry, which never had this problem.
+**Not yet verified against the actual failure** — the only way to confirm
+is Mona's next update actually loading voice again — but avoiding an
+ambiguous, only-lightly-documented resource-path shape in favor of the
+exact pattern already proven to work is the right fix regardless of
+whether this specific causal theory is 100% correct.
+
 ## ElevenLabs Arabic pronunciation audit (2026-08-28)
 
 Mona reported Arabic pronunciation as "سيئ جدًا" (very bad) — most sentences
