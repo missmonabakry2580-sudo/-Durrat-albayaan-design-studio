@@ -863,14 +863,14 @@ function App() {
                   ) : (
                     <ul className="task-list">
                       {workspaceFiles.map((f) => (
-                        <li key={f.name} className="task-row">
-                          <span className="task-title">{f.is_dir ? `📁 ${f.name}` : `📄 ${f.name}`}</span>
+                        <li key={f.path} className="task-row">
+                          <span className="task-title">{f.is_dir ? `📁 ${f.path}` : `📄 ${f.path}`}</span>
                           {!f.is_dir && (
                             <>
-                              <button className="chip" onClick={() => handleViewFile(f.name)}>
+                              <button className="chip" onClick={() => handleViewFile(f.path)}>
                                 عرض
                               </button>
-                              <button className="chip chip-danger" onClick={() => handleDeleteFile(f.name)}>
+                              <button className="chip chip-danger" onClick={() => handleDeleteFile(f.path)}>
                                 حذف
                               </button>
                             </>

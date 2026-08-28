@@ -747,6 +747,42 @@ against a live page. That's a real gap Mona should exercise once this
 build is in her hands, the same way she found the hands-free and
 pronunciation bugs by actually using the app.
 
+**Update, same day: batching, for real speed on multi-file tasks.** Mona's
+first real task was going to be "organize my whole computer, and I want
+it fast" — under the one-approval-per-file-tool-call model that already
+existed, a real reorganization would have meant approving every single
+move/delete separately, which is the opposite of fast. Added
+`move_workspace_file`, `create_workspace_folder`, and
+`batch_file_operations` to `files.rs`/`tools.rs` (all `ConfirmHighRisk`,
+same as every other file tool — speed comes from batching the
+*confirmation*, not from skipping it). `batch_file_operations` takes a
+list of move/delete/create_folder/write operations, describes the whole
+plan as one multi-line confirmation (`describe_batch` — Mona reviews and
+approves it once), then runs each operation in order, continuing past a
+failure rather than aborting the batch, and reports exactly which ones
+succeeded and which didn't — never a blanket "تم" over a partial result.
+Also gave `list_workspace_files` an optional `path` (browse any
+subfolder, not just the home root) and `recursive` (up to 3 levels deep,
+capped at 500 entries with a `truncated` flag) so surveying a messy
+folder before planning a batch takes one confirmed call instead of one
+per subfolder. `WorkspaceEntry` changed from a bare `name` to a
+home-relative `path` so a nested entry from a recursive listing can be
+passed straight back into any file tool without reconstructing it —
+updated the one other caller (`commands::list_workspace_files`, the
+Notes panel's direct path) and the frontend's `WorkspaceEntry` type to
+match, and added `white-space: pre-line` to the approval card's
+description so a multi-line batch plan actually renders as one line per
+operation instead of collapsing into a single run-on line — a real
+finding, not a hypothetical one, once we noticed `describe_batch`'s
+output was multi-line but the CSS wasn't accounting for it. Same
+filesystem-safety caveat as the rest of `files.rs`: could not add tests
+that actually run `mv`/`create_dir`/`list` through a mock `AppHandle`,
+since `home_dir()` there resolves to this container's *real* `$HOME`, not
+a sandboxed path — consistent with why the existing tests only exercise
+the pure `resolve_within_workspace` logic, not the `app`-dependent
+wrappers. Added tests for `describe_batch` itself (pure string
+formatting, no filesystem) instead.
+
 **What's still unverified:** everything here is covered by unit tests (49
 passing, including `tools.rs`'s dispatcher exercised end to end with a
 mocked Tauri `AppHandle`) and a clean `cargo check`/`clippy`/`tsc`/`vite

@@ -1015,7 +1015,7 @@ pub fn set_task_status(id: String, status: String, db: State<Db>) -> Result<(), 
 /// reaches anything on her machine.
 #[tauri::command]
 pub fn list_workspace_files(app: AppHandle) -> Result<Vec<WorkspaceEntry>, String> {
-    files::list(&app)
+    files::list(&app, "", false).map(|(entries, _truncated)| entries)
 }
 
 #[tauri::command]

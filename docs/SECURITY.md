@@ -271,11 +271,23 @@ gate" for the full file-by-file breakdown.
   executes on silence, on a topic change, or on an assumption.
 - **File access is broad *and* gated together.** `files.rs` now reaches
   Mona's whole home directory (her own explicit request), but every file
-  tool — list, read, write, delete — is `ConfirmHighRisk` in
-  `tools::risk_for`. A read is gated too, not just writes/deletes: reading
-  a file means its contents leave her machine inside a `tool_result` sent
-  to the Anthropic API, which is exactly the kind of externally-visible
-  step her instruction is about.
+  tool — list, read, write, delete, move, create a folder, or a batch of
+  those — is `ConfirmHighRisk` in `tools::risk_for`. A read is gated too,
+  not just writes/deletes: reading a file means its contents leave her
+  machine inside a `tool_result` sent to the Anthropic API, which is
+  exactly the kind of externally-visible step her instruction is about.
+- **A batch is one approval covering many operations — by design, not a
+  gap.** `batch_file_operations` exists because a real multi-file job
+  (organizing a folder) would otherwise mean approving every single move
+  or delete separately — real friction she explicitly asked to remove, not
+  a hypothetical one. The tradeoff that makes this safe rather than a
+  bulk-consent escape hatch: `tools::describe`'s `describe_batch` spells
+  out *every* operation on its own line before that one approval, so what
+  she's approving is the actual full plan, not a vague "N file changes" —
+  and `run_batch_file_operations` still runs each operation through the
+  same `files.rs` containment check as if it had come in on its own, so
+  nothing in a batch can reach outside her home directory that a single
+  call couldn't already reach.
 - **An unknown tool defaults to confirm, never to auto.** If Claude ever
   asks for a tool name outside the registry `tools.rs` defines,
   `risk_for` returns `ConfirmHighRisk` rather than treating the unfamiliar

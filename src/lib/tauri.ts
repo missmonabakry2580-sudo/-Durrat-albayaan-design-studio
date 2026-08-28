@@ -165,7 +165,7 @@ export const setFollowUpStatus = (id: string, status: FollowUpStatus) =>
   invoke<void>("set_follow_up_status", { id, status });
 
 export interface WorkspaceEntry {
-  name: string;
+  path: string;
   is_dir: boolean;
   size_bytes: number;
 }

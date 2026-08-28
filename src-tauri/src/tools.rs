@@ -69,12 +69,18 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "list_workspace_files",
-            "description": "List files in Amin's dedicated workspace folder.",
-            "input_schema": { "type": "object", "properties": {} }
+            "description": "List files under a folder in Mona's home directory (path omitted or empty = the home folder itself). Set recursive to true to also see subfolders' contents in one call (capped at 3 levels deep and 500 entries, with a truncated flag if the cap was hit) — use this to survey a messy area (e.g. Desktop, Downloads) in one confirmation instead of one call per subfolder.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "relative to the home folder; omit for the home folder itself" },
+                    "recursive": { "type": "boolean" }
+                }
+            }
         }),
         json!({
             "name": "read_workspace_file",
-            "description": "Read a file from Amin's workspace folder.",
+            "description": "Read a file from Mona's home directory.",
             "input_schema": {
                 "type": "object",
                 "properties": { "path": { "type": "string" } },
@@ -83,7 +89,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "write_workspace_file",
-            "description": "Create or overwrite a file in Amin's workspace folder. Requires Mona's explicit confirmation before it runs.",
+            "description": "Create or overwrite a file in Mona's home directory. Requires Mona's explicit confirmation before it runs.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -95,11 +101,55 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "delete_workspace_file",
-            "description": "Delete a file from Amin's workspace folder. Requires Mona's explicit confirmation before it runs.",
+            "description": "Delete a file or folder (recursively) from Mona's home directory. Requires Mona's explicit confirmation before it runs.",
             "input_schema": {
                 "type": "object",
                 "properties": { "path": { "type": "string" } },
                 "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "move_workspace_file",
+            "description": "Move or rename a file or folder within Mona's home directory. Requires Mona's explicit confirmation before it runs.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "to": { "type": "string" }
+                },
+                "required": ["from", "to"]
+            }
+        }),
+        json!({
+            "name": "create_workspace_folder",
+            "description": "Create a folder (and any missing parent folders) in Mona's home directory. Requires Mona's explicit confirmation before it runs.",
+            "input_schema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "batch_file_operations",
+            "description": "Run a list of file operations (move, delete, create_folder, write) as ONE proposal Mona reviews and approves once, instead of one confirmation per file — use this for any multi-file task (e.g. organizing a folder) instead of calling the individual file tools in a loop, since that would make her approve every single file separately. Operations run in the given order; if one fails, the rest still run, and the result reports exactly which ones succeeded and which didn't — never treat a partial result as if everything succeeded.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string", "enum": ["move", "delete", "create_folder", "write"] },
+                                "path": { "type": "string", "description": "required for delete/create_folder/write, and the source for move" },
+                                "destination": { "type": "string", "description": "required for move — the new path" },
+                                "contents": { "type": "string", "description": "required for write" }
+                            },
+                            "required": ["action"]
+                        }
+                    }
+                },
+                "required": ["operations"]
             }
         }),
         json!({
@@ -259,12 +309,42 @@ pub fn risk_for(name: &str) -> RiskTier {
         | "read_workspace_file"
         | "write_workspace_file"
         | "delete_workspace_file"
+        | "move_workspace_file"
+        | "create_workspace_folder"
+        | "batch_file_operations"
         | "open_browser_url"
         | "read_page_content"
         | "click_page_element"
         | "fill_page_field" => RiskTier::ConfirmHighRisk,
         _ => RiskTier::ConfirmHighRisk,
     }
+}
+
+/// Spells out every operation in a `batch_file_operations` call, one line
+/// each — this multi-line text is the whole point of batching: Mona reads
+/// and approves the entire plan once, so it has to actually show her
+/// everything that's about to happen, not just "٥ عمليات ملفات".
+fn describe_batch(input: &Value) -> String {
+    let ops = input.get("operations").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    if ops.is_empty() {
+        return "لا توجد عمليات في هذه الدفعة".to_string();
+    }
+    let lines: Vec<String> = ops
+        .iter()
+        .map(|op| {
+            let action = op.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let path = op.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let destination = op.get("destination").and_then(|v| v.as_str()).unwrap_or("");
+            match action {
+                "move" => format!("نقل/إعادة تسمية: {path} ← {destination}"),
+                "delete" => format!("حذف: {path}"),
+                "create_folder" => format!("إنشاء مجلد: {path}"),
+                "write" => format!("كتابة/تعديل: {path}"),
+                other => format!("إجراء غير معروف: {other}"),
+            }
+        })
+        .collect();
+    format!("تنفيذ {} عملية على الملفات:\n{}", lines.len(), lines.join("\n"))
 }
 
 /// A short, human-readable Arabic description of a tool call, used to build
@@ -278,10 +358,20 @@ pub fn describe(name: &str, input: &Value) -> String {
         "quick_capture" => format!("تدوين سريع: \"{}\"", s("text")),
         "list_tasks" => "عرض قائمة المهام".to_string(),
         "set_task_status" => format!("تغيير حالة المهمة {} إلى {}", s("id"), s("status")),
-        "list_workspace_files" => "عرض ملفات مساحة أمين".to_string(),
+        "list_workspace_files" => {
+            let path = s("path");
+            if path.is_empty() {
+                "عرض محتويات المجلد الرئيسي".to_string()
+            } else {
+                format!("عرض محتويات: {path}")
+            }
+        }
         "read_workspace_file" => format!("قراءة الملف: {}", s("path")),
         "write_workspace_file" => format!("كتابة/تعديل الملف: {}", s("path")),
-        "delete_workspace_file" => format!("حذف الملف: {}", s("path")),
+        "delete_workspace_file" => format!("حذف: {}", s("path")),
+        "move_workspace_file" => format!("نقل/إعادة تسمية: {} ← {}", s("from"), s("to")),
+        "create_workspace_folder" => format!("إنشاء مجلد: {}", s("path")),
+        "batch_file_operations" => describe_batch(input),
         "open_browser_url" => format!("فتح هذا الرابط في متصفح أمين المعزول: {}", s("url")),
         "read_page_content" => "قراءة الصفحة المفتوحة حاليًا في متصفح أمين".to_string(),
         "click_page_element" => format!("الضغط على العنصر رقم {} في الصفحة", n("id")),
@@ -310,6 +400,45 @@ fn required_str(input: &Value, key: &str, tool: &str) -> Result<String, String> 
 
 fn optional_str(input: &Value, key: &str) -> Option<String> {
     input.get(key).and_then(|v| v.as_str()).map(|v| v.to_string())
+}
+
+/// Runs every operation in a `batch_file_operations` call and reports what
+/// actually happened to each one. Deliberately keeps going after a failure
+/// — one bad path in a 40-item reorganization shouldn't silently discard
+/// the other 39 — and reports per-item success/failure rather than a
+/// blanket "ok", per the project's "never claim تم for something that
+/// didn't really happen" rule.
+fn run_batch_file_operations<R: Runtime>(app: &AppHandle<R>, input: &Value) -> Result<Value, String> {
+    let ops = input
+        .get("operations")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "tool 'batch_file_operations' is missing required field 'operations'".to_string())?;
+
+    let mut results = Vec::with_capacity(ops.len());
+    for op in ops {
+        let action = op.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let outcome: Result<(), String> = (|| match action {
+            "move" => {
+                let from = required_str(op, "path", "batch_file_operations")?;
+                let to = required_str(op, "destination", "batch_file_operations")?;
+                files::mv(app, &from, &to)
+            }
+            "delete" => files::delete(app, &required_str(op, "path", "batch_file_operations")?),
+            "create_folder" => files::create_dir(app, &required_str(op, "path", "batch_file_operations")?),
+            "write" => {
+                let path = required_str(op, "path", "batch_file_operations")?;
+                let contents = required_str(op, "contents", "batch_file_operations")?;
+                files::write(app, &path, &contents)
+            }
+            other => Err(format!("unknown batch action: {other}")),
+        })();
+        results.push(json!({
+            "operation": op,
+            "ok": outcome.is_ok(),
+            "error": outcome.err(),
+        }));
+    }
+    Ok(json!({ "results": results }))
 }
 
 /// Actually run a tool call. Callers decide *when* this is allowed to run
@@ -370,8 +499,10 @@ pub async fn execute<R: Runtime>(
             Ok(json!({ "ok": true }))
         }
         "list_workspace_files" => {
-            let entries = files::list(app)?;
-            serde_json::to_value(entries).map_err(|e| e.to_string())
+            let path = optional_str(input, "path").unwrap_or_default();
+            let recursive = input.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+            let (entries, truncated) = files::list(app, &path, recursive)?;
+            Ok(json!({ "entries": entries, "truncated": truncated }))
         }
         "read_workspace_file" => {
             let contents = files::read(app, &required_str(input, "path", name)?)?;
@@ -389,6 +520,15 @@ pub async fn execute<R: Runtime>(
             files::delete(app, &required_str(input, "path", name)?)?;
             Ok(json!({ "ok": true }))
         }
+        "move_workspace_file" => {
+            files::mv(app, &required_str(input, "from", name)?, &required_str(input, "to", name)?)?;
+            Ok(json!({ "ok": true }))
+        }
+        "create_workspace_folder" => {
+            files::create_dir(app, &required_str(input, "path", name)?)?;
+            Ok(json!({ "ok": true }))
+        }
+        "batch_file_operations" => run_batch_file_operations(app, input),
         "open_browser_url" => {
             browser::open_url(app, &required_str(input, "url", name)?)?;
             Ok(json!({ "ok": true }))
@@ -548,7 +688,33 @@ mod tests {
         assert_eq!(risk_for("read_workspace_file"), RiskTier::ConfirmHighRisk);
         assert_eq!(risk_for("write_workspace_file"), RiskTier::ConfirmHighRisk);
         assert_eq!(risk_for("delete_workspace_file"), RiskTier::ConfirmHighRisk);
+        assert_eq!(risk_for("move_workspace_file"), RiskTier::ConfirmHighRisk);
+        assert_eq!(risk_for("create_workspace_folder"), RiskTier::ConfirmHighRisk);
+        assert_eq!(risk_for("batch_file_operations"), RiskTier::ConfirmHighRisk);
         assert_eq!(risk_for("open_browser_url"), RiskTier::ConfirmHighRisk);
+    }
+
+    #[test]
+    fn batch_description_spells_out_every_operation_for_one_approval() {
+        // The whole point of batching is that Mona reviews the full plan
+        // and approves it once — this has to actually list every op, not
+        // summarize it away as "N file operations".
+        let description = describe_batch(&json!({
+            "operations": [
+                { "action": "move", "path": "Desktop/x.pdf", "destination": "Documents/x.pdf" },
+                { "action": "delete", "path": "Desktop/old.tmp" },
+                { "action": "create_folder", "path": "Documents/مشاريع" },
+            ]
+        }));
+        assert!(description.contains("نقل/إعادة تسمية: Desktop/x.pdf ← Documents/x.pdf"));
+        assert!(description.contains("حذف: Desktop/old.tmp"));
+        assert!(description.contains("إنشاء مجلد: Documents/مشاريع"));
+    }
+
+    #[test]
+    fn batch_description_of_an_empty_list_says_so_plainly() {
+        let description = describe_batch(&json!({ "operations": [] }));
+        assert!(!description.is_empty());
     }
 
     #[test]

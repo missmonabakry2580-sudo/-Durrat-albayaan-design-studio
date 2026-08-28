@@ -367,6 +367,11 @@
   color: var(--text-secondary);
   font-size: 0.85rem;
   overflow-wrap: break-word;
+  /* batch_file_operations' description is multi-line (one line per file
+     operation) so Mona can actually read the whole plan before approving
+     it once — pre-line keeps those real newlines instead of collapsing
+     them into one run-on line. */
+  white-space: pre-line;
 }
 
 .approval-card-actions {
