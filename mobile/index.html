@@ -415,7 +415,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -943,23 +943,20 @@ function speakOnDevice(text) {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizing = false, recognition = null;
 if (SR) {
-  recognition = new SR();
-  recognition.lang = "ar-EG";
-  recognition.interimResults = true;
-  recognition.continuous = false;
   let finalText = "";
   let stopFallbackTimer = null;
   let maxLengthTimer = null;
   let silenceTimer = null;
 
-  // REAL BUG from Mona's first minute on the real iPhone (2026-08-29):
-  // tapping the mic again called recognition.stop() but iOS never fired
-  // onend, so the red recording state stuck forever ("جيت اضغط ع المايك
-  // عشان اقفل التسجيل مبيقفلش"). Never trust the platform callback alone
-  // — the same lesson as the Mac's silence-finalization bug, on a
-  // different OS: this idempotent finisher runs from whichever arrives
-  // first (onend, the 1s post-stop fallback, or the safety cap) and
-  // sends whatever was heard.
+  // REAL RECURRING BUG on Mona's iPhone (2026-08-29): the first mic use
+  // worked, the second hung — red "listening" forever, no result, no send.
+  // Cause: we reused ONE SpeechRecognition instance, and WebKit leaves an
+  // instance dead after abort() — a later start() on it never fires
+  // onstart/onresult/onend. The robust WebKit pattern is a FRESH instance
+  // per recording; finishRecognition tears the old one fully down. This
+  // stacks on the earlier lesson (never trust the platform end callback):
+  // the idempotent finisher still runs from whichever fires first (onend,
+  // the post-stop fallback, the silence timer, or the 60s cap).
   function finishRecognition() {
     if (!recognizing) return;
     recognizing = false;
@@ -968,62 +965,65 @@ if (SR) {
     clearTimeout(silenceTimer);
     micBtn.classList.remove("rec");
     setFaceState("", "");
+    const dead = recognition;
+    recognition = null;
+    if (dead) {
+      try { dead.onresult = dead.onend = dead.onerror = null; } catch { /* ok */ }
+      try { dead.abort(); } catch { /* already dead */ }
+    }
     const text = msgInput.value.trim();
     finalText = "";
     if (text) sendToAmin(text);
   }
 
-  recognition.onresult = (e) => {
-    let interim = "";
-    for (const r of e.results) {
-      if (r.isFinal) finalText += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    msgInput.value = (finalText + " " + interim).trim();
-    // إرسال بالسكوت — نفس حل اللابتوب بالظبط (2026-08-29، منى: "مرة
-    // صوتي يروح له لما أسكت ومرة لا"): iOS ساعات بيبعت نهاية الكلام
-    // بنفسه وساعات لأ، فبدل الاعتماد عليه: أول ما فيه كلام متسمع وبعده
-    // ثانية ونص سكوت، بنقفل وبنبعت بنفسنا. اللمسة التانية على المايك
-    // لسه شغالة برضو لمن يستعجل.
-    if (msgInput.value.trim()) {
-      clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        try { recognition.stop(); } catch { /* forced finish below */ }
-        setTimeout(() => { finishRecognition(); try { recognition.abort(); } catch {} }, 800);
-      }, 1500);
-    }
-  };
-  recognition.onend = finishRecognition;
-  recognition.onerror = () => {
-    // A real error mid-recording: end cleanly WITHOUT discarding what was
-    // already transcribed — finishRecognition sends it if there is any.
-    finishRecognition();
-  };
-  micBtn.addEventListener("click", () => {
-    if (recognizing) {
-      try { recognition.stop(); } catch { /* forced finish below covers it */ }
-      // iOS sometimes never delivers onend after stop() — force-finish
-      // ourselves if it hasn't arrived within a second, then abort the
-      // zombie recognizer (harmless if it already ended).
-      stopFallbackTimer = setTimeout(() => {
-        finishRecognition();
-        try { recognition.abort(); } catch { /* already dead */ }
-      }, 1000);
-      return;
-    }
+  function startRecognition() {
     finalText = "";
     msgInput.value = "";
     recognizing = true;
     micBtn.classList.add("rec");
     setFaceState("listening", "أمين بيسمعك… دوسي المايك تاني لما تخلصي");
-    try { recognition.start(); } catch { recognizing = false; micBtn.classList.remove("rec"); return; }
-    // Safety cap: a recording nothing ever stops (tab lost the tap, iOS
-    // dropped the event) closes itself after 60s instead of sticking red
-    // forever.
+    const r = new SR(); // كائن جديد كل مرة — ده جوهر الإصلاح
+    recognition = r;
+    r.lang = "ar-EG";
+    r.interimResults = true;
+    r.continuous = false;
+    r.onresult = (e) => {
+      let interim = "";
+      for (const res of e.results) {
+        if (res.isFinal) finalText += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      msgInput.value = (finalText + " " + interim).trim();
+      // إرسال بالسكوت: أول ما فيه كلام متسمع وبعده ثانية ونص سكوت، بنقفل
+      // وبنبعت بنفسنا (iOS مش بيعتمد عليه في نهاية الكلام).
+      if (msgInput.value.trim()) {
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          try { r.stop(); } catch { /* forced finish below */ }
+          setTimeout(finishRecognition, 800);
+        }, 1500);
+      }
+    };
+    r.onend = finishRecognition;
+    r.onerror = finishRecognition;
+    try { r.start(); }
+    catch { recognizing = false; micBtn.classList.remove("rec"); recognition = null; setFaceState("", ""); return; }
+    // سقف أمان: تسجيل محدش وقّفه يقفل نفسه بعد 60 ثانية بدل ما يفضل أحمر.
     maxLengthTimer = setTimeout(() => {
-      try { recognition.stop(); } catch { /* forced finish below */ }
-      setTimeout(() => { finishRecognition(); try { recognition.abort(); } catch {} }, 1000);
+      try { r.stop(); } catch { /* forced finish below */ }
+      setTimeout(finishRecognition, 1000);
     }, 60000);
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (recognizing) {
+      const r = recognition;
+      try { if (r) r.stop(); } catch { /* forced finish below covers it */ }
+      // iOS ساعات مبيبعتش onend بعد stop() — بنقفل بنفسنا خلال ثانية.
+      stopFallbackTimer = setTimeout(finishRecognition, 1000);
+      return;
+    }
+    startRecognition();
   });
 } else {
   // iOS Safari من غير دعم التعرف على الكلام في الويب: الكتابة هي
