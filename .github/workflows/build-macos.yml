@@ -14,7 +14,9 @@ on:
     # (2026-08-29, a real confused-alarm report from her inbox).
     paths-ignore:
       - "mobile/**"
+      - "ios/**"
       - ".github/workflows/deploy-mobile.yml"
+      - ".github/workflows/build-ios.yml"
   workflow_dispatch: {}
 
 permissions:

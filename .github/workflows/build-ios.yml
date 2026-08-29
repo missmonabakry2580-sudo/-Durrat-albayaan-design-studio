@@ -1,0 +1,117 @@
+# Builds أمين's native iPhone app (ios/ — see ios/project.yml's header)
+# and, when Mona's App Store Connect secrets are present, archives, signs
+# via Apple's cloud signing (-allowProvisioningUpdates with her ASC API
+# key — no certificates in the repo, ever) and uploads to TestFlight.
+#
+# Two-stage on purpose: the unsigned compile check always runs, so Swift
+# errors surface on every push even before the secrets exist; the
+# sign+upload stage self-skips (with a plain notice, not a failure) until
+# all three secrets are configured:
+#   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID /
+#   APP_STORE_CONNECT_KEY_P8
+name: Build Amin (iOS)
+
+on:
+  push:
+    branches: [claude/amin-project-6wwufr]
+    paths:
+      - "ios/**"
+      - ".github/workflows/build-ios.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios
+          xcodegen generate
+          ls -la Amin.xcodeproj
+
+      - name: Compile check (unsigned)
+        run: |
+          cd ios
+          xcodebuild build \
+            -project Amin.xcodeproj \
+            -scheme Amin \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            | tail -40
+
+      - name: Check for App Store Connect secrets
+        id: gate
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        run: |
+          if [ -n "$KEY_ID" ] && [ -n "$ISSUER_ID" ] && [ -n "$KEY_P8" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "All three App Store Connect secrets present — proceeding to TestFlight."
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "App Store Connect secrets not configured yet — compile check only (this is fine, not a failure)."
+          fi
+
+      - name: Write the ASC API key
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$KEY_P8" > ~/private_keys/AuthKey_"$KEY_ID".p8
+          wc -c ~/private_keys/AuthKey_"$KEY_ID".p8
+
+      - name: Archive (cloud signing)
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          cd ios
+          xcodebuild archive \
+            -project Amin.xcodeproj \
+            -scheme Amin \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Amin.xcarchive \
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration \
+            -authenticationKeyPath ~/private_keys/AuthKey_"$KEY_ID".p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            | tail -40
+
+      - name: Export and upload to TestFlight
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          cd ios
+          cat > ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/Amin.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_"$KEY_ID".p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            | tail -40
