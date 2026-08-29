@@ -1,0 +1,288 @@
+name: Build Amin (macOS)
+
+# Builds a ready-to-download macOS app for Mona so she never has to install
+# Node/Rust/Xcode tools herself — every push to the Amin branch (and manual
+# runs) produces a fresh universal (Intel + Apple Silicon) .dmg attached to
+# the "amin-preview" GitHub Release. See docs/ARCHITECTURE.md.
+on:
+  push:
+    branches: [claude/amin-project-6wwufr]
+    # Phone-app-only pushes (mobile/ has its own deploy workflow) don't
+    # produce a new laptop build — without this, every such push tripped
+    # the version-unchanged guard below by design and GitHub emailed Mona
+    # a scary "build failed" for what was actually the guard working
+    # (2026-08-29, a real confused-alarm report from her inbox).
+    paths-ignore:
+      - "mobile/**"
+      - "ios/**"
+      - ".github/workflows/deploy-mobile.yml"
+      - ".github/workflows/build-ios.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Real bug this caught: the version in tauri.conf.json stayed at
+      # 0.2.14 across five real, substantive commits (3D avatar mode,
+      # Portrait Mode's new photo, the Simli integration, a critical CSP
+      # fix) before Mona noticed none of them had actually reached her —
+      # Tauri's updater plugin compares semver against latest.json, not
+      # commit hashes, so "check for updates" correctly reported "already
+      # up to date" every single time even though the underlying app had
+      # completely changed. Fails the build loudly, before any of the
+      # expensive steps below run, rather than silently shipping a build
+      # nothing will ever offer as an update. A no-op on the very first
+      # release (no amin-preview tag yet) or once GH_TOKEN isn't set.
+      - name: Refuse to ship a build whose version didn't change
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          THIS_VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          VERSION_CHECK_DIR="$RUNNER_TEMP/version-check"
+          rm -rf "$VERSION_CHECK_DIR" && mkdir -p "$VERSION_CHECK_DIR"
+          gh release download amin-preview --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$VERSION_CHECK_DIR" 2>/dev/null || true
+          if [ ! -s "$VERSION_CHECK_DIR/latest.json" ]; then
+            echo "No published latest.json yet (first release) — nothing to compare against."
+            exit 0
+          fi
+          PUBLISHED_VERSION="$(node -p "require('$VERSION_CHECK_DIR/latest.json').version" 2>/dev/null || echo "")"
+          if [ "$THIS_VERSION" = "$PUBLISHED_VERSION" ]; then
+            echo "::error::tauri.conf.json's version ($THIS_VERSION) matches the already-published release — the in-app updater compares version numbers, not commits, so nothing would ever offer this build as an update. Bump the version (package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json) before pushing."
+            exit 1
+          fi
+          echo "Version check OK: $PUBLISHED_VERSION -> $THIS_VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Compiles macos/transcriber/AminVoice.swift (Speech/AVFoundation
+      # push-to-talk engine — see src-tauri/src/voice.rs) together with
+      # VoicePrint.swift (CoreML speaker-verification — see voice.rs and
+      # VoicePrint.swift's own header) as one universal dylib, and places it
+      # where tauri.conf.json's bundle.resources expects it. Both files
+      # compile as a single module (swiftc's multi-file mode, not two
+      # separate libraries) so HandsFreeListener can call VoicePrintEngine
+      # directly with no module boundary. Amin's Rust binary loads the
+      # result in-process via dlopen/dlsym at runtime (see
+      # macos/transcriber/README.md for why it's a dylib, not a spawned
+      # helper process). If it fails, a placeholder that reports a clear
+      # in-app error is bundled instead, so a Swift build problem never
+      # breaks Amin's whole release. Check this step's log first if voice
+      # doesn't work.
+      - name: Build the voice engine
+        run: |
+          cd macos/transcriber
+          DEST="$GITHUB_WORKSPACE/src-tauri/libaminvoice.dylib"
+          SOURCES="AminVoice.swift VoicePrint.swift"
+          if swiftc -O -target arm64-apple-macosx13.0 -emit-library -parse-as-library \
+               -module-name AminVoice $SOURCES -o libaminvoice-arm64.dylib \
+            && swiftc -O -target x86_64-apple-macosx13.0 -emit-library -parse-as-library \
+               -module-name AminVoice $SOURCES -o libaminvoice-x86_64.dylib \
+            && lipo -create libaminvoice-arm64.dylib libaminvoice-x86_64.dylib -output "$DEST"; then
+            echo "Voice engine compiled successfully (universal dylib)."
+          else
+            echo "::warning::Voice engine failed to compile — bundling a placeholder instead of failing the whole build. Push-to-talk will report a clear error until this is fixed."
+            printf '' > "$DEST"
+          fi
+
+      # Copies the committed ECAPA-TDNN model (macos/transcriber/Resources/,
+      # see VoicePrint.swift and scripts/voiceprint/convert_ecapa_to_coreml.py)
+      # into src-tauri/ so tauri.conf.json's bundle.resources can reference
+      # it with a plain filename — same reason libaminvoice.dylib is placed
+      # here rather than referenced from its own source directory. A real
+      # bug on a real Mac (2026-08-28): the previous config referenced this
+      # file via a "../macos/transcriber/..." resource path, and the very
+      # next build was the first time Mona's Mac failed to dlopen
+      # libaminvoice.dylib at all ("no such file" for every candidate path
+      # tried) — strong evidence that a resource path escaping src-tauri
+      # broke bundling for the *whole* Resources folder, not just this one
+      # entry. Copying it in-tree instead avoids relying on tauri-bundler's
+      # unclear behavior for out-of-tree resource paths.
+      - name: Copy the voiceprint model into src-tauri
+        run: cp -R macos/transcriber/Resources/ECAPA_TDNN.mlpackage src-tauri/ECAPA_TDNN.mlpackage
+
+      # Notarization scans every Mach-O binary inside the .app, not just the
+      # main executable — libaminvoice.dylib is bundled as a plain resource
+      # (tauri.conf.json's bundle.resources), which tauri-bundler's signing
+      # step does not sign on its own. The first real signed build attempt
+      # failed notarization for exactly this ("The binary is not signed" /
+      # "not signed with a valid Developer ID certificate" / "signature
+      # does not include a secure timestamp" on libaminvoice.dylib). Signs
+      # it here, in its own short-lived keychain that's deleted immediately
+      # after, before tauri-action creates its own keychain for the main
+      # app — keeping the two apart avoids codesign seeing the same
+      # identity in two keychains at once ("ambiguous identity"). A no-op
+      # when the Apple secrets aren't set yet, matching every other signing
+      # step here.
+      - name: Sign the voice engine dylib
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          DYLIB="$GITHUB_WORKSPACE/src-tauri/libaminvoice.dylib"
+          if [ -z "$APPLE_CERTIFICATE" ] || [ ! -s "$DYLIB" ]; then
+            echo "No Apple certificate configured yet (or no real dylib was built) — leaving it unsigned."
+            exit 0
+          fi
+          KEYCHAIN="voice-signing-temp.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/apple_certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          ORIGINAL_KEYCHAINS="$(security list-keychains -d user | tr -d '\"')"
+          security list-keychains -d user -s "$KEYCHAIN" $ORIGINAL_KEYCHAINS
+
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DYLIB"
+          codesign -dv "$DYLIB"
+
+          security list-keychains -d user -s $ORIGINAL_KEYCHAINS
+          security delete-keychain "$KEYCHAIN"
+          rm -f "$CERT_PATH"
+
+      # Code signing + notarization: only actually happens once Mona adds
+      # the six repo secrets below (Settings → Secrets and variables →
+      # Actions) from her own Apple Developer Program account — see
+      # docs/ARCHITECTURE.md's "Code signing" note for the exact steps.
+      # Until then every one of these resolves to an empty string and
+      # tauri-action builds exactly as before: unsigned, ad-hoc. This is
+      # also the real fix for the repeated-microphone-permission-dialog
+      # bug — an unsigned build has no stable identity for macOS's TCC
+      # privacy system to remember a grant against.
+      # timeout-minutes: the first real notarization run hung for over an
+      # hour with no error (way past the ~5-15 min this step normally
+      # takes) — cancelled by hand since nothing here would have caught
+      # it otherwise short of GitHub's own 6-hour job ceiling, silently
+      # burning Mona's Actions minutes the whole time. Bounds a repeat.
+      # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD): a *different* keypair from the
+      # Apple certificate above — this one signs the update bundle itself
+      # (see tauri.conf.json's plugins.updater.pubkey) so the in-app updater
+      # (src/lib/updater.ts) can trust it came from this pipeline and not
+      # somewhere else. Without it tauri-action silently skips producing
+      # latest.json ("Signature not found for the updater JSON") and the
+      # in-app updater has nothing to check against — same no-op-until-set
+      # pattern as the Apple secrets.
+      - uses: tauri-apps/tauri-action@v0
+        timeout-minutes: 20
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: --target universal-apple-darwin
+          tagName: amin-preview
+          releaseName: "أمين — نسخة تجريبية (Preview)"
+          releaseBody: |
+            بُنيت تلقائيًا من فرع claude/amin-project-6wwufr — آخر تحديث: ${{ github.sha }}
+
+            هذا التطبيق موقّع ومعتمد (notarized) بشهادة مطوّر آبل الخاصة بمنى، فمفروض يفتح عادي من غير أي تحذير أمان من macOS.
+          releaseDraft: false
+          prerelease: true
+
+      # tauri-action reuses the same "amin-preview" release/tag on every
+      # push, and when one already exists it fetches and merges its old
+      # latest.json before uploading the new one instead of writing a
+      # clean file. That merge is where a real bug surfaced: it kept the
+      # PREVIOUS run's updater signature for a platform even though this
+      # run generated (and uploaded) a brand-new .sig — so latest.json
+      # pointed the in-app updater at a signature that no longer matched
+      # the actual downloadable file, and every update check failed with
+      # "signature verification failed". Confirmed by hand: verified the
+      # uploaded Amin_universal.app.tar.gz against latest.json's embedded
+      # signature with the same minisign-verify crate the updater uses —
+      # it failed; the freshly uploaded .sig asset (fetched directly, not
+      # through latest.json) verified fine and had a different, newer
+      # timestamp.
+      #
+      # First fix attempt was deleting the whole release before this job's
+      # build — it did make every latest.json correct, but it did that by
+      # making the release (and every past-working version) not exist at
+      # all for the several minutes this job takes to compile, so any
+      # update check landing in that window failed with "Could not fetch a
+      # valid release JSON from the remote" — the exact original bug,
+      # self-inflicted, and worse: it now happened on *every* build, not
+      # just an occasional one. Mona hit this for real within the hour.
+      # Never delete the release again for this reason.
+      #
+      # Real fix: don't trust tauri-action's merged latest.json at all —
+      # rebuild it from scratch, right here, from the .sig file this exact
+      # run just wrote to disk. No merge, no fetch of anything old, so
+      # nothing stale to inherit — and the release/tag/prior-good-assets
+      # stay up the entire time, so an update check mid-build still finds
+      # the last good version instead of nothing.
+      - name: Rebuild latest.json from this run's own signature (never trust tauri-action's merge)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SIG_FILE="$GITHUB_WORKSPACE/src-tauri/target/universal-apple-darwin/release/bundle/macos/Amin.app.tar.gz.sig"
+          if [ ! -s "$SIG_FILE" ]; then
+            echo "No updater signature was produced (TAURI_SIGNING_PRIVATE_KEY probably isn't set yet) — nothing to rebuild."
+            exit 0
+          fi
+          SIGNATURE="$(cat "$SIG_FILE")"
+          VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/amin-preview/Amin_universal.app.tar.gz"
+          NOTES=$'بُنيت تلقائيًا من فرع claude/amin-project-6wwufr — آخر تحديث: '"$GITHUB_SHA"$'\n\nهذا التطبيق موقّع ومعتمد (notarized) بشهادة مطوّر آبل الخاصة بمنى، فمفروض يفتح عادي من غير أي تحذير أمان من macOS.'
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$NOTES" \
+            --arg pub_date "$PUB_DATE" \
+            --arg sig "$SIGNATURE" \
+            --arg url "$URL" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {signature: $sig, url: $url},
+                "darwin-x86_64": {signature: $sig, url: $url},
+                "darwin-aarch64-app": {signature: $sig, url: $url},
+                "darwin-x86_64-app": {signature: $sig, url: $url}
+              }
+            }' > "$RUNNER_TEMP/latest.json"
+          gh release upload amin-preview "$RUNNER_TEMP/latest.json" --clobber --repo "$GITHUB_REPOSITORY"
+
+      # Mona's explicit ask: keep only the current version's installer on
+      # the release page, not one accumulating forever. Runs after the
+      # step above so the release is never briefly asset-less — only ever
+      # removes old-version .dmg files, never the current one, and never
+      # touches the tar.gz/.sig/latest.json trio at all.
+      - name: Remove old-version installers, keep only the current one
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('$GITHUB_WORKSPACE/src-tauri/tauri.conf.json').version")"
+          CURRENT_DMG="Amin_${VERSION}_universal.dmg"
+          gh release view amin-preview --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | grep -E '^Amin_.*_universal\.dmg$' \
+            | grep -v -F "$CURRENT_DMG" \
+            | while IFS= read -r stale; do
+                gh release delete-asset amin-preview "$stale" --yes --repo "$GITHUB_REPOSITORY"
+              done

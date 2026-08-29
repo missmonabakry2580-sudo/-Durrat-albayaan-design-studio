@@ -1,0 +1,312 @@
+import { invoke } from "@tauri-apps/api/core";
+
+/**
+ * Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
+ * Nothing in the UI should call `invoke()` directly — routing every call
+ * through here keeps the frontend/backend contract in one place and makes
+ * it obvious, at a glance, what surface the webview actually has.
+ */
+
+export type AutonomyLevel = "observe" | "assist" | "delegate" | "autopilot";
+export type RiskTier = "auto" | "trusted_delegation" | "confirm_high_risk" | "excluded";
+
+export interface AppInfo {
+  name: string;
+  version: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  ts: string;
+  actor: string;
+  action: string;
+  risk_tier: RiskTier;
+  decision: "executed" | "confirmed" | "declined" | "blocked";
+  details: string | null;
+  evidence: string | null;
+}
+
+/** A reply from Amin's Agent Core. `emotion` — the tone Claude tagged its
+ * own reply with — is groundwork for a future hologram/avatar face; not
+ * shown anywhere yet. */
+export interface AgentReply {
+  text: string;
+  emotion: string | null;
+}
+
+export const appInfo = () => invoke<AppInfo>("app_info");
+
+export const hasApiKey = () => invoke<boolean>("has_api_key");
+export const saveApiKey = (key: string) => invoke<void>("save_api_key", { key });
+export const clearApiKey = () => invoke<void>("clear_api_key");
+
+/** Optional — a more expressive, human-sounding voice (ElevenLabs) Mona
+ * can add on top of the free, local, on-device voice. Costs money per use
+ * and sends reply text to ElevenLabs' API, unlike the on-device default. */
+export const hasElevenLabsKey = () => invoke<boolean>("has_elevenlabs_key");
+export const saveElevenLabsKey = (key: string) => invoke<void>("save_elevenlabs_key", { key });
+export const clearElevenLabsKey = () => invoke<void>("clear_elevenlabs_key");
+
+/** Which ElevenLabs voice speaks Amin's replies — empty means the default
+ * (Rachel, English), which mangles Arabic. Pick a voice from Mona's own
+ * ElevenLabs library (elevenlabs.io → Voices) and paste its Voice ID here. */
+export const getElevenLabsVoiceId = () => invoke<string>("get_elevenlabs_voice_id");
+export const saveElevenLabsVoiceId = (voiceId: string) =>
+  invoke<void>("save_elevenlabs_voice_id", { voiceId });
+
+/**
+ * Amin's ElevenLabs pronunciation dictionary (Mona's own real-world
+ * finding, 2026-08-28: full Arabic diacritization fixes ElevenLabs'
+ * pronunciation) — a real dictionary created via ElevenLabs' own API, not
+ * a text substitution in this app. See docs/ARCHITECTURE.md's
+ * pronunciation-dictionary section and elevenlabs.rs's
+ * default_pronunciation_rules for the built-in starting rules.
+ */
+export const getPronunciationDictionaryId = () => invoke<string>("get_pronunciation_dictionary_id");
+export const createAminPronunciationDictionary = () =>
+  invoke<void>("create_amin_pronunciation_dictionary");
+export const addPronunciationRule = (word: string, correctPronunciation: string) =>
+  invoke<void>("add_pronunciation_rule", { word, correctPronunciation });
+
+/** Fired by speak_text on every reply — see commands::emit_tts_debug.
+ * Powers Settings' "Developer Mode" panel; `null` fields mean the
+ * on-device (non-ElevenLabs) voice spoke this one. */
+export interface TtsDebugInfo {
+  original_text: string;
+  tts_text: string;
+  pronunciation_dictionary_id: string | null;
+  model_id: string | null;
+  language_code: string | null;
+}
+
+/** Optional — Portrait Mode's real-time talking avatar (see
+ * docs/ARCHITECTURE.md "Visual modes"). Stored the same way as the two
+ * keys above (local settings table, not the OS Keychain — a known,
+ * already-disclosed trade-off, not a new one made for this key). Entered
+ * once in Settings; never typed into a chat message or committed to Git. */
+export const hasSimliKey = () => invoke<boolean>("has_simli_key");
+export const saveSimliKey = (key: string) => invoke<void>("save_simli_key", { key });
+export const clearSimliKey = () => invoke<void>("clear_simli_key");
+
+/** Optional — a GitHub Personal Access Token (issues:write on this repo is
+ * enough) letting Amin file a real backend failure as a GitHub issue on
+ * its own repo automatically (see src-tauri/src/error_report.rs). Mona's
+ * explicit request, 2026-08-28: "تواصل مباشر بين امين و بينك يبلغك
+ * الخطأ". Nothing is ever reported unless this is set. */
+export const hasGitHubToken = () => invoke<boolean>("has_github_token");
+export const saveGitHubToken = (token: string) => invoke<void>("save_github_token", { token });
+export const clearGitHubToken = () => invoke<void>("clear_github_token");
+
+// The phone↔laptop bridge (src-tauri/src/phone_bridge.rs): passphrase +
+// on/off. Uses the same stored GitHub token as error reporting.
+export const hasBridgePassphrase = () => invoke<boolean>("has_bridge_passphrase");
+export const saveBridgePassphrase = (passphrase: string) =>
+  invoke<void>("save_bridge_passphrase", { passphrase });
+export const clearBridgePassphrase = () => invoke<void>("clear_bridge_passphrase");
+export const setPhoneBridgeEnabled = (enabled: boolean) =>
+  invoke<void>("set_phone_bridge_enabled", { enabled });
+export const getPhoneBridgeEnabled = () => invoke<boolean>("get_phone_bridge_enabled");
+
+/** Which Simli avatar (faceId) to animate — empty means the free preset
+ * baked into commands.rs (SIMLI_DEFAULT_PRESET_FACE_ID). Set to a custom
+ * face ID once Mona upgrades and builds one from amin-identity.jpg. */
+export const getSimliFaceId = () => invoke<string>("get_simli_face_id");
+export const saveSimliFaceId = (faceId: string) => invoke<void>("save_simli_face_id", { faceId });
+
+/** Starts a new Simli session using the stored key/face ID and returns a
+ * short-lived session token — the API key itself never leaves Rust. See
+ * src/lib/simli/simliClient.ts for what the frontend does with it. */
+export const startSimliSession = () => invoke<string>("start_simli_session");
+
+/** Synthesizes `text` as raw PCM16/16kHz/mono bytes for streaming into an
+ * already-open Simli session. Same ElevenLabs key/voice/emotion as
+ * speakText — a different audio *shape* for a different transport, not a
+ * different voice. Tauri's IPC serializes Rust's `Vec<u8>` as a plain
+ * JSON array of byte values (serde's default, no base64 involved) —
+ * `new Uint8Array(await synthesizePcmForSimli(...))` is the whole
+ * conversion needed on this side. */
+export const synthesizePcmForSimli = (text: string, emotion?: string | null) =>
+  invoke<number[]>("synthesize_pcm_for_simli", { text, emotion: emotion ?? null });
+
+export const getAutonomyLevel = () => invoke<AutonomyLevel>("get_autonomy_level");
+export const setAutonomyLevel = (level: AutonomyLevel) =>
+  invoke<void>("set_autonomy_level", { level });
+
+export const isHalted = () => invoke<boolean>("is_halted");
+export const setKillSwitch = (active: boolean) => invoke<void>("set_kill_switch", { active });
+
+export const classifyAction = (domain: string) => invoke<RiskTier>("classify_action", { domain });
+
+export const listAuditLog = (limit = 20) => invoke<AuditEntry[]>("list_audit_log", { limit });
+
+export const sendAgentMessage = (message: string) =>
+  invoke<AgentReply>("send_agent_message", { message });
+
+export const clearAgentConversation = () => invoke<void>("clear_agent_conversation");
+
+/**
+ * Push-to-talk voice capture. NOT verified end to end yet — the native
+ * transcriber helper these commands drive is written but has never been
+ * compiled or run (no macOS/microphone in this development sandbox). See
+ * docs/ARCHITECTURE.md "Voice pipeline". Until the helper is built and
+ * bundled, `startVoiceCapture` is expected to reject with a clear
+ * "not built yet" error rather than doing nothing silently.
+ */
+export const startVoiceCapture = () => invoke<void>("start_voice_capture");
+export const stopVoiceCapture = () => invoke<void>("stop_voice_capture");
+
+/** Speaks text aloud — the on-device engine (macOS's AVSpeechSynthesizer)
+ * by default, or ElevenLabs when Mona has added her own key (see
+ * hasElevenLabsKey). `emotion` is Claude's own `[[emotion:VALUE]]` tag for
+ * this reply (see AgentReply) — ElevenLabs uses it to shape delivery
+ * (see src-tauri/src/elevenlabs.rs's voice_settings_for_emotion); the
+ * on-device engine ignores it. See docs/ARCHITECTURE.md "Voice pipeline". */
+export const speakText = (text: string, emotion?: string | null) =>
+  invoke<void>("speak_text", { text, emotion: emotion ?? null });
+export const stopSpeaking = () => invoke<void>("stop_speaking");
+
+/**
+ * Voice-biometric speaker enrollment (see
+ * macos/transcriber/VoicePrint.swift) — records ~4 seconds of speech and
+ * stores a local voiceprint so hands-free mode's wake phrase only opens a
+ * session for Mona, not anyone who says it. Result arrives as
+ * `voice://speaker-enrolled` / `voice://speaker-enrollment-failed` events,
+ * not this call's return value — it resolves once recording *starts*.
+ */
+export const startSpeakerEnrollment = () => invoke<void>("start_speaker_enrollment");
+export const hasEnrolledSpeaker = () => invoke<boolean>("has_enrolled_speaker");
+export const clearEnrolledSpeaker = () => invoke<void>("clear_enrolled_speaker");
+
+export interface HandsFreeSettings {
+  enabled: boolean;
+  wake_phrase: string;
+  close_phrase: string;
+}
+
+/**
+ * Hands-free mode: say the wake phrase to open a session, the close phrase
+ * (or just go quiet) to end it — see macos/transcriber/AminVoice.swift's
+ * `HandsFreeListener` and docs/SECURITY.md. Off by default: while it's on,
+ * the microphone stays open continuously (macOS's own mic indicator shows
+ * the whole time), and the wake-phrase-watching phase runs on-device only.
+ * Not yet verified end to end on a real Mac.
+ */
+export const getHandsFreeSettings = () => invoke<HandsFreeSettings>("get_hands_free_settings");
+export const saveHandsFreePhrases = (wakePhrase: string, closePhrase: string) =>
+  invoke<void>("save_hands_free_phrases", { wakePhrase, closePhrase });
+export const setHandsFreeMode = (enabled: boolean) =>
+  invoke<void>("set_hands_free_mode", { enabled });
+
+export type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
+
+export interface Task {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  source: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: string | null;
+  /** Mona's explicit task shape — see src-tauri/src/tasks.rs's
+   * NewTaskDetails. Claude fills these in from context, not required.
+   * No dedicated UI shows them yet; they exist so Claude and the Morning
+   * Brief can reason over priority/deadline/dependencies, not just to
+   * round-trip through the type. */
+  priority: string | null;
+  deadline: string | null;
+  project: string | null;
+  next_action: string | null;
+  approval_required: boolean;
+  dependencies: string[];
+}
+
+export const createTask = (title: string) => invoke<Task>("create_task", { title });
+export const quickCapture = (text: string) => invoke<Task>("quick_capture", { text });
+export const listTasks = (status?: TaskStatus) => invoke<Task[]>("list_tasks", { status });
+export const setTaskStatus = (id: string, status: TaskStatus) =>
+  invoke<void>("set_task_status", { id, status });
+
+export type EscalationStage = "friendly" | "firm" | "escalate_to_user";
+export type FollowUpStatus = "pending" | "sent" | "resolved" | "cancelled";
+
+export interface FollowUp {
+  id: string;
+  task_id: string;
+  due_at: string;
+  escalation_stage: EscalationStage;
+  status: FollowUpStatus;
+  created_at: string;
+}
+
+/**
+ * Follow-up Engine. Escalating (see escalateFollowUp) sends a real native
+ * OS notification (src-tauri/src/notify.rs) — that's the one delivery
+ * channel wired up so far. No email yet; that needs Gmail's OAuth setup.
+ */
+export const createFollowUp = (taskId: string, dueAt: string) =>
+  invoke<FollowUp>("create_follow_up", { taskId, dueAt });
+export const listDueFollowUps = () => invoke<FollowUp[]>("list_due_follow_ups");
+export const escalateFollowUp = (id: string) => invoke<FollowUp>("escalate_follow_up", { id });
+export const setFollowUpStatus = (id: string, status: FollowUpStatus) =>
+  invoke<void>("set_follow_up_status", { id, status });
+
+export interface WorkspaceEntry {
+  path: string;
+  is_dir: boolean;
+  size_bytes: number;
+}
+
+/**
+ * Scoped to Mona's home folder (broadened from the original single
+ * dedicated folder at her explicit request) — see src-tauri/src/files.rs.
+ * Nothing here can escape that folder (path traversal / symlink escapes
+ * are rejected), but within it every one of these — including a plain
+ * list or read — is ConfirmHighRisk: the backend will not run it until
+ * she's replied with an explicit confirmation word to Amin. See
+ * src-tauri/src/tools.rs's `risk_for` and docs/SECURITY.md.
+ */
+export const listWorkspaceFiles = () => invoke<WorkspaceEntry[]>("list_workspace_files");
+export const readWorkspaceFile = (path: string) =>
+  invoke<string>("read_workspace_file", { path });
+export const writeWorkspaceFile = (path: string, contents: string) =>
+  invoke<void>("write_workspace_file", { path, contents });
+export const deleteWorkspaceFile = (path: string) =>
+  invoke<void>("delete_workspace_file", { path });
+
+/**
+ * Opens a URL in Amin's own isolated browser window (its own profile,
+ * never Mona's personal browser) — see src-tauri/src/browser.rs. This is
+ * intentionally just "show a page"; Amin does not read or act on its
+ * content yet.
+ */
+export const openBrowserUrl = (url: string) => invoke<void>("open_browser_url", { url });
+
+export interface DeltaBrief {
+  open_tasks: number;
+  tasks_created_last_24h: number;
+  tasks_completed_last_24h: number;
+  due_follow_ups: number;
+  recent_audit_events: string[];
+}
+
+/**
+ * Local-only "what changed" summary (Phase 3 slice that needs no Gmail/
+ * Calendar). See src-tauri/src/brief.rs.
+ */
+export const generateDeltaBrief = () => invoke<DeltaBrief>("generate_delta_brief");
+
+export interface PendingActionSummary {
+  tool_name: string;
+  description: string;
+  proposed_at: string;
+  expired: boolean;
+}
+
+/**
+ * Mona's Permission Model, LEVEL 2: whatever Amin is currently waiting on
+ * her explicit word for, if anything — a read-only look at the same
+ * ConfirmHighRisk proposal `sendAgentMessage`'s reply already describes in
+ * chat, kept visible even if she's scrolled away from that message. See
+ * src-tauri/src/confirmation.rs's PendingAction and its 10-minute expiry.
+ */
+export const getPendingAction = () => invoke<PendingActionSummary | null>("get_pending_action");

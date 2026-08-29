@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Signing with the Hardened Runtime (required for notarization — see
+	  the "Sign the voice engine dylib" step and tauri-action's own signing
+	  in .github/workflows/build-macos.yml) blocks microphone access
+	  outright, with no system permission prompt at all, unless the app
+	  explicitly declares this entitlement — regardless of
+	  NSMicrophoneUsageDescription in Info.plist and regardless of what
+	  TCC (System Settings → Privacy & Security) shows. This is separate
+	  from and in addition to that Info.plist string: Hardened Runtime
+	  entitlements gate whether the OS will even consider prompting;
+	  Info.plist's usage strings are what the prompt then shows.
+	  Unsigned/ad-hoc builds never hit this, since Hardened Runtime only
+	  applies to signed builds — first surfaced once real signing landed
+	  in 0.2.2: Mona pressed push-to-talk and got "microphone access was
+	  not granted" instantly, with no system dialog ever appearing, even
+	  right after a `tccutil reset`.
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

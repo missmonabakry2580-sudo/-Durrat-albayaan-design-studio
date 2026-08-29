@@ -1,0 +1,86 @@
+/*
+  Amin design tokens — Deep Navy / Soft Gold / Ivory / Charcoal.
+  Single source of truth for color, type, spacing and motion. Components
+  should read these variables rather than hard-coding values, so the whole
+  app restyles from one place (and stays visually consistent with the
+  Mona AlSayed Studio brand identity).
+*/
+
+:root {
+  /* Deep Navy — app background, surfaces */
+  --navy-950: #05070f;
+  --navy-900: #0a1128;
+  --navy-800: #121b3a;
+  --navy-700: #1b2750;
+
+  /* Soft Gold — the one warm accent color; used sparingly */
+  --gold-300: #e8cd7a;
+  --gold-400: #d9b84a;
+  --gold-500: #c9a227;
+
+  /* Electric Blue — Amin's own signal color: the neural network, thinking
+     states, connecting lines. Used with the same restraint as gold. */
+  --blue-300: #8fd8ff;
+  --blue-400: #4fb3e8;
+  --blue-500: #2b8fc9;
+  --accent-blue: var(--blue-400);
+  --accent-blue-strong: var(--blue-500);
+
+  /* Ivory — primary text on navy */
+  --ivory-100: #f7f3e9;
+  --ivory-200: #efe7d4;
+
+  /* Charcoal — text/surfaces on light backgrounds, secondary chrome */
+  --charcoal-900: #1b1b1f;
+  --charcoal-700: #3a3a40;
+  --charcoal-500: #5c5c64;
+
+  /* State colors — kept distinct from gold so risk/status is never
+     ambiguous with the brand accent */
+  --state-success: #4caf7d;
+  --state-warning: #e0a53c;
+  --state-danger: #d1553f;
+
+  /* Semantic aliases — components use these, not the raw palette above */
+  --bg-app: var(--navy-900);
+  --bg-surface: var(--navy-800);
+  --bg-surface-raised: var(--navy-700);
+  --text-primary: var(--ivory-100);
+  --text-secondary: rgba(247, 243, 233, 0.68);
+  --text-muted: rgba(247, 243, 233, 0.42);
+  --accent: var(--gold-400);
+  --accent-strong: var(--gold-500);
+  --border-subtle: rgba(217, 184, 74, 0.18);
+  --border-strong: rgba(217, 184, 74, 0.4);
+
+  /* Glass — the only "panel" surface left in the design system, for the
+     work-area that opens on demand. Light and transparent by design, never
+     an opaque card. */
+  --glass-bg: rgba(10, 17, 40, 0.6);
+  --glass-border: rgba(143, 216, 255, 0.16);
+  --glass-blur: 18px;
+
+  /* Type — system stacks only. No web fonts, no network fetch: the app
+     stays fully offline-capable and the CSP never needs a font-src
+     exception. macOS auto-substitutes SF Arabic alongside San Francisco. */
+  --font-display: ui-serif, Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Arabic",
+    "Geeza Pro", Tahoma, sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 24px;
+  --radius-full: 999px;
+
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-standard: 300ms;
+}

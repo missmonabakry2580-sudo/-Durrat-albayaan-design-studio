@@ -1,0 +1,276 @@
+/*
+  Amin's presence: Mona's own approved artwork, used exactly as designed.
+  --presence-hue is the one variable that carries state — set on
+  .amin-presence[data-state], read by the glow behind the portrait and by
+  the voice waveform. The portrait's pixels are never recolored or
+  redrawn; only the light around it changes.
+*/
+
+.amin-presence {
+  --presence-hue: var(--accent-blue);
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.amin-presence-glow {
+  position: absolute;
+  inset: -10%;
+  background: radial-gradient(
+    ellipse 60% 55% at 38% 42%,
+    color-mix(in srgb, var(--presence-hue) 55%, transparent),
+    color-mix(in srgb, var(--presence-hue) 20%, transparent) 45%,
+    transparent 72%
+  );
+  filter: blur(70px);
+  animation: amin-presence-glow-breathe 4.2s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-glow-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.05);
+  }
+}
+
+.amin-presence-portrait {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 68% horizontal (not 50%) has no effect at all in the app's normal
+     landscape window shape — a square image in a wider-than-tall box only
+     ever crops top/bottom, never left/right, so this only matters if the
+     window is ever resized taller than it is wide. In that case it biases
+     the crop to protect the name lockup on the artwork's right side
+     ("أمين"/"Amin") rather than splitting the loss evenly with the
+     character's face on the left.
+     Vertical 18% (not the old 42%, and not 50% center): a real Mac
+     screenshot (2026-08-28, Mona: "محتاجة تضبط راسه المقصوصة دي من فوق")
+     showed the top of the head/hair cropped off in her actual window
+     shape. The source photo itself has real headroom — hair starts
+     around 12% down the 1254×1254 square (checked directly against the
+     file, not assumed) — so 42% was still cropping into that margin at
+     her window's aspect ratio. 18% keeps the crop's top edge safely
+     above the hairline (see the maths: top-crop fraction of the scaled
+     image is (1 - containerHeight/scaledHeight) × this value, which
+     only exceeds the ~12% hairline once the container is squeezed below
+     roughly a third of the cover-scaled image's height — far shorter
+     than this app's presence panel is ever likely to get) while still
+     leaning toward center rather than pinning fully to the top, which
+     would waste that same margin as empty background above the head in
+     an ordinary window shape. */
+  object-position: 68% 18%;
+  /* Normal blend, not screen: this is a real opaque photograph (updated
+     2026-08-28 to Mona's chosen photorealistic portrait, replacing the
+     earlier translucent wireframe artwork that screen-blending was
+     designed for). Screen-blending a normal face photo would wash the
+     skin tones out toward white instead of dissolving into the
+     background — see the "-3d" rule below, which already made this same
+     call for the 3D avatar canvas. */
+  mix-blend-mode: normal;
+  /* A gentle rim feather on top of the blend, so even the artwork's own
+     non-black detail right at the frame's edge dissolves rather than
+     ending in a visible straight line. */
+  mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 88%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle farthest-corner at 50% 50%, #000 88%, transparent 100%);
+  animation: amin-presence-portrait-pulse 4s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-portrait-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 24px color-mix(in srgb, var(--presence-hue) 30%, transparent)) brightness(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 42px color-mix(in srgb, var(--presence-hue) 45%, transparent)) brightness(1.05);
+  }
+}
+
+/* 3D Mode. Real complaint from a real Mac screenshot (2026-08-28): a hard
+   circular clip here, on top of the soft radial mask-image already on the
+   shared base rule, cut a geometric circle straight through Amin's
+   shoulders — exactly the "PNG cutout pasted on wallpaper" look Mona
+   named. The canvas already renders with a transparent clear color (see
+   ThreeDAvatar.tsx's WebGLRenderer setup), so there's no rectangular
+   canvas edge to hide in the first place — removing the hard clip and
+   widening the shared mask-image's ellipse (below) is what actually lets
+   the character's real silhouette fade into the background instead of
+   being cut by an unrelated shape. */
+.amin-presence-portrait-3d canvas {
+  display: block;
+}
+
+/* Fallback for engines without color-mix(): plain rgba, close enough. */
+@supports not (color: color-mix(in srgb, red, blue)) {
+  .amin-presence-glow {
+    background: radial-gradient(circle at 38% 42%, rgba(79, 179, 232, 0.5), transparent 65%);
+  }
+  .amin-presence-portrait {
+    animation: none;
+    filter: drop-shadow(0 0 30px rgba(79, 179, 232, 0.4));
+  }
+  .amin-presence-wave-bar {
+    background: rgba(79, 179, 232, 0.75);
+  }
+}
+
+/* Simli connecting-state badge — see PortraitAvatar.tsx. Sits below the
+   portrait, matching the waveform's own vertical slot below, never over
+   the face. */
+.portrait-connecting-badge {
+  position: absolute;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* --- Voice waveform, beneath the portrait -------------------------------- */
+
+.amin-presence-wave {
+  position: absolute;
+  bottom: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 18px;
+}
+
+.amin-presence-wave-bar {
+  width: 2.5px;
+  height: 20%;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--presence-hue) 75%, transparent);
+  animation: amin-presence-wave-idle 3.6s var(--ease-standard) infinite;
+}
+
+@keyframes amin-presence-wave-idle {
+  0%,
+  100% {
+    height: 15%;
+  }
+  50% {
+    height: 30%;
+  }
+}
+
+@keyframes amin-presence-wave-active {
+  0%,
+  100% {
+    height: 20%;
+  }
+  50% {
+    height: 100%;
+  }
+}
+
+/* --- States: everything keys off [data-state] on the root -------------- */
+
+.amin-presence[data-state="idle"] .amin-presence-portrait {
+  animation-duration: 6s;
+}
+.amin-presence[data-state="idle"] .amin-presence-glow {
+  animation-duration: 6s;
+  opacity: 0.7;
+}
+
+/* Hands-free mode, passively watching for the wake phrase — calmer than
+   "listening" (an open command session) so the two are visually distinct;
+   not idle either, since the mic is actually live the whole time. */
+.amin-presence[data-state="armed"] .amin-presence-portrait {
+  animation-duration: 4s;
+}
+.amin-presence[data-state="armed"] .amin-presence-glow {
+  animation-duration: 4s;
+  opacity: 0.85;
+}
+
+.amin-presence[data-state="listening"] .amin-presence-portrait {
+  animation-duration: 1.3s;
+}
+.amin-presence[data-state="listening"] .amin-presence-glow {
+  animation-duration: 1.6s;
+}
+.amin-presence[data-state="listening"] .amin-presence-wave-bar {
+  animation-name: amin-presence-wave-active;
+  animation-duration: 0.7s;
+}
+
+.amin-presence[data-state="thinking"] .amin-presence-portrait {
+  animation-duration: 1.6s;
+}
+.amin-presence[data-state="thinking"] .amin-presence-glow {
+  animation-duration: 1.4s;
+}
+
+.amin-presence[data-state="planning"] .amin-presence-portrait {
+  animation-duration: 3s;
+}
+.amin-presence[data-state="planning"] .amin-presence-glow {
+  animation-duration: 3s;
+}
+
+.amin-presence[data-state="executing"] {
+  --presence-hue: var(--accent);
+}
+.amin-presence[data-state="executing"] .amin-presence-portrait {
+  animation-duration: 0.9s;
+}
+.amin-presence[data-state="executing"] .amin-presence-glow {
+  animation-duration: 0.9s;
+}
+
+.amin-presence[data-state="speaking"] .amin-presence-portrait {
+  animation-duration: 0.9s;
+}
+.amin-presence[data-state="speaking"] .amin-presence-wave-bar {
+  animation-name: amin-presence-wave-active;
+  animation-duration: 0.5s;
+}
+
+.amin-presence[data-state="success"] {
+  --presence-hue: var(--state-success);
+}
+.amin-presence[data-state="success"] .amin-presence-portrait {
+  animation-duration: 2.2s;
+}
+
+.amin-presence[data-state="warning"] {
+  --presence-hue: var(--state-warning);
+}
+.amin-presence[data-state="warning"] .amin-presence-portrait {
+  animation-duration: 0.8s;
+}
+.amin-presence[data-state="warning"] .amin-presence-glow {
+  animation-duration: 0.8s;
+}
+
+.amin-presence[data-state="waiting"] {
+  --presence-hue: var(--state-warning);
+}
+.amin-presence[data-state="waiting"] .amin-presence-portrait {
+  animation-duration: 5.5s;
+}
+.amin-presence[data-state="waiting"] .amin-presence-glow {
+  animation-duration: 5.5s;
+  opacity: 0.55;
+}

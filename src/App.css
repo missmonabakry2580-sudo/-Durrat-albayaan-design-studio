@@ -1,0 +1,691 @@
+/*
+  Amin's world: the app itself is Amin's environment, not a stack of cards
+  with a picture of Amin pinned to the top. One presence stays visible at
+  all times; the other functions are thin overlays that appear on demand
+  and never take over the whole screen.
+*/
+
+.amin-world {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+}
+
+.amin-world-presence {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.visual-mode-toggle {
+  position: fixed;
+  top: var(--space-4, 16px);
+  left: var(--space-4, 16px);
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+/* Real complaint from a real Mac screenshot (2026-08-28): "الخلفية فاضية
+   بشكل غير احترافي... أمين ظاهر وكأنه معلق في فراغ" (the background reads
+   as an unprofessional void, like Amin is floating in nothing). The two
+   radial glows alone read as empty space once the character sits on top
+   of them at normal screen brightness. Adds two quiet, brand-consistent
+   technical layers underneath — a fine dot grid (circuit-board texture,
+   not distinct enough to compete with Amin) and a few faint diagonal
+   accent lines (gold + blue, the same restraint the tokens file already
+   asks for) — kept deliberately subtle per her own instruction ("لمسات
+   تقنية بسيطة، هادئة") rather than "زحمة مبالغ فيها" (overdone clutter). */
+.amin-world-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+      ellipse 90% 70% at 50% 30%,
+      color-mix(in srgb, var(--accent-blue) 12%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(ellipse 90% 60% at 50% 100%, color-mix(in srgb, var(--gold-500) 5%, transparent), transparent 70%),
+    radial-gradient(circle, color-mix(in srgb, var(--accent-blue) 14%, transparent) 1px, transparent 1.4px) 0 0 / 34px 34px,
+    linear-gradient(
+        128deg,
+        transparent 0%,
+        transparent 18%,
+        color-mix(in srgb, var(--accent-blue) 10%, transparent) 18.4%,
+        transparent 18.8%,
+        transparent 46%,
+        color-mix(in srgb, var(--gold-500) 9%, transparent) 46.4%,
+        transparent 46.8%,
+        transparent 100%
+      )
+      0 0 / 100% 100%;
+}
+
+.amin-world-stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) calc(var(--space-12) + 64px);
+  overflow-y: auto;
+  text-align: center;
+}
+
+.amin-world-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+}
+
+.amin-world-log-wrap {
+  width: min(560px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.amin-world-log-clear {
+  align-self: center;
+}
+
+.banner {
+  max-width: min(560px, 92vw);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+
+.banner-warning {
+  background: rgba(224, 165, 60, 0.12);
+  border: 1px solid rgba(224, 165, 60, 0.35);
+  color: var(--gold-300);
+}
+
+.banner-danger {
+  background: rgba(209, 85, 63, 0.12);
+  border: 1px solid rgba(209, 85, 63, 0.4);
+  color: #f0a993;
+}
+
+.banner-info {
+  background: rgba(90, 155, 212, 0.12);
+  border: 1px solid rgba(90, 155, 212, 0.35);
+  color: #a9d2f0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.banner-action {
+  border: 1px solid rgba(90, 155, 212, 0.5);
+  background: rgba(90, 155, 212, 0.18);
+  color: inherit;
+  border-radius: var(--radius-sm);
+  padding: 0.3em 0.9em;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.banner-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* --- Side rail: the only navigation in the app -------------------------- */
+
+.side-rail {
+  position: fixed;
+  /* Physical left, not the RTL reading-order "start" (physical right) —
+     Amin's identity artwork has its name lockup ("أمين"/"Amin") sitting
+     right where a start-anchored rail would float, at almost exactly the
+     same vertical-center band. Placed over the character illustration on
+     the left instead, where overlap reads as depth, not a cut-off word. */
+  inset-inline-end: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.side-rail-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+  display: grid;
+  place-items: center;
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.side-rail-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.side-rail-btn-active {
+  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
+  color: var(--text-primary);
+}
+
+/* --- Status pill: the only permanent trace of security/autonomy -------- */
+
+.status-pill {
+  position: fixed;
+  /* Clears macOS's overlaid traffic-light buttons, which always sit at
+     the physical top-left of the window regardless of RTL — see
+     tauri.conf.json's titleBarStyle: Overlay. */
+  top: 44px;
+  inset-inline-end: var(--space-4);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot-ok {
+  background: var(--state-success);
+  box-shadow: 0 0 8px var(--state-success);
+}
+
+.status-dot-danger {
+  background: var(--state-danger);
+  box-shadow: 0 0 8px var(--state-danger);
+}
+
+/* --- Work area: the one place a function expands into, on demand ------- */
+
+.work-area {
+  position: fixed;
+  inset-inline-end: var(--space-4);
+  top: var(--space-16, 72px);
+  bottom: calc(var(--space-12) + 56px);
+  z-index: 4;
+  width: min(400px, 88vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.work-area-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.work-area-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.work-area-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.panel-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* --- Command bar: the single most important interaction ---------------- */
+
+.command-bar {
+  position: relative;
+  z-index: 2;
+  width: min(680px, 92vw);
+  margin: 0 auto var(--space-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: 0 0 0 1px rgba(143, 216, 255, 0.04), 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.command-bar-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  padding: var(--space-2) 0;
+}
+
+.command-bar-input:focus {
+  outline: none;
+}
+
+.command-bar-input::placeholder {
+  color: var(--text-muted);
+}
+
+.command-bar-mic,
+.command-bar-action,
+.command-bar-send {
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  border-radius: var(--radius-full);
+}
+
+.command-bar-mic,
+.command-bar-action {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+}
+
+.command-bar-mic-active {
+  background: color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-blue) 60%, transparent);
+}
+
+.command-bar-send {
+  padding: var(--space-2) var(--space-5);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--navy-900);
+  font-weight: 600;
+}
+
+.command-bar-send:disabled,
+.command-bar-mic:disabled,
+.command-bar-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Approval card: Mona's Permission Model, LEVEL 2 -------------------- */
+/* Stays visible above the command bar for as long as a ConfirmHighRisk
+   action is pending, regardless of which side panel is open or how far
+   she's scrolled the conversation — see confirmation.rs's PendingAction. */
+
+.approval-card {
+  position: relative;
+  z-index: 2;
+  width: min(680px, 92vw);
+  margin: 0 auto var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: rgba(224, 165, 60, 0.12);
+  border: 1px solid rgba(224, 165, 60, 0.35);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.approval-card-expired {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-subtle);
+}
+
+.approval-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.approval-card-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  overflow-wrap: break-word;
+  /* batch_file_operations' description is multi-line (one line per file
+     operation) so Mona can actually read the whole plan before approving
+     it once — pre-line keeps those real newlines instead of collapsing
+     them into one run-on line. */
+  white-space: pre-line;
+}
+
+.approval-card-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* --- Shared bits reused inside the work area ---------------------------- */
+
+.chip {
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-3);
+  font-size: 0.8rem;
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chip-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--navy-900);
+  font-weight: 600;
+}
+
+.chip-danger.chip-active {
+  background: var(--state-danger);
+  border-color: var(--state-danger);
+  color: var(--ivory-100);
+}
+
+.chip-danger {
+  color: var(--state-danger);
+  border-color: rgba(209, 85, 63, 0.4);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.field-label {
+  min-width: 140px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.field-row input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-primary);
+}
+
+.field-row button {
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+}
+
+.field-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.badge {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-3);
+  font-size: 0.75rem;
+}
+
+.badge-success {
+  color: var(--state-success);
+  border-color: var(--state-success);
+}
+
+.brief-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: min(34vh, 320px);
+  overflow-y: auto;
+}
+
+.agent-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  max-width: 85%;
+  text-align: start;
+}
+
+.agent-turn-user {
+  align-self: flex-end;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.agent-turn-amin {
+  align-self: flex-start;
+  background: rgba(5, 7, 15, 0.4);
+  border: 1px solid var(--border-subtle);
+}
+
+.agent-turn-role {
+  font-size: 0.7rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.agent-turn-text {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.show-done-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task-check {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--navy-900);
+  font-size: 0.8rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.task-check-done {
+  background: var(--state-success);
+  border-color: var(--state-success);
+}
+
+.task-title {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  text-align: start;
+}
+
+.task-title-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.file-preview {
+  background: rgba(5, 7, 15, 0.4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.file-preview-content {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: start;
+}
+
+.note-textarea {
+  flex: 1;
+  min-height: 80px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-primary);
+  font-family: inherit;
+  resize: vertical;
+}
+
+.audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.audit-list li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  font-size: 0.8rem;
+  flex-wrap: wrap;
+  text-align: start;
+}
+
+.text-muted {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: start;
+}
+
+.settings-about {
+  margin-top: var(--space-2);
+  text-align: center;
+}
+
+.creator-attribution {
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  text-align: center;
+}

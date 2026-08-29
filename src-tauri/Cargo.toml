@@ -1,0 +1,87 @@
+[package]
+name = "amin"
+version = "0.2.35"
+description = "Amin — personal executive AI agent (desktop, macOS)"
+authors = ["Mona AlSayed Studio"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "amin_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+# Push-to-talk shortcut, held even while Amin isn't the focused window —
+# see src/voice.rs and docs/ARCHITECTURE.md's "Voice pipeline" section.
+tauri-plugin-global-shortcut = "2"
+# Native OS notifications — the one real delivery channel for the
+# Follow-up Engine that needs no external account (see src/followups.rs).
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Local state lives entirely on-device. Bundled so no system libsqlite dependency
+# is required, and the frontend never gets raw SQL access — only the typed
+# Tauri commands in src/commands.rs, so invariants like "audit log is append-only"
+# are enforced in Rust, not trusted to the webview.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Secrets live in the OS Keychain, never on disk or in Git.
+keyring = "3"
+# Outbound calls (Anthropic API now; Gmail/Calendar/browser later) happen
+# only from this Rust backend — the webview CSP forbids the frontend from
+# reaching the network at all (see tauri.conf.json's connect-src).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+# Loads the voice engine (macos/transcriber/AminVoice.swift, built as a
+# dylib) in-process via dlopen/dlsym — see src/voice.rs for why this
+# replaced spawning it as a separate helper process.
+libloading = "0.8"
+# In-app updates: every earlier fix this build required Mona to manually
+# delete the old .app and download+drag in the new one — a real, repeated
+# complaint, not a one-off. Checks tauri.conf.json's configured endpoint
+# (the GitHub release's latest.json) and can download+install a newer
+# build without her leaving the app. See docs/ARCHITECTURE.md.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# ElevenLabs' streaming text-to-speech (wss://.../stream-input) — see
+# elevenlabs.rs's synthesize_streaming and docs/ARCHITECTURE.md's
+# "Realtime voice" section for why this replaces the old one-shot REST
+# call: audio starts arriving as ElevenLabs generates it instead of
+# waiting for the whole file, with no server of our own to host (unlike
+# ElevenLabs' full Conversational AI / Speech Engine products).
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+# oneshot channel bridging WebviewWindow::eval_with_callback's fire-once
+# callback into an awaitable value — see browser.rs's eval_and_await.
+tokio = { version = "1", features = ["sync"] }
+futures-util = "0.3.34"
+base64 = "0.23.1"
+# Decodes ElevenLabs' MP3 reply into PCM so audio_level.rs can compute a
+# real loudness envelope for the 3D avatar's mouth (see
+# docs/ARCHITECTURE.md's "Visual modes" section) — pure Rust, no system
+# codec dependency to bundle or notarize alongside afplay.
+symphonia = { version = "0.5", features = ["mp3"] }
+# The phone↔laptop bridge's end-to-end encryption (see phone_bridge.rs):
+# AES-256-GCM over a PBKDF2-derived key from a passphrase Mona types into
+# both apps — the repo relaying the messages is public, so the content
+# must be ciphertext, and GCM's auth tag doubles as sender authentication.
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+
+[dev-dependencies]
+# tauri::test::mock_app — used by tools.rs's unit tests, which need a real
+# AppHandle to exercise file/browser tool dispatch end to end.
+tauri = { version = "2", features = ["test"] }
+# #[tokio::test] — tools::execute is async now (it awaits browser eval
+# calls), so its tests need an executor to run on.
+tokio = { version = "1", features = ["macros", "rt"] }
+

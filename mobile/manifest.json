@@ -1,0 +1,19 @@
+{
+  "name": "أمين",
+  "short_name": "أمين",
+  "description": "أمين — مساعد منى الشخصي، نسخة الهاتف",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0a1030",
+  "theme_color": "#0a1030",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    {
+      "src": "amin-identity.jpg",
+      "sizes": "1254x1254",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}

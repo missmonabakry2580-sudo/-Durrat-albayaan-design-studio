@@ -1,0 +1,36 @@
+# XcodeGen spec for أمين — the native iPhone app (2026-08-29, Mona's
+# explicit demand after the web app proved the experience: a real App
+# Store/TestFlight app, because only native apps get the phone
+# capabilities she actually wants next — Photos-library organizing and
+# Files-folder tidying, both impossible for web apps by iOS design).
+#
+# Generated in CI with `xcodegen generate` (no hand-maintained
+# .xcodeproj in git — it's a build artifact, not source).
+name: Amin
+options:
+  bundleIdPrefix: om.durratalbayaan
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Amin:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: om.durratalbayaan.amin
+        DEVELOPMENT_TEAM: "73ZR23J5X4"
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_NAME: Amin
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.0.0
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        INFOPLIST_KEY_CFBundleDisplayName: "أمين"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "أمين بيسمع صوتك عشان يرد عليكِ."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "لتحويل كلامك إلى نص يفهمه أمين."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
