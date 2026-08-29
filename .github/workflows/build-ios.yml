@@ -37,6 +37,7 @@ jobs:
 
       - name: Compile check (unsigned)
         run: |
+          set -euo pipefail
           cd ios
           xcodebuild build \
             -project Amin.xcodeproj \
@@ -65,10 +66,22 @@ jobs:
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        # Canonicalize instead of trusting the paste (first real run failed
+        # with CryptoKitASN1Error.invalidPEMDocument): whatever shape the
+        # secret arrived in — single line, CRLF, missing trailing newline —
+        # extract the base64 and re-emit textbook PEM.
         run: |
+          set -euo pipefail
           mkdir -p ~/private_keys
-          printf '%s' "$KEY_P8" > ~/private_keys/AuthKey_"$KEY_ID".p8
-          wc -c ~/private_keys/AuthKey_"$KEY_ID".p8
+          python3 - <<'PY'
+          import os, re, textwrap
+          raw = os.environ["KEY_P8"]
+          b64 = re.sub(r"-----[^-]*-----|\s", "", raw)
+          pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(b64, 64)) + "\n-----END PRIVATE KEY-----\n"
+          path = os.path.expanduser("~/private_keys/AuthKey_" + os.environ["KEY_ID"] + ".p8")
+          open(path, "w").write(pem)
+          print("key written,", len(pem), "bytes,", len(b64), "b64 chars")
+          PY
 
       - name: Archive (cloud signing)
         if: steps.gate.outputs.ok == 'true'
@@ -76,6 +89,7 @@ jobs:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          set -euo pipefail
           cd ios
           xcodebuild archive \
             -project Amin.xcodeproj \
@@ -96,6 +110,7 @@ jobs:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          set -euo pipefail
           cd ios
           cat > ExportOptions.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
