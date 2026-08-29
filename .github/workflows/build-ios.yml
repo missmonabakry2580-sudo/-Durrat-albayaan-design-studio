@@ -152,10 +152,10 @@ jobs:
           xcodebuild archive \
             -project Amin.xcodeproj \
             -scheme Amin \
+            -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/Amin.xcarchive \
             -allowProvisioningUpdates \
-            -allowProvisioningDeviceRegistration \
             -authenticationKeyPath "$HOME"/private_keys/AuthKey_"$KEY_ID".p8 \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
