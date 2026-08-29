@@ -406,7 +406,8 @@ const CODE_PROMPT_ADDON = `
 You can also read the school platform's source code and propose fixes to it: code_list_files, code_read_file (reads, run freely), and code_propose_fix (opens a reviewed Pull Request — it never changes the live site directly). Use this to close the loop on a CODE/UI bug you diagnosed from the data: read the relevant source, find the cause, and propose a fix as a PR that Mona (or a developer) reviews before it goes live. Every code_propose_fix asks Mona to confirm first. Keep fixes minimal and targeted; pass the file's FULL new content. You cannot run the platform's tests from here, so a PR is a proposal, not a guaranteed-correct change — say so.`;
 const SHEETS_PROMPT_ADDON = `
 You can also read and write Mona's whole school database directly — the Google Sheet the platform runs on (37 tabs: students, installments, invoices, attendance, grades, Quran memorization, lesson plans, daily reports, and more). Tools: school_sheet_tabs, school_sheet_read, school_sheet_find (reads, run freely); school_sheet_add, school_sheet_update, school_sheet_delete (writes). Address a tab by its exact Arabic title; read it first (school_sheet_read / school_sheet_tabs) to learn its columns before writing. Writes to sensitive tabs (students, any finance, bank, health, grades) and ALL deletes ask Mona to confirm on screen first; if she declines the tool returns cancelled — accept it. Match rows precisely (e.g. by الرقم المدني) before updating or deleting so you never touch the wrong child's record. This is her own school data — the banking ban does not apply to it.
-You are also Mona's monitor across every portal. The database itself logs activity — the session log tab (معرف الجلسة: logins, last-activity, action logs) and the messages tab record what happens in each portal — so read those to build the daily report she wants: every notable step across admin/teacher/parent/student/finance/transport that day, plus anything that looks wrong (missing records, stuck statuses, failed payments). Fix DATA problems in the sheet (with confirmation on sensitive tabs); for a CODE/UI bug in a portal, you cannot fix it from here — give Mona a precise diagnosis (which portal, which action, what looks wrong in the data) so it can be fixed in the platform's code.`;
+You are also Mona's monitor across every portal. The database itself logs activity — the session log tab (معرف الجلسة: logins, last-activity, action logs) and the messages tab record what happens in each portal — so read those to build the daily report she wants: every notable step across admin/teacher/parent/student/finance/transport that day, plus anything that looks wrong (missing records, stuck statuses, failed payments). Fix DATA problems in the sheet (with confirmation on sensitive tabs); for a CODE/UI bug in a portal, you cannot fix it from here — give Mona a precise diagnosis (which portal, which action, what looks wrong in the data) so it can be fixed in the platform's code.
+IMPORTANT — verify your own work: after ANY write (add/update/delete), immediately read the affected rows back with school_sheet_find/read and confirm to Mona that the change is really present in the data. Mona has seen changes that were reported "done" but never actually landed, so never claim success you have not re-read. You have no browser, so you cannot see the portal screens yourself — "it shows in the portal" is Mona's check; the underlying data is yours to verify.`;
 // موافقة منى على أي إجراء يغيّر بيانات المنصة — حوار حاجب على الشاشة. لو
 // رفضت، الأداة بترجع cancelled وما بتلمسش المنصة. (نموذج: window.confirm؛
 // نقدر نحسّنه لحوار مصمّم لاحقًا.)
@@ -415,7 +416,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -947,6 +948,7 @@ if (SR) {
   let stopFallbackTimer = null;
   let maxLengthTimer = null;
   let silenceTimer = null;
+  let noSpeechTimer = null;
 
   // REAL RECURRING BUG on Mona's iPhone (2026-08-29): the first mic use
   // worked, the second hung — red "listening" forever, no result, no send.
@@ -963,6 +965,7 @@ if (SR) {
     clearTimeout(stopFallbackTimer);
     clearTimeout(maxLengthTimer);
     clearTimeout(silenceTimer);
+    clearTimeout(noSpeechTimer);
     micBtn.classList.remove("rec");
     setFaceState("", "");
     const dead = recognition;
@@ -977,17 +980,36 @@ if (SR) {
   }
 
   function startRecognition() {
+    // حرّر مخرج الصوت الأول — على iOS نطق أمين (الصوت الطالع) بيمسك جلسة
+    // الصوت فالميكروفون مايسمعش في التسجيل اللي بعده (ده سبب "أول مرة يشتغل
+    // وبعدها لأ"). نوقف أي صوت شغال قبل ما نفتح المايك.
+    try { if (currentAudio) { currentAudio.pause(); currentAudio = null; } } catch { /* ok */ }
+    try { player.pause(); } catch { /* ok */ }
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch { /* ok */ }
+
     finalText = "";
     msgInput.value = "";
     recognizing = true;
+    let heard = false;
     micBtn.classList.add("rec");
     setFaceState("listening", "أمين بيسمعك… دوسي المايك تاني لما تخلصي");
-    const r = new SR(); // كائن جديد كل مرة — ده جوهر الإصلاح
+    const r = new SR(); // كائن جديد كل مرة
     recognition = r;
     r.lang = "ar-EG";
     r.interimResults = true;
     r.continuous = false;
+    // لو مفيش أي كلام اتسمع خلال 7 ثواني، المايك غالبًا ما اشتغلش — نقفل
+    // ونطمّنها بدل الأحمر الصامت (بدل ما تفضل تكلم ومحدش سامع).
+    noSpeechTimer = setTimeout(() => {
+      if (!heard) {
+        try { r.stop(); } catch { /* ok */ }
+        finishRecognition();
+        stateLine.textContent = "معرفتش أسمعك — جرّبي تاني أو اكتبي 🎤";
+      }
+    }, 7000);
     r.onresult = (e) => {
+      heard = true;
+      clearTimeout(noSpeechTimer);
       let interim = "";
       for (const res of e.results) {
         if (res.isFinal) finalText += res[0].transcript;
