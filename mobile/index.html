@@ -429,6 +429,17 @@ function setFaceState(s, label) {
 /* ---------- المحادثة مع كلود (مباشرة من المتصفح) ---------- */
 let history = store.history;
 let busy = false;
+let busySince = 0;
+// حزام أمان أخير: لو busy فضلت شغالة أكتر من ٣ دقايق (أي await اتعلق رغم
+// كل المهلات)، بترجع فاضية بدل ما التطبيق يتجمد للأبد بصمت.
+setInterval(() => {
+  if (busy && busySince && Date.now() - busySince > 180000) {
+    busy = false;
+    busySince = 0;
+    setFaceState("", "");
+    lastReply.textContent = "اتعلّقت شوية ورجعت — قوليلي تاني.";
+  }
+}, 15000);
 
 function stripEmotion(text) {
   const m = text.match(/\[\[emotion:([a-z]+)\]\]\s*$/);
@@ -559,8 +570,13 @@ async function sendViaLaptop(text) {
 }
 
 async function callClaude(key, messages) {
+  // مهلة ٩٠ ثانية لكل نداء — نفس مبدأ باقي المهلات: مفيش await من غير
+  // سقف زمني بعد تجمّد التطبيق الحقيقي على جهاز منى.
+  const abort = new AbortController();
+  const abortTimer = setTimeout(() => abort.abort(), 90000);
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: abort.signal,
     headers: {
       "content-type": "application/json",
       "x-api-key": key,
@@ -577,6 +593,7 @@ async function callClaude(key, messages) {
       messages,
     }),
   });
+  clearTimeout(abortTimer);
   const data = await resp.json();
   if (!resp.ok) {
     throw new Error((data && data.error && data.error.message) || resp.status);
@@ -592,6 +609,7 @@ async function sendToAmin(text) {
   }
   if (busy || !text.trim()) return;
   busy = true;
+  busySince = Date.now();
   msgInput.value = "";
   // وضع اللابتوب: الكلام بيتنفذ على أمين اللابتوب نفسه بكامل قدراته
   // (ملفات + مهام اللابتوب + ذاكرته) عبر الجسر المشفّر — والتليفون بيعرض
@@ -604,7 +622,8 @@ async function sendToAmin(text) {
       history.push({ role: "assistant", content: reply.text });
       store.history = history;
       lastReply.textContent = reply.text;
-      await speak(reply.text, reply.emotion);
+      // بدون await — انظري تعليق speak() في المسار المستقل تحت.
+      speak(reply.text, reply.emotion);
     } catch (e) {
       history.pop();
       lastReply.textContent = String(e && e.message ? e.message : e);
@@ -643,7 +662,17 @@ async function sendToAmin(text) {
     history.push({ role: "assistant", content: raw || "تم." });
     store.history = history;
     lastReply.textContent = replyText || "تم.";
-    await speak(replyText || "تم.", emotion);
+    // REAL BUG from Mona's real iPhone (2026-08-29): the app answered
+    // once then went completely dead — send button, mic, everything.
+    // Cause: `await speak(...)` held `busy` true for the whole utterance,
+    // and iOS's speechSynthesis can simply never fire onend (a
+    // long-known WebKit behavior), so the promise never resolved and
+    // `busy` stayed true forever, silently swallowing every later
+    // message. The reply is already on screen at this point — speaking
+    // it must never gate the pipeline. Fire-and-forget; speak() manages
+    // its own interruption (currentAudio kill + speechSynthesis.cancel)
+    // if a new reply arrives mid-utterance.
+    speak(replyText || "تم.", emotion);
   } catch (e) {
     history.pop(); // الرسالة اللي فشلت ما تتسجلش في التاريخ
     lastReply.textContent = "حصل خطأ: " + (e && e.message ? e.message : e);
@@ -666,14 +695,19 @@ async function speak(text, emotion) {
   const voiceId = store.voiceId.trim();
   if (key && voiceId) {
     try {
+      // مهلة ٢٠ ثانية — fetch من غير مهلة ممكن يعلّق طويل على شبكة سيئة.
+      const abort = new AbortController();
+      const abortTimer = setTimeout(() => abort.abort(), 20000);
       const resp = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
         {
           method: "POST",
           headers: { "content-type": "application/json", "xi-api-key": key },
           body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+          signal: abort.signal,
         },
       );
+      clearTimeout(abortTimer);
       if (resp.ok) {
         const blob = await resp.blob();
         await playBlob(blob);
@@ -707,7 +741,13 @@ function speakOnDevice(text) {
     u.lang = "ar-SA";
     const arVoice = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith("ar"));
     if (arVoice) u.voice = arVoice;
-    u.onend = u.onerror = () => resolve();
+    // iOS's speechSynthesis is allowed to never fire onend OR onerror
+    // (the exact hang behind the app freezing after its first reply) —
+    // resolve on a generous time cap regardless, sized to the text.
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    u.onend = u.onerror = done;
+    setTimeout(done, Math.min(60000, 4000 + text.length * 120));
     speechSynthesis.speak(u);
   });
 }

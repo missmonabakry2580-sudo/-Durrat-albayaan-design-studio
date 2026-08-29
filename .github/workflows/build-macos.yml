@@ -7,6 +7,14 @@ name: Build Amin (macOS)
 on:
   push:
     branches: [claude/amin-project-6wwufr]
+    # Phone-app-only pushes (mobile/ has its own deploy workflow) don't
+    # produce a new laptop build — without this, every such push tripped
+    # the version-unchanged guard below by design and GitHub emailed Mona
+    # a scary "build failed" for what was actually the guard working
+    # (2026-08-29, a real confused-alarm report from her inbox).
+    paths-ignore:
+      - "mobile/**"
+      - ".github/workflows/deploy-mobile.yml"
   workflow_dispatch: {}
 
 permissions:
