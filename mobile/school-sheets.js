@@ -53,6 +53,22 @@
     if (opts && opts.getServiceAccount) deps.getServiceAccount = opts.getServiceAccount;
   }
 
+  // fetch بمهلة زمنية — أي نداء يتعلّق يفشل بسرعة بدل ما يجمّد أمين لدقايق
+  // (ده كان سبب "بيتأخر كتير ومش بيرد المرة التانية"). 25 ثانية سقف واقعي.
+  function tfetch(url, opts) {
+    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
+    var o = Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {});
+    return Promise.resolve(deps.fetch(url, o)).then(
+      function (r) { if (timer) clearTimeout(timer); return r; },
+      function (e) {
+        if (timer) clearTimeout(timer);
+        if (e && e.name === "AbortError") throw new Error("انتهت مهلة الاتصال بجوجل — جرّبي تاني.");
+        throw e;
+      }
+    );
+  }
+
   /* ---------------- مصادقة حساب الخدمة (JWT RS256 → access token) ------- */
   var token = { value: "", expiresAt: 0 };
   function resetToken() {
@@ -117,7 +133,7 @@
     );
     var jwt = signingInput + "." + b64url(sig);
 
-    var res = await deps.fetch(TOKEN_URL, {
+    var res = await tfetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body:
@@ -140,7 +156,7 @@
   async function api(path, opts) {
     var t = await mintAccessToken();
     opts = opts || {};
-    var res = await deps.fetch(SHEETS_API + path, {
+    var res = await tfetch(SHEETS_API + path, {
       method: opts.method || "GET",
       headers: Object.assign(
         { Authorization: "Bearer " + t },

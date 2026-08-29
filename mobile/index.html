@@ -390,7 +390,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -709,7 +709,12 @@ async function sendToAmin(text) {
     return;
   }
   const hasAttachment = !!(pendingImage || pendingFileText);
-  if (busy || (!text.trim() && !hasAttachment)) return;
+  // لو لسه بيرد على اللي قبله، منقولش الرسالة تتجاهل بصمت — نطمّنها إنه شغال.
+  if (busy) {
+    stateLine.textContent = "أمين لسه بيرد على اللي قبله… ثانية واحدة";
+    return;
+  }
+  if (!text.trim() && !hasAttachment) return;
   busy = true;
   busySince = Date.now();
   msgInput.value = "";

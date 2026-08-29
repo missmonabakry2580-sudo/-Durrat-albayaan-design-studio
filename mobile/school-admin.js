@@ -40,6 +40,21 @@
     if (opts && opts.getCred) deps.getCred = opts.getCred;
   }
 
+  // fetch بمهلة زمنية — أي نداء يتعلّق يفشل بسرعة بدل ما يجمّد أمين.
+  function tfetch(url, opts) {
+    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
+    var o = Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {});
+    return Promise.resolve(deps.fetch(url, o)).then(
+      function (r) { if (timer) clearTimeout(timer); return r; },
+      function (e) {
+        if (timer) clearTimeout(timer);
+        if (e && e.name === "AbortError") throw new Error("انتهت مهلة الاتصال — جرّبي تاني.");
+        throw e;
+      }
+    );
+  }
+
   // كاش التوكن في الذاكرة — عمر التوكن ساعة؛ بنجدده بالـ refresh token قبل
   // ما يخلص بدقيقة، وبنعمل دخول جديد لو مفيش refresh أو فشل التجديد.
   var session = { idToken: "", refreshToken: "", expiresAt: 0 };
@@ -54,7 +69,7 @@
 
     if (session.refreshToken && now >= session.expiresAt - 60000) {
       try {
-        var rres = await deps.fetch(REFRESH_URL, {
+        var rres = await tfetch(REFRESH_URL, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body:
@@ -80,7 +95,7 @@
         "محتاجة تحطي بريد وكلمة سر حساب الإدارة في إعدادات أمين الأول."
       );
     }
-    var res = await deps.fetch(SIGNIN_URL, {
+    var res = await tfetch(SIGNIN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -109,7 +124,7 @@
   // Firebase callable الرسمي).
   async function callFunction(name, data) {
     var token = await signIn();
-    var res = await deps.fetch(FUNCTIONS_BASE + name, {
+    var res = await tfetch(FUNCTIONS_BASE + name, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
