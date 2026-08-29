@@ -2463,6 +2463,47 @@ Chromium via Playwright) decrypts correctly in the Rust implementation
 GitHub — needs the 0.2.35 build running on her Mac with the bridge
 enabled.
 
+## Native iOS Amin reached TestFlight — the pipeline saga (2026-08-29)
+
+The native app (`ios/`, XcodeGen + SwiftUI, bundle
+`om.durratalbayaan.amin`) now builds, signs and uploads to TestFlight
+entirely from CI (`build-ios.yml`) via Apple cloud signing — no
+certificates stored anywhere, just the three
+`APP_STORE_CONNECT_*` secrets. First successful upload: run
+33264542414 ("Progress 100%: Upload succeeded. Uploaded Amin").
+
+Getting there took four distinct root causes, each worth remembering:
+
+1. **Green-lie CI**: `xcodebuild … | tail -40` returned tail's exit
+   code, masking `invalidPEMDocument` as success. Same sin as the
+   historical dylib masking. Fix: `set -euo pipefail` on every piped
+   step. A pipeline that can't fail honestly can't be debugged at all.
+2. **The pasted key wasn't text at all**: the `KEY_P8` secret's base64
+   body arrived as 200 identical-looking non-ASCII characters. First
+   theory (fullwidth lookalikes, NFKC-fixable) was disproved by the
+   strict filter keeping 0 chars; a safe block histogram (counts per
+   256-codepoint block, printable without leaking key material) showed
+   `U+2022 BULLET × 200` — the paste source was a masked/dots display,
+   so the key content never existed in the secret. Diagnosis rule that
+   cracked it: print structure (lengths, block counts), never content.
+3. **Recovery had to be verifiable, not guessed**: the key step embeds
+   the SHA-256 of the real key's DER (a hash of a 256-bit-entropy key
+   is safe to publish) and refuses anything that doesn't decode to
+   valid PKCS8; a Unicode-confusables reverse map handles lookalike
+   corruption when it IS recoverable. A clean laptop paste (TextEdit +
+   copy, never a phone/masked view) is what finally delivered the key.
+4. **Cloud signing distribution needs an Admin API key**: any role can
+   mint development certs (archive succeeded), but export for
+   App Store hit `Cloud signing permission error` until Mona created a
+   new ASC API key with Admin access. The hash gate from (3) is
+   deliberately a *confirmation*, not a lock, so the rotated key was
+   accepted on structural validity + openssl parse.
+
+Follow-ups: the old key `84P4NRMBVG` is to be revoked now that the
+Admin key works (it also transited a chat once — rotation was already
+owed). TestFlight internal testing needs no Apple review; the public
+App Store (and its screenshots page) stays a non-goal.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
