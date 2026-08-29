@@ -721,6 +721,29 @@ if (SR) {
   recognition.interimResults = true;
   recognition.continuous = false;
   let finalText = "";
+  let stopFallbackTimer = null;
+  let maxLengthTimer = null;
+
+  // REAL BUG from Mona's first minute on the real iPhone (2026-08-29):
+  // tapping the mic again called recognition.stop() but iOS never fired
+  // onend, so the red recording state stuck forever ("جيت اضغط ع المايك
+  // عشان اقفل التسجيل مبيقفلش"). Never trust the platform callback alone
+  // — the same lesson as the Mac's silence-finalization bug, on a
+  // different OS: this idempotent finisher runs from whichever arrives
+  // first (onend, the 1s post-stop fallback, or the safety cap) and
+  // sends whatever was heard.
+  function finishRecognition() {
+    if (!recognizing) return;
+    recognizing = false;
+    clearTimeout(stopFallbackTimer);
+    clearTimeout(maxLengthTimer);
+    micBtn.classList.remove("rec");
+    setFaceState("", "");
+    const text = msgInput.value.trim();
+    finalText = "";
+    if (text) sendToAmin(text);
+  }
+
   recognition.onresult = (e) => {
     let interim = "";
     for (const r of e.results) {
@@ -729,27 +752,37 @@ if (SR) {
     }
     msgInput.value = (finalText + " " + interim).trim();
   };
-  recognition.onend = () => {
-    recognizing = false;
-    micBtn.classList.remove("rec");
-    setFaceState("", "");
-    const text = msgInput.value.trim();
-    finalText = "";
-    if (text) sendToAmin(text);
-  };
+  recognition.onend = finishRecognition;
   recognition.onerror = () => {
-    recognizing = false;
-    micBtn.classList.remove("rec");
-    setFaceState("", "");
+    // A real error mid-recording: end cleanly WITHOUT discarding what was
+    // already transcribed — finishRecognition sends it if there is any.
+    finishRecognition();
   };
   micBtn.addEventListener("click", () => {
-    if (recognizing) { recognition.stop(); return; }
+    if (recognizing) {
+      try { recognition.stop(); } catch { /* forced finish below covers it */ }
+      // iOS sometimes never delivers onend after stop() — force-finish
+      // ourselves if it hasn't arrived within a second, then abort the
+      // zombie recognizer (harmless if it already ended).
+      stopFallbackTimer = setTimeout(() => {
+        finishRecognition();
+        try { recognition.abort(); } catch { /* already dead */ }
+      }, 1000);
+      return;
+    }
     finalText = "";
     msgInput.value = "";
     recognizing = true;
     micBtn.classList.add("rec");
     setFaceState("listening", "أمين بيسمعك… دوسي المايك تاني لما تخلصي");
-    try { recognition.start(); } catch { recognizing = false; micBtn.classList.remove("rec"); }
+    try { recognition.start(); } catch { recognizing = false; micBtn.classList.remove("rec"); return; }
+    // Safety cap: a recording nothing ever stops (tab lost the tap, iOS
+    // dropped the event) closes itself after 60s instead of sticking red
+    // forever.
+    maxLengthTimer = setTimeout(() => {
+      try { recognition.stop(); } catch { /* forced finish below */ }
+      setTimeout(() => { finishRecognition(); try { recognition.abort(); } catch {} }, 1000);
+    }, 60000);
   });
 } else {
   // iOS Safari من غير دعم التعرف على الكلام في الويب: الكتابة هي
