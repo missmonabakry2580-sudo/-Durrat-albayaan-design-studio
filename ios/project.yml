@@ -34,3 +34,8 @@ targets:
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "لتحويل كلامك إلى نص يفهمه أمين."
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
+    configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+        Release:
+          CODE_SIGN_IDENTITY: "Apple Distribution"
