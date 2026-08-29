@@ -136,6 +136,10 @@ final class VoiceIO: NSObject, ObservableObject {
         request = nil
         isListening = false
         statusNote = ""
+        // حرّر جلسة الصوت عشان نطق أمين (اللي بيشتغل داخل الويب) يقدر يستخدم
+        // السماعة بعد ما المايك يخلص — من غير كده الجلسة تفضل على وضع
+        // التسجيل والصوت الطالع يتكتم.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         let text = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
         partialText = ""
         if send, !text.isEmpty {
