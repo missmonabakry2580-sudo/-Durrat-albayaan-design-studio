@@ -2427,6 +2427,42 @@ errors). **Not verified**: the live Pages deployment (first run also
 has to self-enable Pages) and real API calls from a real phone — both
 only observable after this push.
 
+## The phone↔laptop bridge: GitHub as the relay, E2E-encrypted (2026-08-29)
+
+Mona: "عايزاك تبني سيرفر يربط الاتنين ببعض... أمين اللي ع تليفوني يقدر
+ينفذ نفس المهام اللي ع اللابتوب بالظبط". There is no server of ours to
+host and no appetite for tunnels/accounts/installs — so the relay is
+GitHub itself, reachable by both sides with the fine-grained token she
+already created (Issues R/W on this repo: exactly the needed scope).
+`phone_bridge.rs` polls one labeled issue every 4s from inside the Mac
+app; the phone posts her utterance as an encrypted comment; the Mac runs
+it through `run_agent_turn` — the SAME pipeline, tools, files, memory
+and confirmation policy as the laptop UI (`send_agent_message`
+refactored to be callable on an AppHandle; one brain, two doors) — and
+posts the encrypted reply back for the phone to display and speak.
+
+The repo is public, so content is AES-256-GCM over a PBKDF2-SHA256 key
+from a passphrase typed into both apps; the GCM tag doubles as
+authentication (a stranger's comment simply fails to decrypt and is
+ignored — that's the injection defense, not obscurity). Payload `kind`
+("cmd"/"reply") stops the poller processing its own replies. The
+enabled flag DOES auto-resume on launch — deliberately unlike
+hands-free's never-auto-resume mic rule: reachability-from-the-phone is
+the feature's entire point and no microphone is involved. Disclosed
+physical limit, stated in both UIs: the laptop must be on and awake;
+that's where her files physically are. When it's off, the phone app's
+standalone mode (own tasks/memory/reminders, previous entry) is the
+fallback — and the timeout error says exactly that.
+
+**Verified**: 119 Rust tests pass, including a cross-implementation
+lock: a ciphertext produced by the phone's REAL WebCrypto code (run in
+Chromium via Playwright) decrypts correctly in the Rust implementation
+— any future drift in KDF/nonce/base64 breaks that test, not the field.
+`tsc` + `npm run build` pass. **Not verified**: the full live loop
+(phone comment → Mac poll → agent → reply) end-to-end against real
+GitHub — needs the 0.2.35 build running on her Mac with the bridge
+enabled.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.

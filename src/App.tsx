@@ -26,6 +26,7 @@ import {
   clearElevenLabsKey,
   clearEnrolledSpeaker,
   clearSimliKey,
+  clearBridgePassphrase,
   clearGitHubToken,
   createAminPronunciationDictionary,
   createFollowUp,
@@ -43,8 +44,12 @@ import {
   hasElevenLabsKey,
   hasEnrolledSpeaker,
   hasSimliKey,
+  getPhoneBridgeEnabled,
+  hasBridgePassphrase,
   hasGitHubToken,
   isHalted,
+  saveBridgePassphrase,
+  setPhoneBridgeEnabled,
   listAuditLog,
   listDueFollowUps,
   listTasks,
@@ -155,6 +160,9 @@ function App() {
   const [simliKeyInput, setSimliKeyInput] = useState("");
   const [simliFaceIdInput, setSimliFaceIdInput] = useState("");
   const [githubTokenSaved, setGithubTokenSaved] = useState(false);
+  const [bridgePassSaved, setBridgePassSaved] = useState(false);
+  const [bridgePassInput, setBridgePassInput] = useState("");
+  const [bridgeEnabled, setBridgeEnabled] = useState(false);
   const [githubTokenInput, setGithubTokenInput] = useState("");
   const [lastEmotion, setLastEmotion] = useState<string | null>(null);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
@@ -306,6 +314,8 @@ function App() {
       getSimliFaceId().then(setSimliFaceIdInput);
       hasEnrolledSpeaker().then(setSpeakerEnrolled);
       getPronunciationDictionaryId().then(setPronunciationDictId);
+      hasBridgePassphrase().then(setBridgePassSaved).catch(() => {});
+      getPhoneBridgeEnabled().then(setBridgeEnabled).catch(() => {});
       // Silent on failure (e.g. offline, or the update endpoint has
       // nothing newer) — this is a background convenience check, not
       // something that should ever interrupt Mona with an error banner
@@ -564,6 +574,34 @@ function App() {
   async function handleClearGitHubToken() {
     await clearGitHubToken();
     await refresh();
+  }
+
+  async function handleSaveBridgePass() {
+    setError(null);
+    try {
+      await saveBridgePassphrase(bridgePassInput.trim());
+      setBridgePassSaved(true);
+      setBridgePassInput("");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleClearBridgePass() {
+    await clearBridgePassphrase().catch(() => {});
+    setBridgePassSaved(false);
+    setBridgeEnabled(false);
+  }
+
+  async function handleToggleBridge() {
+    setError(null);
+    try {
+      const next = !bridgeEnabled;
+      await setPhoneBridgeEnabled(next);
+      setBridgeEnabled(next);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   async function handleToggleHandsFree() {
@@ -1361,6 +1399,40 @@ function App() {
                       حفظ
                     </button>
                     <button onClick={handleClearGitHubToken} disabled={!inTauri || !githubTokenSaved}>
+                      مسح
+                    </button>
+                  </div>
+
+                  <div className="field-row">
+                    <span className="field-label">جسر الهاتف (أمين على تليفونك يوصل لللابتوب)</span>
+                    <button
+                      className={bridgeEnabled ? "chip chip-active" : "chip"}
+                      onClick={handleToggleBridge}
+                      disabled={!inTauri}
+                    >
+                      {bridgeEnabled ? "شغّال — دوسي للإيقاف" : "متوقف — دوسي للتشغيل"}
+                    </button>
+                  </div>
+                  <p className="text-muted">
+                    لما يكون شغّال، أمين على تليفونك يقدر ينفذ مهام اللابتوب الحقيقية (الملفات
+                    والمهام والذاكرة) عن بعد — الرسايل بتتنقل مشفّرة بالكامل عبر GitHub بنفس
+                    المفتاح اللي فوق. اكتبي كلمة سر للجسر هنا وحطي نفسها بالظبط في إعدادات أمين
+                    على التليفون. شرط حقيقي مش عذر: اللابتوب لازم يكون شغّال وصاحي — الملفات
+                    والداتا عليه هو فيزيائيًا. (ولو اللابتوب مقفول، أمين التليفون بيشتغل لوحده
+                    بمهامه وذاكرته الخاصة عادي.)
+                  </p>
+                  <div className="field-row">
+                    <input
+                      type="password"
+                      placeholder="كلمة سر الجسر (٦ حروف على الأقل)"
+                      value={bridgePassInput}
+                      onChange={(e) => setBridgePassInput(e.currentTarget.value)}
+                      disabled={!inTauri}
+                    />
+                    <button onClick={handleSaveBridgePass} disabled={!inTauri || bridgePassInput.trim().length < 6}>
+                      حفظ
+                    </button>
+                    <button onClick={handleClearBridgePass} disabled={!inTauri || !bridgePassSaved}>
                       مسح
                     </button>
                   </div>

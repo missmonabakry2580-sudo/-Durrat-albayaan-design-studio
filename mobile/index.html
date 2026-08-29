@@ -211,6 +211,22 @@
     <input id="eleven-key" type="password" placeholder="xi-..." />
     <label>ElevenLabs Voice ID (اختياري — نفس اللي على اللابتوب)</label>
     <input id="voice-id" type="text" placeholder="Voice ID" />
+
+    <h2 style="margin-top:30px">وضع اللابتوب (اختياري)</h2>
+    <p class="hint">
+      لو اللابتوب شغّال وجسره مفعّل من إعداداته، أمين هنا يقدر ينفذ مهام
+      اللابتوب الحقيقية (الملفات ومهامه وذاكرته) عن بعد. حطي نفس مفتاح
+      GitHub ونفس كلمة سر الجسر اللي على اللابتوب بالظبط. لو اللابتوب
+      مقفول، سيبي الوضع ده متوقف وأمين هيشتغل من التليفون نفسه.
+    </p>
+    <div class="row" style="margin-top:4px">
+      <button id="laptop-toggle" style="flex:1;padding:13px;border-radius:12px;border:none;font-size:15px;font-weight:600;background:var(--card);color:var(--text)"></button>
+    </div>
+    <label>مفتاح GitHub (نفس بتاع الإبلاغ عن الأخطاء)</label>
+    <input id="gh-token" type="password" placeholder="github_pat_..." />
+    <label>كلمة سر الجسر (نفس اللي على اللابتوب)</label>
+    <input id="bridge-pass" type="password" placeholder="••••••" />
+
     <div class="row">
       <button id="save-btn">حفظ</button>
       <button id="close-btn">إغلاق</button>
@@ -256,6 +272,17 @@ const store = {
     catch { return []; }
   },
   set reminders(v) { localStorage.setItem("amin.reminders", JSON.stringify(v)); },
+  // جسر اللابتوب (اختياري): نفس مفتاح GitHub ونفس كلمة سر الجسر اللي في
+  // إعدادات أمين على اللابتوب — بيوصّل كلامك لأمين اللابتوب بكامل قدراته
+  // (الملفات ومهام اللابتوب وذاكرته) لما يكون اللابتوب شغال.
+  get ghToken() { return localStorage.getItem("amin.ghToken") || ""; },
+  set ghToken(v) { localStorage.setItem("amin.ghToken", v); },
+  get bridgePass() { return localStorage.getItem("amin.bridgePass") || ""; },
+  set bridgePass(v) { localStorage.setItem("amin.bridgePass", v); },
+  get laptopMode() { return localStorage.getItem("amin.laptopMode") === "1"; },
+  set laptopMode(v) { localStorage.setItem("amin.laptopMode", v ? "1" : "0"); },
+  get bridgeIssue() { return localStorage.getItem("amin.bridgeIssue") || ""; },
+  set bridgeIssue(v) { localStorage.setItem("amin.bridgeIssue", v); },
 };
 
 /* ---------- شخصية أمين — نسخة الهاتف الكاملة القائمة بذاتها ---------- */
@@ -411,6 +438,126 @@ function stripEmotion(text) {
   };
 }
 
+/* ---------- جسر اللابتوب: تشفير مطابق حرفيًا لـ phone_bridge.rs ---------- */
+const BRIDGE = {
+  owner: "missmonabakry2580-sudo",
+  repo: "-Durrat-albayaan-design-studio",
+  label: "amin-relay",
+  marker: "AMIN-MSG v1 ",
+  salt: "amin-phone-bridge-v1",
+  iterations: 100000,
+};
+let bridgeKeyCache = null, bridgeKeyForPass = null;
+
+async function bridgeKey() {
+  const pass = store.bridgePass;
+  if (bridgeKeyCache && bridgeKeyForPass === pass) return bridgeKeyCache;
+  const enc = new TextEncoder();
+  const material = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+  bridgeKeyCache = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: enc.encode(BRIDGE.salt), iterations: BRIDGE.iterations, hash: "SHA-256" },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+  bridgeKeyForPass = pass;
+  return bridgeKeyCache;
+}
+
+function bufToB64(buf) {
+  let s = "";
+  for (const b of new Uint8Array(buf)) s += String.fromCharCode(b);
+  return btoa(s);
+}
+function b64ToBuf(b64) {
+  const s = atob(b64.trim());
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+async function bridgeEncrypt(plaintext) {
+  const key = await bridgeKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext)),
+  );
+  const joined = new Uint8Array(iv.length + ct.length);
+  joined.set(iv); joined.set(ct, iv.length);
+  return bufToB64(joined.buffer);
+}
+
+async function bridgeDecrypt(b64) {
+  try {
+    const raw = b64ToBuf(b64);
+    if (raw.length < 13) return null;
+    const key = await bridgeKey();
+    const pt = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: raw.slice(0, 12) }, key, raw.slice(12),
+    );
+    return new TextDecoder().decode(pt);
+  } catch { return null; }
+}
+
+function ghHeaders() {
+  return {
+    Authorization: "Bearer " + store.ghToken.trim(),
+    Accept: "application/vnd.github+json",
+  };
+}
+
+async function bridgeIssueNumber() {
+  if (store.bridgeIssue) return Number(store.bridgeIssue);
+  const resp = await fetch(
+    `https://api.github.com/repos/${BRIDGE.owner}/${BRIDGE.repo}/issues?labels=${BRIDGE.label}&state=open&per_page=1`,
+    { headers: ghHeaders() },
+  );
+  if (!resp.ok) throw new Error("GitHub: " + resp.status);
+  const issues = await resp.json();
+  if (!issues.length) {
+    throw new Error("قناة الجسر لسه متعملتش — شغّلي الجسر من إعدادات أمين على اللابتوب أول مرة وهو هيعملها بنفسه.");
+  }
+  store.bridgeIssue = String(issues[0].number);
+  return issues[0].number;
+}
+
+/* بيبعت لأمين اللابتوب (بكامل قدراته) وبيستنى رده — مهلة ٩٠ ثانية،
+   وبعدها رسالة صريحة إن اللابتوب غالبًا مقفول، مش صمت. */
+async function sendViaLaptop(text) {
+  const issue = await bridgeIssueNumber();
+  const id = Math.random().toString(36).slice(2, 12);
+  const payload = JSON.stringify({ kind: "cmd", id, text });
+  const body = BRIDGE.marker + (await bridgeEncrypt(payload));
+  const post = await fetch(
+    `https://api.github.com/repos/${BRIDGE.owner}/${BRIDGE.repo}/issues/${issue}/comments`,
+    { method: "POST", headers: { ...ghHeaders(), "content-type": "application/json" }, body: JSON.stringify({ body }) },
+  );
+  if (!post.ok) throw new Error("GitHub: " + post.status);
+  const since = new Date(Date.now() - 60000).toISOString();
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const resp = await fetch(
+      `https://api.github.com/repos/${BRIDGE.owner}/${BRIDGE.repo}/issues/${issue}/comments?since=${encodeURIComponent(since)}&per_page=100`,
+      { headers: ghHeaders() },
+    );
+    if (!resp.ok) continue;
+    for (const comment of await resp.json()) {
+      const b = (comment.body || "").trim();
+      if (!b.startsWith(BRIDGE.marker)) continue;
+      const pt = await bridgeDecrypt(b.slice(BRIDGE.marker.length));
+      if (!pt) continue;
+      let parsed;
+      try { parsed = JSON.parse(pt); } catch { continue; }
+      if (parsed.kind === "reply" && parsed.re === id) {
+        return { text: parsed.text || "", emotion: parsed.emotion || "neutral" };
+      }
+    }
+  }
+  throw new Error("اللابتوب مش بيرد — غالبًا مقفول أو نايم، أو الجسر متوقف من إعداداته. اقفلي وضع اللابتوب من الإعدادات هنا وأمين هيشتغل من التليفون نفسه عادي.");
+}
+
 async function callClaude(key, messages) {
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -446,6 +593,28 @@ async function sendToAmin(text) {
   if (busy || !text.trim()) return;
   busy = true;
   msgInput.value = "";
+  // وضع اللابتوب: الكلام بيتنفذ على أمين اللابتوب نفسه بكامل قدراته
+  // (ملفات + مهام اللابتوب + ذاكرته) عبر الجسر المشفّر — والتليفون بيعرض
+  // وينطق الرد. أي فشل بيتقال بصراحة مع طريق الرجوع للوضع المستقل.
+  if (store.laptopMode && store.ghToken && store.bridgePass) {
+    setFaceState("thinking", "بيتنفذ على اللابتوب…");
+    history.push({ role: "user", content: text.trim() });
+    try {
+      const reply = await sendViaLaptop(text.trim());
+      history.push({ role: "assistant", content: reply.text });
+      store.history = history;
+      lastReply.textContent = reply.text;
+      await speak(reply.text, reply.emotion);
+    } catch (e) {
+      history.pop();
+      lastReply.textContent = String(e && e.message ? e.message : e);
+      setFaceState("", "");
+    } finally {
+      busy = false;
+      if (!face.className) setFaceState("", "");
+    }
+    return;
+  }
   setFaceState("thinking", "أمين بيفكر…");
   history.push({ role: "user", content: text.trim() });
   try {
@@ -640,21 +809,44 @@ $("open-tasks").addEventListener("click", () => {
 $("close-tasks").addEventListener("click", () => tasksPanel.classList.remove("open"));
 
 const settings = $("settings");
+
+function renderLaptopToggle() {
+  $("laptop-toggle").textContent = store.laptopMode
+    ? "شغّال — الكلام بيتنفذ على اللابتوب (دوسي للإيقاف)"
+    : "متوقف — أمين شغال من التليفون نفسه (دوسي للتشغيل)";
+  $("laptop-toggle").style.background = store.laptopMode ? "var(--accent)" : "var(--card)";
+}
+
 function openSettings(hint) {
   $("anthropic-key").value = store.anthropicKey;
   $("eleven-key").value = store.elevenKey;
   $("voice-id").value = store.voiceId;
+  $("gh-token").value = store.ghToken;
+  $("bridge-pass").value = store.bridgePass;
   $("anthropic-badge").textContent = store.anthropicKey ? "متحط ✓" : "";
   $("eleven-badge").textContent = store.elevenKey ? "متحط ✓" : "";
+  renderLaptopToggle();
   if (hint) $("header-status").textContent = hint;
   settings.classList.add("open");
 }
 $("open-settings").addEventListener("click", () => openSettings());
 $("close-btn").addEventListener("click", () => settings.classList.remove("open"));
+$("laptop-toggle").addEventListener("click", () => {
+  if (!store.laptopMode && (!$("gh-token").value.trim() || !$("bridge-pass").value.trim())) {
+    $("header-status").textContent = "وضع اللابتوب محتاج مفتاح GitHub وكلمة سر الجسر";
+    return;
+  }
+  store.ghToken = $("gh-token").value.trim();
+  store.bridgePass = $("bridge-pass").value.trim();
+  store.laptopMode = !store.laptopMode;
+  renderLaptopToggle();
+});
 $("save-btn").addEventListener("click", () => {
   store.anthropicKey = $("anthropic-key").value.trim();
   store.elevenKey = $("eleven-key").value.trim();
   store.voiceId = $("voice-id").value.trim();
+  store.ghToken = $("gh-token").value.trim();
+  store.bridgePass = $("bridge-pass").value.trim();
   settings.classList.remove("open");
   $("header-status").textContent = store.anthropicKey ? "جاهز" : "محتاج مفتاح Anthropic";
 });

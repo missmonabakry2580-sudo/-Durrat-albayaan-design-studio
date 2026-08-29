@@ -1,6 +1,6 @@
 [package]
 name = "amin"
-version = "0.2.34"
+version = "0.2.35"
 description = "Amin — personal executive AI agent (desktop, macOS)"
 authors = ["Mona AlSayed Studio"]
 edition = "2021"
@@ -69,6 +69,13 @@ base64 = "0.23.1"
 # docs/ARCHITECTURE.md's "Visual modes" section) — pure Rust, no system
 # codec dependency to bundle or notarize alongside afplay.
 symphonia = { version = "0.5", features = ["mp3"] }
+# The phone↔laptop bridge's end-to-end encryption (see phone_bridge.rs):
+# AES-256-GCM over a PBKDF2-derived key from a passphrase Mona types into
+# both apps — the repo relaying the messages is public, so the content
+# must be ciphertext, and GCM's auth tag doubles as sender authentication.
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
 
 [dev-dependencies]
 # tauri::test::mock_app — used by tools.rs's unit tests, which need a real

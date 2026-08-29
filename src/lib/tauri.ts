@@ -97,6 +97,16 @@ export const hasGitHubToken = () => invoke<boolean>("has_github_token");
 export const saveGitHubToken = (token: string) => invoke<void>("save_github_token", { token });
 export const clearGitHubToken = () => invoke<void>("clear_github_token");
 
+// The phone↔laptop bridge (src-tauri/src/phone_bridge.rs): passphrase +
+// on/off. Uses the same stored GitHub token as error reporting.
+export const hasBridgePassphrase = () => invoke<boolean>("has_bridge_passphrase");
+export const saveBridgePassphrase = (passphrase: string) =>
+  invoke<void>("save_bridge_passphrase", { passphrase });
+export const clearBridgePassphrase = () => invoke<void>("clear_bridge_passphrase");
+export const setPhoneBridgeEnabled = (enabled: boolean) =>
+  invoke<void>("set_phone_bridge_enabled", { enabled });
+export const getPhoneBridgeEnabled = () => invoke<boolean>("get_phone_bridge_enabled");
+
 /** Which Simli avatar (faceId) to animate — empty means the free preset
  * baked into commands.rs (SIMLI_DEFAULT_PRESET_FACE_ID). Set to a custom
  * face ID once Mona upgrades and builds one from amin-identity.jpg. */

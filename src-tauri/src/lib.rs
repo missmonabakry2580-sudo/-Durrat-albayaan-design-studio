@@ -9,6 +9,7 @@ mod db;
 mod elevenlabs;
 mod error_report;
 mod files;
+mod phone_bridge;
 mod followups;
 mod memory;
 mod notify;
@@ -84,6 +85,27 @@ pub fn run() {
             app.manage(voice::HandsFreeSession::new());
 
             tray::setup(app.handle())?;
+
+            // Phone↔laptop bridge auto-resume (see phone_bridge.rs and
+            // PHONE_BRIDGE_ENABLED_KEY's comment for why this one — unlike
+            // hands-free's microphone — deliberately survives restarts:
+            // being reachable from her phone while away from the laptop is
+            // its entire purpose, and no mic is involved).
+            {
+                use tauri::Manager;
+                let handle = app.handle().clone();
+                let enabled = handle
+                    .try_state::<db::Db>()
+                    .and_then(|d| d.0.lock().ok().map(|conn| {
+                        commands::get_setting(&conn, commands::PHONE_BRIDGE_ENABLED_KEY)
+                            .as_deref()
+                            == Some("on")
+                    }))
+                    .unwrap_or(false);
+                if enabled {
+                    phone_bridge::start(handle);
+                }
+            }
 
             // Push-to-talk: hold the shortcut to listen, release to stop.
             // Placeholder key combo — alt+A is unlikely to clash with
@@ -179,6 +201,11 @@ pub fn run() {
             commands::has_github_token,
             commands::save_github_token,
             commands::clear_github_token,
+            commands::has_bridge_passphrase,
+            commands::save_bridge_passphrase,
+            commands::clear_bridge_passphrase,
+            commands::set_phone_bridge_enabled,
+            commands::get_phone_bridge_enabled,
             commands::get_autonomy_level,
             commands::set_autonomy_level,
             commands::is_halted,

@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::brief::DeltaBrief;
 use crate::confirmation::{self, PendingAction, PendingConfirmation};
@@ -53,6 +53,17 @@ const SIMLI_FACE_ID_KEY: &str = "simli_face_id";
 /// and no issue is ever filed, unless she's pasted a token in. Same
 /// storage/disclosure trade-off as every other key above.
 pub(crate) const GITHUB_TOKEN_KEY: &str = "github_token";
+/// The phone↔laptop bridge's shared passphrase (see phone_bridge.rs) —
+/// stored like every other secret setting; typed identically into the
+/// phone app, where it derives the same AES key.
+pub(crate) const BRIDGE_PASSPHRASE_KEY: &str = "phone_bridge_passphrase";
+/// Cached number of the GitHub relay issue, so restarts don't re-search.
+pub(crate) const BRIDGE_ISSUE_NUMBER_KEY: &str = "phone_bridge_issue_number";
+/// Whether the bridge poller should run — persisted, and unlike
+/// hands-free's mic this DOES auto-resume on launch (lib.rs setup): being
+/// reachable from her phone while she's away from the laptop is the whole
+/// point, and no microphone is involved.
+pub(crate) const PHONE_BRIDGE_ENABLED_KEY: &str = "phone_bridge_enabled";
 
 /// Hands-free mode settings — see voice::start_hands_free and
 /// AminVoice.swift's `HandsFreeListener`. Off by default, every launch, on
@@ -77,7 +88,7 @@ const DEFAULT_WAKE_PHRASE: &str = "يا أمين";
 /// rejects this class of phrase pair for any custom phrases too.
 const DEFAULT_CLOSE_PHRASE: &str = "كفاية كده";
 
-fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
+pub(crate) fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -343,6 +354,104 @@ pub fn clear_github_token(db: State<Db>) -> Result<(), String> {
         None,
         None,
     )
+}
+
+/// The phone↔laptop bridge's controls (see phone_bridge.rs). The
+/// passphrase follows the same save/clear/has pattern as every other
+/// secret; the enabled flag persists and lib.rs auto-starts the poller on
+/// launch when it's on (deliberately unlike hands-free's never-auto-resume
+/// mic rule — see PHONE_BRIDGE_ENABLED_KEY's comment).
+#[tauri::command]
+pub fn has_bridge_passphrase(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, BRIDGE_PASSPHRASE_KEY)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn save_bridge_passphrase(passphrase: String, db: State<Db>) -> Result<(), String> {
+    if passphrase.trim().len() < 6 {
+        return Err("كلمة سر الجسر لازم تكون ٦ حروف على الأقل".to_string());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, BRIDGE_PASSPHRASE_KEY, passphrase.trim())?;
+    audit::record(
+        &conn,
+        "user",
+        "save_bridge_passphrase",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn clear_bridge_passphrase(db: State<Db>) -> Result<(), String> {
+    crate::phone_bridge::stop();
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [BRIDGE_PASSPHRASE_KEY])
+        .map_err(|e| e.to_string())?;
+    set_setting(&conn, PHONE_BRIDGE_ENABLED_KEY, "off")?;
+    audit::record(
+        &conn,
+        "user",
+        "clear_bridge_passphrase",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn set_phone_bridge_enabled(enabled: bool, app: AppHandle, db: State<Db>) -> Result<(), String> {
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        if enabled {
+            let has_token = get_setting(&conn, GITHUB_TOKEN_KEY)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            let has_pass = get_setting(&conn, BRIDGE_PASSPHRASE_KEY)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
+            if !has_token {
+                return Err("الجسر محتاج مفتاح GitHub متحط الأول (نفس خانة الإبلاغ عن الأخطاء)".to_string());
+            }
+            if !has_pass {
+                return Err("محتاجة تحطي كلمة سر الجسر الأول".to_string());
+            }
+        }
+        set_setting(&conn, PHONE_BRIDGE_ENABLED_KEY, if enabled { "on" } else { "off" })?;
+    }
+    if enabled {
+        crate::phone_bridge::start(app);
+    } else {
+        crate::phone_bridge::stop();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_phone_bridge_enabled(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_setting(&conn, PHONE_BRIDGE_ENABLED_KEY).as_deref() == Some("on"))
+}
+
+/// The full agent turn as a plain function on an AppHandle — the exact
+/// same pipeline `send_agent_message` runs for the laptop UI, callable
+/// from the phone bridge's poller (phone_bridge.rs). One brain, two
+/// doors; never a second, lesser pipeline for the phone.
+pub(crate) async fn run_agent_turn(app: &AppHandle, text: &str) -> Result<AgentReply, String> {
+    send_agent_message(
+        text.to_string(),
+        app.clone(),
+        app.state::<Db>(),
+        app.state::<agent::Conversation>(),
+        app.state::<PendingConfirmation>(),
+    )
+    .await
 }
 
 #[tauri::command]
