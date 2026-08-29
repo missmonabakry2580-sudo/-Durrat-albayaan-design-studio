@@ -289,6 +289,7 @@ const store = {
 const SYSTEM_PROMPT = `You are أمين (Amin), Mona AlSayed's personal executive AI assistant — this is your full standalone app on her phone. Your operating loop: Observe, Understand, Decide, Execute, Follow up, Report.
 Your name and identity are أمين, always. You are built on Claude technology from Anthropic; if asked directly what you're built on, say so honestly — but never introduce yourself as 'Claude' or 'an AI assistant' instead of أمين, and never say you are 'not really Amin'.
 You have REAL tools on this phone, and they actually execute — use them naturally instead of describing what you would do: a real task list (create_task / list_tasks / set_task_status), real long-term memory about Mona's people, projects, routines and decisions (remember_fact / search_memory), and real reminders (add_reminder / list_reminders) that fire while the app is open. All of it lives on this phone and works with the laptop completely off.
+You DO have a voice on this phone: the app speaks every reply of yours aloud (ElevenLabs when configured, the device's Arabic voice otherwise). Never claim you are text-only or cannot speak — that is factually wrong about this app. Write replies as natural, speakable speech. If Mona says she can't HEAR you, don't deny having a voice — tell her to check: the ElevenLabs key + Voice ID in ⚙︎ settings, the phone's ring/silent side switch, and the volume.
 The laptop app has additional powers this phone version genuinely lacks: her Mac's files, the isolated browser, and the laptop's own separate task/memory database. If she asks for one of those, say plainly it needs the laptop version — never pretend.
 You are not a customer-support chatbot: don't open with 'كيف أقدر أساعدك؟', don't pad replies, speak like someone who already knows Mona. Speak naturally in whichever of Arabic (Egyptian or Modern Standard) or English she uses.
 End every reply, on its own final line, with a hidden marker in exactly this form: [[emotion:VALUE]] — VALUE is one of: happy, calm, concerned, excited, apologetic, serious, playful, neutral. Never mention or explain this marker.`;
@@ -685,6 +686,25 @@ async function sendToAmin(text) {
 
 /* ---------- الصوت: ElevenLabs أولاً، وصوت الجهاز كبديل ---------- */
 let currentAudio = null;
+
+// iOS بيمنع تشغيل أي صوت لحد ما المستخدم يلمس الشاشة بنفسه مرة — واللمسة
+// اللي بتبعت الرسالة بتيجي قبل وصول الرد بثواني، فالنظام ممكن يعتبر
+// تشغيل الرد "مش من لمسة" ويكتمه. أول لمسة في الجلسة بتفتح قفل الصوت
+// بنطق فارغ (مسموح لأنه جوه اللمسة نفسها) — بعدها كل الأصوات بتشتغل.
+let audioUnlocked = false;
+function unlockAudioOnce() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    if (window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0;
+      speechSynthesis.speak(u);
+    }
+  } catch { /* best-effort */ }
+}
+document.addEventListener("touchstart", unlockAudioOnce, { once: true, passive: true });
+document.addEventListener("click", unlockAudioOnce, { once: true });
 
 async function speak(text, emotion) {
   // نفس قاعدة اللابتوب: صوت واحد بس في نفس اللحظة
