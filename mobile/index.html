@@ -231,7 +231,8 @@
       <button id="save-btn">حفظ</button>
       <button id="close-btn">إغلاق</button>
     </div>
-    <p class="hint" style="margin-top:26px">
+    <p class="hint" id="app-version-line" style="margin-top:20px;text-align:center"></p>
+    <p class="hint" style="margin-top:6px">
       النسخة دي هي عقل أمين وصوته على تليفونك. المهام والملفات والذاكرة
       طويلة المدى موجودين على اللابتوب بس — مفيش سيرفر بيربطهم، وده إفصاح
       مش عذر.
@@ -295,6 +296,9 @@ You are not a customer-support chatbot: don't open with 'كيف أقدر أسا�
 End every reply, on its own final line, with a hidden marker in exactly this form: [[emotion:VALUE]] — VALUE is one of: happy, calm, concerned, excited, apologetic, serious, playful, neutral. Never mention or explain this marker.`;
 
 const MODEL_ID = "claude-sonnet-5"; // نفس موديل النسخة الأصلية (agent.rs)
+// يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
+// إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
+const APP_VERSION = 7;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -734,6 +738,9 @@ async function speak(text, emotion) {
         setFaceState("", "");
         return;
       }
+      // رفض صريح من ElevenLabs (Voice ID غلط، مفتاح غلط، رصيد خلص...) —
+      // يبان في سطر الحالة بدل ما يقع بصمت على صوت الجهاز ومحدش يعرف ليه.
+      $("header-status").textContent = "صوت ElevenLabs اترفض (" + resp.status + ") — راجعي الـVoice ID والمفتاح";
     } catch { /* يقع على صوت الجهاز تحت */ }
   }
   await speakOnDevice(text);
@@ -911,6 +918,7 @@ function renderLaptopToggle() {
 }
 
 function openSettings(hint) {
+  $("app-version-line").textContent = "نسخة التطبيق: " + APP_VERSION;
   $("anthropic-key").value = store.anthropicKey;
   $("eleven-key").value = store.elevenKey;
   $("voice-id").value = store.voiceId;
