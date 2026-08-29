@@ -66,34 +66,74 @@ jobs:
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
-        # Canonicalize instead of trusting the paste (first real run failed
-        # with CryptoKitASN1Error.invalidPEMDocument): whatever shape the
-        # secret arrived in — single line, CRLF, missing trailing newline —
-        # extract the base64 and re-emit textbook PEM.
+        # The paste survived every canonicalization attempt because it is
+        # not the key: the base64 body arrived as non-ASCII Unicode
+        # lookalikes that even NFKC leaves alone (some clipboard path on
+        # the phone restyled the letters; the ASCII header lines survived).
+        # So: try the plain extraction first, and when too little base64
+        # remains, de-confuse the body with Unicode's own confusables
+        # table, mapping each non-ASCII char back to its ASCII prototype.
+        # Correctness is not guessed: the decoded DER must match the
+        # SHA-256 of the real AuthKey (a hash of a 256-bit random key
+        # reveals nothing and proves byte-exact recovery).
         run: |
           set -euo pipefail
           mkdir -p ~/private_keys
           python3 - <<'PY'
-          import os, re, textwrap, base64, unicodedata
-          # NFKC first (found live, 2026-08-29): the pasted secret's
-          # "letters" were 3-byte Unicode lookalikes of ASCII — visually
-          # identical, byte-garbage to Apple (258 chars became 658 bytes).
-          # Normalization maps them back; then keep only base64 alphabet.
-          raw = unicodedata.normalize("NFKC", os.environ["KEY_P8"])
-          raw = re.sub(r"-{3,}[^-]*-{3,}", "", raw)
-          raw = re.sub(r"(?im)^.*(BEGIN|END).*$", "", raw)
-          b64 = re.sub(r"[^A-Za-z0-9+/=]", "", raw)
-          der = base64.b64decode(b64)
-          assert der[:1] == b"\x30" and len(der) > 100, "decoded key doesn't look like DER PKCS8: %d bytes" % len(der)
-          print("der decodes to", len(der), "bytes — structure looks right")
+          import os, re, sys, textwrap, base64, unicodedata, hashlib, collections, urllib.request
+
+          REAL_DER_SHA256 = "ada007f53d65a150be2e245681fe4914a8a786172f778386beb16463ec062aa8"
+          raw = os.environ["KEY_P8"]
+
+          def extract(s):
+              s = unicodedata.normalize("NFKC", s)
+              s = re.sub(r"-{3,}[^-]*-{3,}", "", s)
+              s = re.sub(r"(?im)^.*(BEGIN|END).*$", "", s)
+              return re.sub(r"[^A-Za-z0-9+/=]", "", s)
+
+          def histogram(s):
+              # Safe to print: 256-codepoint block counts only — no char
+              # identities, no ordering, nothing key-shaped.
+              return dict(collections.Counter(
+                  "U+%04Xxx" % (ord(c) >> 8 << 8) for c in s if ord(c) > 127))
+
+          b64 = extract(raw)
+          print("plain extraction kept", len(b64), "base64 chars of", len(raw), "input chars")
+
+          if len(b64) < 150:
+              print("too short — de-confusing; non-ASCII blocks in the paste:", histogram(raw))
+              table = {}
+              data = urllib.request.urlopen(
+                  "https://www.unicode.org/Public/security/latest/confusables.txt",
+                  timeout=60).read().decode("utf-8")
+              for line in data.splitlines():
+                  line = line.split("#")[0].strip()
+                  parts = [p.strip() for p in line.split(";")]
+                  if len(parts) < 2 or len(parts[0].split()) != 1:
+                      continue
+                  try:
+                      src = chr(int(parts[0], 16))
+                      dst = "".join(chr(int(c, 16)) for c in parts[1].split())
+                  except ValueError:
+                      continue
+                  table[src] = dst
+              fixed = "".join(table.get(c, c) if ord(c) > 127 else c for c in raw)
+              b64 = extract(fixed)
+              print("after confusables mapping:", len(b64), "base64 chars; leftover blocks:", histogram(fixed))
+
+          try:
+              der = base64.b64decode(b64, validate=True)
+          except Exception as e:
+              sys.exit("base64 decode failed: %s (had %d chars)" % (e, len(b64)))
+          got = hashlib.sha256(der).hexdigest()
+          print("der:", len(der), "bytes; sha256:", got[:16], "…")
+          assert got == REAL_DER_SHA256, "recovered key does not match the real AuthKey — refusing to continue"
+          print("recovered key verified byte-for-byte against the real AuthKey ✓")
+
+          b64 = base64.b64encode(der).decode()
           pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(b64, 64)) + "\n-----END PRIVATE KEY-----\n"
-          import hashlib
           path = os.path.expanduser("~/private_keys/AuthKey_" + os.environ["KEY_ID"] + ".p8")
           open(path, "w").write(pem)
-          back = open(path, "rb").read()
-          print("py wrote:", len(pem), "chars; read-back:", len(back), "bytes; sha:", hashlib.sha256(back).hexdigest()[:16])
-          print("py path repr:", repr(path))
-          print("py KEY_ID repr:", repr(os.environ["KEY_ID"]))
           PY
           ls -la "$HOME/private_keys/"
           FILE="$HOME/private_keys/AuthKey_$KEY_ID.p8"
