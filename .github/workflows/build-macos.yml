@@ -15,8 +15,10 @@ on:
     paths-ignore:
       - "mobile/**"
       - "ios/**"
+      - "docs/**"
       - ".github/workflows/deploy-mobile.yml"
       - ".github/workflows/build-ios.yml"
+      - ".github/workflows/build-macos.yml"
   workflow_dispatch: {}
 
 permissions:
