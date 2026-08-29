@@ -20,6 +20,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: om.durratalbayaan.amin
+        DEVELOPMENT_TEAM: "73ZR23J5X4"
+        CODE_SIGN_STYLE: Automatic
         PRODUCT_NAME: Amin
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
