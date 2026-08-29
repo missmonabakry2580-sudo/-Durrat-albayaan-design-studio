@@ -298,7 +298,7 @@ End every reply, on its own final line, with a hidden marker in exactly this for
 const MODEL_ID = "claude-sonnet-5"; // نفس موديل النسخة الأصلية (agent.rs)
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -689,16 +689,26 @@ async function sendToAmin(text) {
 }
 
 /* ---------- الصوت: ElevenLabs أولاً، وصوت الجهاز كبديل ---------- */
+// عنصر صوت واحد ثابت للتطبيق كله — ده جوهر حل الصمت على iOS: النظام
+// بيسمح بالتشغيل للعنصر اللي "اتبارك" بلمسة مستخدم حقيقية، وكل رد بيوصل
+// بعد اللمسة بثواني. أول لمسة بتشغّل فيه مقطع صامت (مسموح لأنه جوه
+// اللمسة)، وبعدها نفس العنصر بيتعاد استخدامه لكل رد — فالنظام بيسمح.
+// النسخة القديمة كانت بتعمل عنصر Audio جديد لكل رد، والجديد ده ما عمره
+// اتلمس، فiOS كان بيمنعه بصمت — وده اللي كان مانع صوت أمين خالص.
+const player = new Audio();
+player.setAttribute("playsinline", "");
+// أقصر ملف WAV صامت صالح — لمباركة العنصر جوه اللمسة الأولى.
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 let currentAudio = null;
 
-// iOS بيمنع تشغيل أي صوت لحد ما المستخدم يلمس الشاشة بنفسه مرة — واللمسة
-// اللي بتبعت الرسالة بتيجي قبل وصول الرد بثواني، فالنظام ممكن يعتبر
-// تشغيل الرد "مش من لمسة" ويكتمه. أول لمسة في الجلسة بتفتح قفل الصوت
-// بنطق فارغ (مسموح لأنه جوه اللمسة نفسها) — بعدها كل الأصوات بتشتغل.
 let audioUnlocked = false;
 function unlockAudioOnce() {
   if (audioUnlocked) return;
   audioUnlocked = true;
+  try {
+    player.src = SILENT_WAV;
+    player.play().catch(() => {});
+  } catch { /* best-effort */ }
   try {
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(" ");
@@ -741,7 +751,10 @@ async function speak(text, emotion) {
       // رفض صريح من ElevenLabs (Voice ID غلط، مفتاح غلط، رصيد خلص...) —
       // يبان في سطر الحالة بدل ما يقع بصمت على صوت الجهاز ومحدش يعرف ليه.
       $("header-status").textContent = "صوت ElevenLabs اترفض (" + resp.status + ") — راجعي الـVoice ID والمفتاح";
-    } catch { /* يقع على صوت الجهاز تحت */ }
+    } catch (e) {
+      // فشل الوصول نفسه (شبكة/مهلة) — برضو يبان بدل الصمت.
+      $("header-status").textContent = "تعذر الوصول لـ ElevenLabs: " + (e && e.name ? e.name : e);
+    }
   }
   await speakOnDevice(text);
   setFaceState("", "");
@@ -750,14 +763,19 @@ async function speak(text, emotion) {
 function playBlob(blob) {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    currentAudio = audio;
-    audio.onended = audio.onerror = () => {
+    currentAudio = player;
+    player.onended = player.onerror = () => {
       URL.revokeObjectURL(url);
-      if (currentAudio === audio) currentAudio = null;
+      if (currentAudio === player) currentAudio = null;
       resolve();
     };
-    audio.play().catch(resolve);
+    player.src = url;
+    player.play().catch((e) => {
+      // المنع بيبان كرسالة بدل الصمت — أهم درس اليوم كله.
+      $("header-status").textContent = "النظام منع تشغيل الصوت: " + (e && e.name ? e.name : e);
+      URL.revokeObjectURL(url);
+      resolve();
+    });
   });
 }
 
