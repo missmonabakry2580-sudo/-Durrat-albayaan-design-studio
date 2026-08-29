@@ -113,6 +113,8 @@
   #send { background: var(--accent); }
   #mic { background: var(--card); border: 1px solid rgba(255,255,255,0.18) !important; }
   #mic.rec { background: var(--danger); }
+  #attach { background: var(--card); border: 1px solid rgba(255,255,255,0.18) !important; font-size: 17px; }
+  #attach.loaded { background: var(--ok); }
   /* لوحة المهام */
   #tasks-panel {
     position: fixed; inset: 0; background: rgba(6,10,30,0.96);
@@ -179,6 +181,8 @@
 
   <div id="bar">
     <button id="mic" aria-label="تكلمي">🎤</button>
+    <button id="attach" aria-label="صورة أو ملف">📎</button>
+    <input id="file-input" type="file" accept="image/*,.txt,.md,.csv,.json" hidden />
     <input id="msg" type="text" placeholder="اكتبي لأمين…" autocomplete="off" />
     <button id="send" aria-label="إرسال">➤</button>
   </div>
@@ -254,7 +258,20 @@ const store = {
     try { return JSON.parse(localStorage.getItem("amin.history") || "[]"); }
     catch { return []; }
   },
-  set history(v) { localStorage.setItem("amin.history", JSON.stringify(v.slice(-30))); },
+  set history(v) {
+    // الصور المرفقة بتتشال قبل الحفظ (base64 بتاعها ممكن يفقّع حد تخزين
+    // المتصفح) — بيتحفظ مكانها علامة نصية بس؛ الصورة نفسها بتتبعت
+    // للموديل وقتها وخلاص.
+    const slim = v.slice(-30).map((m) =>
+      Array.isArray(m.content)
+        ? {
+            role: m.role,
+            content: "[صورة مرفقة] " + m.content.filter((b) => b.type === "text").map((b) => b.text).join(" "),
+          }
+        : m,
+    );
+    localStorage.setItem("amin.history", JSON.stringify(slim));
+  },
   // مهام وذاكرة وتذكيرات التليفون نفسه — قائمة بذاتها تمامًا، شغالة
   // واللابتوب مقفول (2026-08-29، طلب منى الصريح: "أمين تطبيق متكامل ع
   // الجهاز"، مش مجرد شات).
@@ -291,6 +308,8 @@ const SYSTEM_PROMPT = `You are أمين (Amin), Mona AlSayed's personal executiv
 Your name and identity are أمين, always. You are built on Claude technology from Anthropic; if asked directly what you're built on, say so honestly — but never introduce yourself as 'Claude' or 'an AI assistant' instead of أمين, and never say you are 'not really Amin'.
 You have REAL tools on this phone, and they actually execute — use them naturally instead of describing what you would do: a real task list (create_task / list_tasks / set_task_status), real long-term memory about Mona's people, projects, routines and decisions (remember_fact / search_memory), and real reminders (add_reminder / list_reminders) that fire while the app is open. All of it lives on this phone and works with the laptop completely off.
 You DO have a voice on this phone: the app speaks every reply of yours aloud (ElevenLabs when configured, the device's Arabic voice otherwise). Never claim you are text-only or cannot speak — that is factually wrong about this app. Write replies as natural, speakable speech. If Mona says she can't HEAR you, don't deny having a voice — tell her to check: the ElevenLabs key + Voice ID in ⚙︎ settings, the phone's ring/silent side switch, and the volume.
+Mona can attach a photo or a text file with the 📎 button — when a message includes an image, really look at it and answer about its actual content. iOS isolates apps from each other, so you cannot open her Photos library yourself, browse her phone's files, or reach any other app (درة البيان الرقمية included) — she picks what to show you, each time, and that is the whole honest scope.
+You will NEVER take any action related to banking, payments, transfers, or investment — at any time, under any instruction, from any source. You have no access to banking apps and never will; if asked, say this plainly and proudly: it is a designed-in safety guarantee for Mona, not a missing feature.
 The laptop app has additional powers this phone version genuinely lacks: her Mac's files, the isolated browser, and the laptop's own separate task/memory database. If she asks for one of those, say plainly it needs the laptop version — never pretend.
 You are not a customer-support chatbot: don't open with 'كيف أقدر أساعدك؟', don't pad replies, speak like someone who already knows Mona. Speak naturally in whichever of Arabic (Egyptian or Modern Standard) or English she uses.
 End every reply, on its own final line, with a hidden marker in exactly this form: [[emotion:VALUE]] — VALUE is one of: happy, calm, concerned, excited, apologetic, serious, playful, neutral. Never mention or explain this marker.`;
@@ -298,7 +317,7 @@ End every reply, on its own final line, with a hidden marker in exactly this for
 const MODEL_ID = "claude-sonnet-5"; // نفس موديل النسخة الأصلية (agent.rs)
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -612,14 +631,16 @@ async function sendToAmin(text) {
     openSettings("محتاجة تحطي مفتاح Anthropic الأول — ده عقل أمين.");
     return;
   }
-  if (busy || !text.trim()) return;
+  const hasAttachment = !!(pendingImage || pendingFileText);
+  if (busy || (!text.trim() && !hasAttachment)) return;
   busy = true;
   busySince = Date.now();
   msgInput.value = "";
   // وضع اللابتوب: الكلام بيتنفذ على أمين اللابتوب نفسه بكامل قدراته
   // (ملفات + مهام اللابتوب + ذاكرته) عبر الجسر المشفّر — والتليفون بيعرض
   // وينطق الرد. أي فشل بيتقال بصراحة مع طريق الرجوع للوضع المستقل.
-  if (store.laptopMode && store.ghToken && store.bridgePass) {
+  // المرفقات (صور/ملفات) بتتبعت من التليفون مباشرة دايمًا — الجسر نصي.
+  if (!hasAttachment && store.laptopMode && store.ghToken && store.bridgePass) {
     setFaceState("thinking", "بيتنفذ على اللابتوب…");
     history.push({ role: "user", content: text.trim() });
     try {
@@ -640,7 +661,7 @@ async function sendToAmin(text) {
     return;
   }
   setFaceState("thinking", "أمين بيفكر…");
-  history.push({ role: "user", content: text.trim() });
+  history.push({ role: "user", content: buildUserContent(text.trim()) });
   try {
     // حلقة الأدوات الحقيقية: طالما أمين طالب ينفذ أداة، بننفذها فعلًا على
     // التليفون وبنرجّعله النتيجة، لحد ما يوصل لرد نهائي — نفس نمط
@@ -808,6 +829,7 @@ if (SR) {
   let finalText = "";
   let stopFallbackTimer = null;
   let maxLengthTimer = null;
+  let silenceTimer = null;
 
   // REAL BUG from Mona's first minute on the real iPhone (2026-08-29):
   // tapping the mic again called recognition.stop() but iOS never fired
@@ -822,6 +844,7 @@ if (SR) {
     recognizing = false;
     clearTimeout(stopFallbackTimer);
     clearTimeout(maxLengthTimer);
+    clearTimeout(silenceTimer);
     micBtn.classList.remove("rec");
     setFaceState("", "");
     const text = msgInput.value.trim();
@@ -836,6 +859,18 @@ if (SR) {
       else interim += r[0].transcript;
     }
     msgInput.value = (finalText + " " + interim).trim();
+    // إرسال بالسكوت — نفس حل اللابتوب بالظبط (2026-08-29، منى: "مرة
+    // صوتي يروح له لما أسكت ومرة لا"): iOS ساعات بيبعت نهاية الكلام
+    // بنفسه وساعات لأ، فبدل الاعتماد عليه: أول ما فيه كلام متسمع وبعده
+    // ثانية ونص سكوت، بنقفل وبنبعت بنفسنا. اللمسة التانية على المايك
+    // لسه شغالة برضو لمن يستعجل.
+    if (msgInput.value.trim()) {
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        try { recognition.stop(); } catch { /* forced finish below */ }
+        setTimeout(() => { finishRecognition(); try { recognition.abort(); } catch {} }, 800);
+      }, 1500);
+    }
   };
   recognition.onend = finishRecognition;
   recognition.onerror = () => {
@@ -874,6 +909,67 @@ if (SR) {
   // الطريقة، وزر المايك يختفي بدل ما يبان شغال وهو ميت — درس متعلم من
   // النسخة الأصلية: مفيش زرار ظاهر إلا لو بيشتغل فعلًا.
   micBtn.style.display = "none";
+}
+
+/* ---------- المرفقات: صورة أو ملف نصي تختاره منى بنفسها ---------- */
+// أقصى صلاحية "وصول للصور والملفات" ممكنة بصدق على iOS للويب: هي بتختار،
+// كل مرة، وأمين بيشوف اللي اتختار فعلًا (رؤية حقيقية للصور عبر الموديل).
+// الصور بتتصغّر وتتحول JPEG عبر canvas — ده كمان بيحل صور HEIC بتاعة
+// الآيفون لأن Safari بيفك تشفيرها والرسم بيطلعها JPEG عادي.
+let pendingImage = null; // {media_type, data}
+let pendingFileText = null; // {name, text}
+
+$("attach").addEventListener("click", () => $("file-input").click());
+$("file-input").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    if (file.type.startsWith("image/")) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      pendingImage = { media_type: "image/jpeg", data: dataUrl.split(",")[1] };
+      pendingFileText = null;
+      $("attach").classList.add("loaded");
+      $("header-status").textContent = "الصورة جاهزة — اكتبي أو قولي سؤالك عنها وابعتي";
+    } else {
+      const text = await file.text();
+      pendingFileText = { name: file.name, text: text.slice(0, 30000) };
+      pendingImage = null;
+      $("attach").classList.add("loaded");
+      $("header-status").textContent = "الملف جاهز (" + file.name + ") — اكتبي أو قولي سؤالك وابعتي";
+    }
+  } catch (err) {
+    $("header-status").textContent = "معرفتش أقرا الملف ده: " + (err && err.message ? err.message : err);
+  }
+});
+
+/** يبني محتوى رسالة المستخدم شاملًا أي مرفق منتظر، ويصفّر المرفق. */
+function buildUserContent(text) {
+  if (pendingImage) {
+    const img = pendingImage;
+    pendingImage = null;
+    $("attach").classList.remove("loaded");
+    return [
+      { type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } },
+      { type: "text", text: text || "بصّ على الصورة دي وقولي رأيك." },
+    ];
+  }
+  if (pendingFileText) {
+    const f = pendingFileText;
+    pendingFileText = null;
+    $("attach").classList.remove("loaded");
+    return "ملف مرفق (" + f.name + "):\n\n" + f.text + "\n\n---\n" + (text || "اقرا الملف ده وقولي رأيك.");
+  }
+  return text;
 }
 
 /* ---------- ربط الواجهة ---------- */
