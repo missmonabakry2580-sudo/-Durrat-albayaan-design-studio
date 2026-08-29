@@ -74,9 +74,18 @@ jobs:
           set -euo pipefail
           mkdir -p ~/private_keys
           python3 - <<'PY'
-          import os, re, textwrap
-          raw = os.environ["KEY_P8"]
-          b64 = re.sub(r"-----[^-]*-----|\s", "", raw)
+          import os, re, textwrap, base64, unicodedata
+          # NFKC first (found live, 2026-08-29): the pasted secret's
+          # "letters" were 3-byte Unicode lookalikes of ASCII — visually
+          # identical, byte-garbage to Apple (258 chars became 658 bytes).
+          # Normalization maps them back; then keep only base64 alphabet.
+          raw = unicodedata.normalize("NFKC", os.environ["KEY_P8"])
+          raw = re.sub(r"-{3,}[^-]*-{3,}", "", raw)
+          raw = re.sub(r"(?im)^.*(BEGIN|END).*$", "", raw)
+          b64 = re.sub(r"[^A-Za-z0-9+/=]", "", raw)
+          der = base64.b64decode(b64)
+          assert der[:1] == b"\x30" and len(der) > 100, "decoded key doesn't look like DER PKCS8: %d bytes" % len(der)
+          print("der decodes to", len(der), "bytes — structure looks right")
           pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(b64, 64)) + "\n-----END PRIVATE KEY-----\n"
           import hashlib
           path = os.path.expanduser("~/private_keys/AuthKey_" + os.environ["KEY_ID"] + ".p8")
