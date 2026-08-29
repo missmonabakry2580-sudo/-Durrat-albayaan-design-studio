@@ -231,6 +231,18 @@
     <label>كلمة سر الجسر (نفس اللي على اللابتوب)</label>
     <input id="bridge-pass" type="password" placeholder="••••••" />
 
+    <h2 style="margin-top:30px">بوابة إدارة درة البيان (نموذج)</h2>
+    <p class="hint">
+      لو حطيتي بريد وكلمة سر حساب الإدارة بتاعك، أمين يقدر يدير حسابات
+      البوابة مباشرة على منصة المدرسة (بحث، سرد، إنشاء، تصفير كلمة سر،
+      تفعيل/تعطيل، حذف). البيانات على تليفونك فقط. أي إجراء بيغيّر بيانات
+      هيسألك تأكيد قبل ما ينفّذه — مفيش حاجة بتتعمل من غير موافقتك.
+    </p>
+    <label>بريد حساب الإدارة</label>
+    <input id="school-email" type="email" placeholder="you@example.com" autocomplete="off" />
+    <label>كلمة سر حساب الإدارة</label>
+    <input id="school-pass" type="password" placeholder="••••••" autocomplete="off" />
+
     <div class="row">
       <button id="save-btn">حفظ</button>
       <button id="close-btn">إغلاق</button>
@@ -243,6 +255,7 @@
     </p>
   </div>
 
+<script src="school-admin.js"></script>
 <script>
 "use strict";
 
@@ -293,6 +306,10 @@ const store = {
   // جسر اللابتوب (اختياري): نفس مفتاح GitHub ونفس كلمة سر الجسر اللي في
   // إعدادات أمين على اللابتوب — بيوصّل كلامك لأمين اللابتوب بكامل قدراته
   // (الملفات ومهام اللابتوب وذاكرته) لما يكون اللابتوب شغال.
+  get schoolEmail() { return localStorage.getItem("amin.schoolEmail") || ""; },
+  set schoolEmail(v) { localStorage.setItem("amin.schoolEmail", v); },
+  get schoolPass() { return localStorage.getItem("amin.schoolPass") || ""; },
+  set schoolPass(v) { localStorage.setItem("amin.schoolPass", v); },
   get ghToken() { return localStorage.getItem("amin.ghToken") || ""; },
   set ghToken(v) { localStorage.setItem("amin.ghToken", v); },
   get bridgePass() { return localStorage.getItem("amin.bridgePass") || ""; },
@@ -315,9 +332,31 @@ You are not a customer-support chatbot: don't open with 'كيف أقدر أسا�
 End every reply, on its own final line, with a hidden marker in exactly this form: [[emotion:VALUE]] — VALUE is one of: happy, calm, concerned, excited, apologetic, serious, playful, neutral. Never mention or explain this marker.`;
 
 const MODEL_ID = "claude-sonnet-5"; // نفس موديل النسخة الأصلية (agent.rs)
+
+// إضافة تُلحَق بالتوجيه لما بيانات إدارة المدرسة تكون متوفرة — بتعرّف أمين
+// بأدوات البوابة وبقاعدة الموافقة قبل أي تغيير.
+const SCHOOL_PROMPT_ADDON = `
+You also have REAL admin tools for Mona's OWN school platform (درة البيان) — they call the platform's own backend with her admin account: school_search_users, school_list_portal_accounts (read, run freely); and school_create_portal_account, school_reset_portal_password, school_set_portal_status, school_rename_portal_account, school_delete_portal_account (writes). This is her own system that she owns — NOT a bank, so the banking ban does not touch it. Every write asks Mona for on-screen confirmation before it runs; if she declines, the tool returns cancelled — accept that and don't retry. Civil IDs identify accounts; confirm the exact person before a destructive call.`;
+
+// توصيل وحدة الإدارة بمصدر بيانات الدخول (تخزين الجهاز) وبـ fetch المتصفح.
+if (window.SchoolAdmin) {
+  window.SchoolAdmin.configure({
+    fetch: window.fetch.bind(window),
+    getCred: () => ({ email: store.schoolEmail.trim(), password: store.schoolPass }),
+  });
+}
+function schoolEnabled() {
+  return !!(store.schoolEmail.trim() && store.schoolPass && window.SchoolAdmin);
+}
+// موافقة منى على أي إجراء يغيّر بيانات المنصة — حوار حاجب على الشاشة. لو
+// رفضت، الأداة بترجع cancelled وما بتلمسش المنصة. (نموذج: window.confirm؛
+// نقدر نحسّنه لحوار مصمّم لاحقًا.)
+function confirmSchoolWrite(summary) {
+  return window.confirm("أمين عايز ينفّذ على منصة المدرسة:\n\n" + summary);
+}
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -612,8 +651,8 @@ async function callClaude(key, messages) {
     body: JSON.stringify({
       model: MODEL_ID,
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools: TOOL_DEFS,
+      system: schoolEnabled() ? SYSTEM_PROMPT + SCHOOL_PROMPT_ADDON : SYSTEM_PROMPT,
+      tools: schoolEnabled() ? TOOL_DEFS.concat(window.SchoolAdmin.TOOL_DEFS) : TOOL_DEFS,
       messages,
     }),
   });
@@ -673,8 +712,14 @@ async function sendToAmin(text) {
       for (const block of data.content || []) {
         if (block.type === "tool_use") {
           let out;
-          try { out = runTool(block.name, block.input || {}); }
-          catch (e) { out = { error: String(e) }; }
+          try {
+            if (window.SchoolAdmin && window.SchoolAdmin.isSchoolTool(block.name)) {
+              // أدوات المدرسة async، والكتابة بتعدي على تأكيد على الشاشة.
+              out = await window.SchoolAdmin.runTool(block.name, block.input || {}, confirmSchoolWrite);
+            } else {
+              out = runTool(block.name, block.input || {});
+            }
+          } catch (e) { out = { error: String(e) }; }
           results.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(out) });
         }
       }
@@ -1038,6 +1083,8 @@ function openSettings(hint) {
   $("voice-id").value = store.voiceId;
   $("gh-token").value = store.ghToken;
   $("bridge-pass").value = store.bridgePass;
+  $("school-email").value = store.schoolEmail;
+  $("school-pass").value = store.schoolPass;
   $("anthropic-badge").textContent = store.anthropicKey ? "متحط ✓" : "";
   $("eleven-badge").textContent = store.elevenKey ? "متحط ✓" : "";
   renderLaptopToggle();
@@ -1062,6 +1109,8 @@ $("save-btn").addEventListener("click", () => {
   store.voiceId = $("voice-id").value.trim();
   store.ghToken = $("gh-token").value.trim();
   store.bridgePass = $("bridge-pass").value.trim();
+  store.schoolEmail = $("school-email").value.trim();
+  store.schoolPass = $("school-pass").value;
   settings.classList.remove("open");
   $("header-status").textContent = store.anthropicKey ? "جاهز" : "محتاج مفتاح Anthropic";
 });

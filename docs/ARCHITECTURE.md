@@ -2504,6 +2504,59 @@ Admin key works (it also transited a chat once — rotation was already
 owed). TestFlight internal testing needs no Apple review; the public
 App Store (and its screenshots page) stays a non-goal.
 
+## Amin ↔ the school platform: admin-portal tools, first model (2026-08-29)
+
+Mona wants Amin to operate her school platform (`durrat-bayaan-connect`,
+project `durrat-al-bayaan-portal` on Firebase) — "tell him do X, he does
+it in seconds" across every portal. First working model: the **admin
+portal**, wired into the phone PWA (`mobile/`).
+
+How it connects — the honest architecture, not a hack:
+
+- The platform's real "API" is its own **callable Cloud Functions**
+  (`functions/src/`, region `europe-west1`) plus Firestore under
+  `firestore.rules`. Amin calls those functions **as Mona** — signing in
+  to Firebase Auth (Identity Toolkit REST) with her admin account, then
+  `POST {data}` with a `Bearer` ID token. Every action runs through the
+  platform's own `requireAdmin` checks and audit trail. No service-account
+  master key that bypasses the rules; her account IS the Principal
+  (`missmonabakry2580@gmail.com`, the bootstrap email in `client.ts`).
+- The Firebase Web API key is publishable (the platform's own comment
+  says so — access control is the rules, not key secrecy), so it lives in
+  code; her admin **password** does not — it stays in device localStorage
+  (`amin.schoolEmail` / `amin.schoolPass`), entered in ⚙︎ settings, never
+  committed.
+
+`mobile/school-admin.js` is a standalone, dependency-injected module
+(`configure({fetch, getCred})`) so it runs identically in the browser and
+under Node for tests. It exposes seven tools mapped to real, verified
+function signatures: `school_search_users`,
+`school_list_portal_accounts` (reads, immediate);
+`school_create_portal_account`, `school_reset_portal_password`,
+`school_set_portal_status`, `school_rename_portal_account`,
+`school_delete_portal_account` (writes). **Every write passes through an
+on-screen confirmation** (`confirmSchoolWrite`) before it touches the
+platform — Mona's standing rule ("بينفذ كل شي بموافقة مني") enforced in
+code: decline → the tool returns `cancelled`, no call is made. Tools +
+a prompt addendum are injected into Amin's loop only when the admin
+credentials are present.
+
+The banking ban is untouched and orthogonal: managing her own school's
+accounts is her own system, not a bank. No finance-portal money-movement
+tool is wired yet; when it is, it stays inside her platform, never
+external banking apps.
+
+**Verified**: `mobile/school-admin.test.mjs` — 16 assertions, all pass,
+against a mocked Firebase (token caching, callable request shape:
+URL/Bearer/`{data}`/`{result}`, reads bypass confirm, writes are blocked
+without confirm and never call the function, writes run after confirm,
+function errors surface readably, missing-creds message, def/impl
+parity). No live platform data touched. Inline PWA script + module both
+pass `node --check`. **Not verified**: a live call against the real
+platform (needs Mona's admin login in the app). **Next**: after she
+tries the admin model, extend to the other portals (finance/academic/
+admissions) the same way, each write gated.
+
 ## Non-goals (Phase 0, and generally)
 
 - No public app-store presence for either app, ever.
