@@ -82,6 +82,8 @@ jobs:
           open(path, "w").write(pem)
           print("key written,", len(pem), "bytes,", len(b64), "b64 chars")
           PY
+          ls -la "$HOME/private_keys/"
+          openssl pkey -in "$HOME/private_keys/AuthKey_$KEY_ID.p8" -noout && echo "openssl: key parses OK in CI"
 
       - name: Archive (cloud signing)
         if: steps.gate.outputs.ok == 'true'
@@ -98,7 +100,7 @@ jobs:
             -archivePath build/Amin.xcarchive \
             -allowProvisioningUpdates \
             -allowProvisioningDeviceRegistration \
-            -authenticationKeyPath ~/private_keys/AuthKey_"$KEY_ID".p8 \
+            -authenticationKeyPath "$HOME"/private_keys/AuthKey_"$KEY_ID".p8 \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
             CODE_SIGN_STYLE=Automatic \
@@ -126,7 +128,7 @@ jobs:
             -archivePath build/Amin.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
             -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_"$KEY_ID".p8 \
+            -authenticationKeyPath "$HOME"/private_keys/AuthKey_"$KEY_ID".p8 \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
             | tail -40
