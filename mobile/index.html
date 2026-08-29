@@ -243,6 +243,18 @@
     <label>كلمة سر حساب الإدارة</label>
     <input id="school-pass" type="password" placeholder="••••••" autocomplete="off" />
 
+    <h2 style="margin-top:30px">قاعدة بيانات المدرسة الكاملة (Google Sheet)</h2>
+    <p class="hint">
+      ده بيدّي أمين تحكّم كامل في قاعدة بيانات المدرسة (الطلاب، الأقساط،
+      الحضور، الدرجات… كل التبويبات): قراءة، إضافة، تعديل، حذف. الصق هنا
+      محتوى ملف «حساب الخدمة» (Service Account JSON) اللي هنعمله سوا،
+      وشاركي الشيت مع بريده. التعديل والحذف على بيانات الطلاب والمالية
+      بيسألك تأكيد أول. الملف على تليفونك فقط.
+    </p>
+    <label>مفتاح حساب خدمة جوجل (JSON)</label>
+    <textarea id="gsa-key" rows="4" placeholder='{ "client_email": "...", "private_key": "..." }'
+      style="width:100%;box-sizing:border-box;border-radius:12px;border:1px solid var(--card);background:var(--card);color:var(--text);padding:11px;font-size:13px;font-family:monospace" autocomplete="off"></textarea>
+
     <div class="row">
       <button id="save-btn">حفظ</button>
       <button id="close-btn">إغلاق</button>
@@ -256,6 +268,7 @@
   </div>
 
 <script src="school-admin.js"></script>
+<script src="school-sheets.js"></script>
 <script>
 "use strict";
 
@@ -310,6 +323,8 @@ const store = {
   set schoolEmail(v) { localStorage.setItem("amin.schoolEmail", v); },
   get schoolPass() { return localStorage.getItem("amin.schoolPass") || ""; },
   set schoolPass(v) { localStorage.setItem("amin.schoolPass", v); },
+  get gsaKey() { return localStorage.getItem("amin.gsaKey") || ""; },
+  set gsaKey(v) { localStorage.setItem("amin.gsaKey", v); },
   get ghToken() { return localStorage.getItem("amin.ghToken") || ""; },
   set ghToken(v) { localStorage.setItem("amin.ghToken", v); },
   get bridgePass() { return localStorage.getItem("amin.bridgePass") || ""; },
@@ -348,6 +363,24 @@ if (window.SchoolAdmin) {
 function schoolEnabled() {
   return !!(store.schoolEmail.trim() && store.schoolPass && window.SchoolAdmin);
 }
+
+// وحدة الوصول المباشر لجوجل شيت — بتقرأ مفتاح حساب الخدمة من تخزين الجهاز.
+if (window.SchoolSheets) {
+  window.SchoolSheets.configure({
+    fetch: window.fetch.bind(window),
+    subtle: window.crypto && window.crypto.subtle,
+    getServiceAccount: () => {
+      try { return JSON.parse(store.gsaKey); } catch (_e) { return null; }
+    },
+  });
+}
+function sheetsEnabled() {
+  if (!(store.gsaKey.trim() && window.SchoolSheets)) return false;
+  try { const j = JSON.parse(store.gsaKey); return !!(j.client_email && j.private_key); }
+  catch (_e) { return false; }
+}
+const SHEETS_PROMPT_ADDON = `
+You can also read and write Mona's whole school database directly — the Google Sheet the platform runs on (37 tabs: students, installments, invoices, attendance, grades, Quran memorization, lesson plans, daily reports, and more). Tools: school_sheet_tabs, school_sheet_read, school_sheet_find (reads, run freely); school_sheet_add, school_sheet_update, school_sheet_delete (writes). Address a tab by its exact Arabic title; read it first (school_sheet_read / school_sheet_tabs) to learn its columns before writing. Writes to sensitive tabs (students, any finance, bank, health, grades) and ALL deletes ask Mona to confirm on screen first; if she declines the tool returns cancelled — accept it. Match rows precisely (e.g. by الرقم المدني) before updating or deleting so you never touch the wrong child's record. This is her own school data — the banking ban does not apply to it.`;
 // موافقة منى على أي إجراء يغيّر بيانات المنصة — حوار حاجب على الشاشة. لو
 // رفضت، الأداة بترجع cancelled وما بتلمسش المنصة. (نموذج: window.confirm؛
 // نقدر نحسّنه لحوار مصمّم لاحقًا.)
@@ -356,7 +389,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -651,8 +684,12 @@ async function callClaude(key, messages) {
     body: JSON.stringify({
       model: MODEL_ID,
       max_tokens: 1024,
-      system: schoolEnabled() ? SYSTEM_PROMPT + SCHOOL_PROMPT_ADDON : SYSTEM_PROMPT,
-      tools: schoolEnabled() ? TOOL_DEFS.concat(window.SchoolAdmin.TOOL_DEFS) : TOOL_DEFS,
+      system: SYSTEM_PROMPT
+        + (schoolEnabled() ? SCHOOL_PROMPT_ADDON : "")
+        + (sheetsEnabled() ? SHEETS_PROMPT_ADDON : ""),
+      tools: TOOL_DEFS
+        .concat(schoolEnabled() ? window.SchoolAdmin.TOOL_DEFS : [])
+        .concat(sheetsEnabled() ? window.SchoolSheets.TOOL_DEFS : []),
       messages,
     }),
   });
@@ -714,8 +751,11 @@ async function sendToAmin(text) {
           let out;
           try {
             if (window.SchoolAdmin && window.SchoolAdmin.isSchoolTool(block.name)) {
-              // أدوات المدرسة async، والكتابة بتعدي على تأكيد على الشاشة.
+              // أدوات إدارة الحسابات (Firestore) — الكتابة بتأكيد على الشاشة.
               out = await window.SchoolAdmin.runTool(block.name, block.input || {}, confirmSchoolWrite);
+            } else if (window.SchoolSheets && window.SchoolSheets.isSchoolSheetTool(block.name)) {
+              // أدوات قاعدة البيانات (Google Sheet) — الحسّاس والحذف بتأكيد.
+              out = await window.SchoolSheets.runTool(block.name, block.input || {}, confirmSchoolWrite);
             } else {
               out = runTool(block.name, block.input || {});
             }
@@ -1085,6 +1125,7 @@ function openSettings(hint) {
   $("bridge-pass").value = store.bridgePass;
   $("school-email").value = store.schoolEmail;
   $("school-pass").value = store.schoolPass;
+  $("gsa-key").value = store.gsaKey;
   $("anthropic-badge").textContent = store.anthropicKey ? "متحط ✓" : "";
   $("eleven-badge").textContent = store.elevenKey ? "متحط ✓" : "";
   renderLaptopToggle();
@@ -1111,6 +1152,7 @@ $("save-btn").addEventListener("click", () => {
   store.bridgePass = $("bridge-pass").value.trim();
   store.schoolEmail = $("school-email").value.trim();
   store.schoolPass = $("school-pass").value;
+  store.gsaKey = $("gsa-key").value.trim();
   settings.classList.remove("open");
   $("header-status").textContent = store.anthropicKey ? "جاهز" : "محتاج مفتاح Anthropic";
 });
