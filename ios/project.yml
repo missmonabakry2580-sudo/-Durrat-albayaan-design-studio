@@ -20,6 +20,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: om.durratalbayaan.amin
+        DEVELOPMENT_TEAM: "73ZR23J5X4"
+        CODE_SIGN_STYLE: Automatic
         PRODUCT_NAME: Amin
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -32,3 +34,8 @@ targets:
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "لتحويل كلامك إلى نص يفهمه أمين."
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
+    configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+        Release:
+          CODE_SIGN_IDENTITY: "Apple Distribution"
