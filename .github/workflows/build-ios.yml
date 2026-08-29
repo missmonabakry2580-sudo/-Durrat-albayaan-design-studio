@@ -78,12 +78,19 @@ jobs:
           raw = os.environ["KEY_P8"]
           b64 = re.sub(r"-----[^-]*-----|\s", "", raw)
           pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(b64, 64)) + "\n-----END PRIVATE KEY-----\n"
+          import hashlib
           path = os.path.expanduser("~/private_keys/AuthKey_" + os.environ["KEY_ID"] + ".p8")
           open(path, "w").write(pem)
-          print("key written,", len(pem), "bytes,", len(b64), "b64 chars")
+          back = open(path, "rb").read()
+          print("py wrote:", len(pem), "chars; read-back:", len(back), "bytes; sha:", hashlib.sha256(back).hexdigest()[:16])
+          print("py path repr:", repr(path))
+          print("py KEY_ID repr:", repr(os.environ["KEY_ID"]))
           PY
           ls -la "$HOME/private_keys/"
-          openssl pkey -in "$HOME/private_keys/AuthKey_$KEY_ID.p8" -noout && echo "openssl: key parses OK in CI"
+          FILE="$HOME/private_keys/AuthKey_$KEY_ID.p8"
+          echo "sh sees: $(wc -c < "$FILE") bytes; sha: $(shasum -a 256 "$FILE" | cut -c1-16)"
+          head -1 "$FILE"
+          openssl pkey -in "$FILE" -noout && echo "openssl: key parses OK in CI"
 
       - name: Archive (cloud signing)
         if: steps.gate.outputs.ok == 'true'
