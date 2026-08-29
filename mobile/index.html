@@ -255,6 +255,15 @@
     <textarea id="gsa-key" rows="4" placeholder='{ "client_email": "...", "private_key": "..." }'
       style="width:100%;box-sizing:border-box;border-radius:12px;border:1px solid var(--card);background:var(--card);color:var(--text);padding:11px;font-size:13px;font-family:monospace" autocomplete="off"></textarea>
 
+    <h2 style="margin-top:30px">كود منصة المدرسة (إصلاح الأعطال البرمجية)</h2>
+    <p class="hint">
+      لو حطيتي مفتاح GitHub لمستودع المنصة، أمين يقدر يقرأ كود المنصة
+      ويشخّص أي عطل برمجي، ويقترح الإصلاح كـ Pull Request مراجَع — من غير
+      ما يلمس المنصة الحيّة مباشرة. فتح أي اقتراح بيسألك تأكيد أول.
+    </p>
+    <label>مفتاح GitHub لكود المنصة</label>
+    <input id="school-repo-token" type="password" placeholder="github_pat_..." autocomplete="off" />
+
     <div class="row">
       <button id="save-btn">حفظ</button>
       <button id="close-btn">إغلاق</button>
@@ -269,6 +278,7 @@
 
 <script src="school-admin.js"></script>
 <script src="school-sheets.js"></script>
+<script src="school-code.js"></script>
 <script>
 "use strict";
 
@@ -325,6 +335,8 @@ const store = {
   set schoolPass(v) { localStorage.setItem("amin.schoolPass", v); },
   get gsaKey() { return localStorage.getItem("amin.gsaKey") || ""; },
   set gsaKey(v) { localStorage.setItem("amin.gsaKey", v); },
+  get schoolRepoToken() { return localStorage.getItem("amin.schoolRepoToken") || ""; },
+  set schoolRepoToken(v) { localStorage.setItem("amin.schoolRepoToken", v); },
   get ghToken() { return localStorage.getItem("amin.ghToken") || ""; },
   set ghToken(v) { localStorage.setItem("amin.ghToken", v); },
   get bridgePass() { return localStorage.getItem("amin.bridgePass") || ""; },
@@ -379,6 +391,19 @@ function sheetsEnabled() {
   try { const j = JSON.parse(store.gsaKey); return !!(j.client_email && j.private_key); }
   catch (_e) { return false; }
 }
+
+// وحدة كود المنصة — أمين يقرأ الكود ويقترح إصلاحات كـ Pull Requests.
+if (window.SchoolCode) {
+  window.SchoolCode.configure({
+    fetch: window.fetch.bind(window),
+    getToken: () => store.schoolRepoToken.trim(),
+  });
+}
+function codeEnabled() {
+  return !!(store.schoolRepoToken.trim() && window.SchoolCode);
+}
+const CODE_PROMPT_ADDON = `
+You can also read the school platform's source code and propose fixes to it: code_list_files, code_read_file (reads, run freely), and code_propose_fix (opens a reviewed Pull Request — it never changes the live site directly). Use this to close the loop on a CODE/UI bug you diagnosed from the data: read the relevant source, find the cause, and propose a fix as a PR that Mona (or a developer) reviews before it goes live. Every code_propose_fix asks Mona to confirm first. Keep fixes minimal and targeted; pass the file's FULL new content. You cannot run the platform's tests from here, so a PR is a proposal, not a guaranteed-correct change — say so.`;
 const SHEETS_PROMPT_ADDON = `
 You can also read and write Mona's whole school database directly — the Google Sheet the platform runs on (37 tabs: students, installments, invoices, attendance, grades, Quran memorization, lesson plans, daily reports, and more). Tools: school_sheet_tabs, school_sheet_read, school_sheet_find (reads, run freely); school_sheet_add, school_sheet_update, school_sheet_delete (writes). Address a tab by its exact Arabic title; read it first (school_sheet_read / school_sheet_tabs) to learn its columns before writing. Writes to sensitive tabs (students, any finance, bank, health, grades) and ALL deletes ask Mona to confirm on screen first; if she declines the tool returns cancelled — accept it. Match rows precisely (e.g. by الرقم المدني) before updating or deleting so you never touch the wrong child's record. This is her own school data — the banking ban does not apply to it.
 You are also Mona's monitor across every portal. The database itself logs activity — the session log tab (معرف الجلسة: logins, last-activity, action logs) and the messages tab record what happens in each portal — so read those to build the daily report she wants: every notable step across admin/teacher/parent/student/finance/transport that day, plus anything that looks wrong (missing records, stuck statuses, failed payments). Fix DATA problems in the sheet (with confirmation on sensitive tabs); for a CODE/UI bug in a portal, you cannot fix it from here — give Mona a precise diagnosis (which portal, which action, what looks wrong in the data) so it can be fixed in the platform's code.`;
@@ -390,7 +415,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -687,10 +712,12 @@ async function callClaude(key, messages) {
       max_tokens: 1024,
       system: SYSTEM_PROMPT
         + (schoolEnabled() ? SCHOOL_PROMPT_ADDON : "")
-        + (sheetsEnabled() ? SHEETS_PROMPT_ADDON : ""),
+        + (sheetsEnabled() ? SHEETS_PROMPT_ADDON : "")
+        + (codeEnabled() ? CODE_PROMPT_ADDON : ""),
       tools: TOOL_DEFS
         .concat(schoolEnabled() ? window.SchoolAdmin.TOOL_DEFS : [])
-        .concat(sheetsEnabled() ? window.SchoolSheets.TOOL_DEFS : []),
+        .concat(sheetsEnabled() ? window.SchoolSheets.TOOL_DEFS : [])
+        .concat(codeEnabled() ? window.SchoolCode.TOOL_DEFS : []),
       messages,
     }),
   });
@@ -762,6 +789,9 @@ async function sendToAmin(text) {
             } else if (window.SchoolSheets && window.SchoolSheets.isSchoolSheetTool(block.name)) {
               // أدوات قاعدة البيانات (Google Sheet) — الحسّاس والحذف بتأكيد.
               out = await window.SchoolSheets.runTool(block.name, block.input || {}, confirmSchoolWrite);
+            } else if (window.SchoolCode && window.SchoolCode.isCodeTool(block.name)) {
+              // أدوات كود المنصة — فتح PR بتأكيد.
+              out = await window.SchoolCode.runTool(block.name, block.input || {}, confirmSchoolWrite);
             } else {
               out = runTool(block.name, block.input || {});
             }
@@ -1132,6 +1162,7 @@ function openSettings(hint) {
   $("school-email").value = store.schoolEmail;
   $("school-pass").value = store.schoolPass;
   $("gsa-key").value = store.gsaKey;
+  $("school-repo-token").value = store.schoolRepoToken;
   $("anthropic-badge").textContent = store.anthropicKey ? "متحط ✓" : "";
   $("eleven-badge").textContent = store.elevenKey ? "متحط ✓" : "";
   renderLaptopToggle();
@@ -1159,6 +1190,7 @@ $("save-btn").addEventListener("click", () => {
   store.schoolEmail = $("school-email").value.trim();
   store.schoolPass = $("school-pass").value;
   store.gsaKey = $("gsa-key").value.trim();
+  store.schoolRepoToken = $("school-repo-token").value.trim();
   settings.classList.remove("open");
   $("header-status").textContent = store.anthropicKey ? "جاهز" : "محتاج مفتاح Anthropic";
 });
