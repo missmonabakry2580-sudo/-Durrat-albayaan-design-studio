@@ -380,7 +380,8 @@ function sheetsEnabled() {
   catch (_e) { return false; }
 }
 const SHEETS_PROMPT_ADDON = `
-You can also read and write Mona's whole school database directly — the Google Sheet the platform runs on (37 tabs: students, installments, invoices, attendance, grades, Quran memorization, lesson plans, daily reports, and more). Tools: school_sheet_tabs, school_sheet_read, school_sheet_find (reads, run freely); school_sheet_add, school_sheet_update, school_sheet_delete (writes). Address a tab by its exact Arabic title; read it first (school_sheet_read / school_sheet_tabs) to learn its columns before writing. Writes to sensitive tabs (students, any finance, bank, health, grades) and ALL deletes ask Mona to confirm on screen first; if she declines the tool returns cancelled — accept it. Match rows precisely (e.g. by الرقم المدني) before updating or deleting so you never touch the wrong child's record. This is her own school data — the banking ban does not apply to it.`;
+You can also read and write Mona's whole school database directly — the Google Sheet the platform runs on (37 tabs: students, installments, invoices, attendance, grades, Quran memorization, lesson plans, daily reports, and more). Tools: school_sheet_tabs, school_sheet_read, school_sheet_find (reads, run freely); school_sheet_add, school_sheet_update, school_sheet_delete (writes). Address a tab by its exact Arabic title; read it first (school_sheet_read / school_sheet_tabs) to learn its columns before writing. Writes to sensitive tabs (students, any finance, bank, health, grades) and ALL deletes ask Mona to confirm on screen first; if she declines the tool returns cancelled — accept it. Match rows precisely (e.g. by الرقم المدني) before updating or deleting so you never touch the wrong child's record. This is her own school data — the banking ban does not apply to it.
+You are also Mona's monitor across every portal. The database itself logs activity — the session log tab (معرف الجلسة: logins, last-activity, action logs) and the messages tab record what happens in each portal — so read those to build the daily report she wants: every notable step across admin/teacher/parent/student/finance/transport that day, plus anything that looks wrong (missing records, stuck statuses, failed payments). Fix DATA problems in the sheet (with confirmation on sensitive tabs); for a CODE/UI bug in a portal, you cannot fix it from here — give Mona a precise diagnosis (which portal, which action, what looks wrong in the data) so it can be fixed in the platform's code.`;
 // موافقة منى على أي إجراء يغيّر بيانات المنصة — حوار حاجب على الشاشة. لو
 // رفضت، الأداة بترجع cancelled وما بتلمسش المنصة. (نموذج: window.confirm؛
 // نقدر نحسّنه لحوار مصمّم لاحقًا.)
@@ -389,7 +390,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
