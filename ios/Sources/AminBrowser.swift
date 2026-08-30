@@ -59,17 +59,32 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     private func topViewController() -> UIViewController? {
-        let scenes = UIApplication.shared.connectedScenes
-        let windowScene = scenes.first { $0.activationState == .foregroundActive } as? UIWindowScene
-        var top = windowScene?.windows.first { $0.isKeyWindow }?.rootViewController
-            ?? windowScene?.windows.first?.rootViewController
+        // بحث أوسع: أول محاولة على أي مشهد نافذة "شغال قدام"، وإلا أي مشهد
+        // نافذة موجود أصلًا — عشان حالات نادرة (تحميل مبكر، انتقال بين
+        // المشاهد) ما توقفش عرض المتصفح. (كان بيرجع nil في الحالة دي
+        // قبل كده لو مفيش مشهد foregroundActive، وده كان بيمنع العرض تمامًا.)
+        let windowScenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = windowScenes.first { $0.activationState == .foregroundActive } ?? windowScenes.first
+        var top = scene?.windows.first { $0.isKeyWindow }?.rootViewController
+            ?? scene?.windows.first?.rootViewController
         while let presented = top?.presentedViewController { top = presented }
         return top
     }
 
-    private func presentIfNeeded() {
+    // بيحاول يعرض نافذة المتصفح، وبيعيد المحاولة لو الشاشة الرئيسية مش
+    // جاهزة لحظة النداء (حالة عابرة). فشل العرض ما يمنعش القراءة/الضغط/
+    // الكتابة أبدًا — دي بتشتغل على WKWebView نفسه بغض النظر عن ظهور
+    // النافذة، شايف eval() تحت.
+    private func presentIfNeeded(retriesLeft: Int = 6) {
         if browserVC != nil { return }
-        guard let top = topViewController() else { return }
+        guard let top = topViewController() else {
+            if retriesLeft > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.presentIfNeeded(retriesLeft: retriesLeft - 1)
+                }
+            }
+            return
+        }
         let wv = ensureWebView()
         let vc = AminBrowserViewController(webView: wv, onClose: { [weak self] in
             self?.browserVC = nil
@@ -123,6 +138,7 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        presentIfNeeded() // لو العرض الأول فشل مؤقتًا، نضمن ظهور النافذة لمنى الآن.
         browserVC?.setURL(webView.url?.absoluteString ?? "")
         finishPendingOpen([
             "ok": true,
@@ -132,6 +148,7 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        presentIfNeeded()
         browserVC?.setURL(webView.url?.absoluteString ?? "")
     }
 
@@ -145,8 +162,15 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
 
     // MARK: - قراءة/ضغط/كتابة (حقن JS في نفس الصفحة)
 
+    // العلة الحقيقية اللي كانت هنا: الشرط ده كان بيتطلب كمان browserVC != nil
+    // (يعني نافذة العرض المرئية شغالة) قبل ما يسمح بأي قراءة/ضغط/كتابة —
+    // بس القراءة والضغط والكتابة بتشتغل على WKWebView نفسه عن طريق حقن JS،
+    // ومحتاجاش النافذة تكون معروضة أصلًا. النتيجة كانت: browse_open ينجح
+    // فعليًا (الصفحة بتتحمّل، حتى لو ظهور النافذة اتأخر أو فشل لحظيًا)، بس
+    // browse_read بعده يفشل برسالة "مفيش صفحة مفتوحة" رغم إن الصفحة فعلًا
+    // مفتوحة في الـ WKWebView. الشرط الصحيح هو وجود الـ webView نفسه بس.
     private func eval(_ js: String, _ reply: @escaping (Any?, String?) -> Void) {
-        guard let wv = webView, browserVC != nil else {
+        guard let wv = webView else {
             reply(nil, "مفيش صفحة مفتوحة — افتحي رابط الأول بـ browse_open."); return
         }
         wv.evaluateJavaScript(js) { result, error in
