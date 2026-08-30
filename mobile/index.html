@@ -416,7 +416,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -863,6 +863,55 @@ function unlockAudioOnce() {
 document.addEventListener("touchstart", unlockAudioOnce, { once: true, passive: true });
 document.addEventListener("click", unlockAudioOnce, { once: true });
 
+/* ---------- تشكيل النص قبل ElevenLabs (يصلّح النطق العربي) ----------
+   ElevenLabs بينطق العربي غلط لو النص من غير تشكيل (زي "منى"). الحل: نمرّر
+   النص على Claude يشكّله بما يطابق النطق الطبيعي (مش تفصيح)، ونتحقق إن نفس
+   الحروف زي ما هي (الأداة ما غيّرتش الكلام)، وبعدها نصلّح أسماء معروفة. لو
+   أي حاجة فشلت بنرجع للنص الخام — النطق أهم من إنه يقع. (نفس درس نسخة الماك.) */
+const DIACRITIZE_PROMPT = "أنت أداة تشكيل عربي فقط، مش محادثة. مهمتك تضيف الحركات (التشكيل الكامل) للنص بما يطابق النطق الطبيعي المصري/الفصحى المبسّطة كما يُنطق فعلًا — من غير ما تفصّح أو تغيّر أي كلمة أو ترتيب أو تحذف أو تضيف حرفًا. رجّع نفس النص بالحركات فقط، بدون أي مقدمة أو شرح أو علامات. لو النص فيه إنجليزي أو أرقام سيبها زي ما هي.";
+function stripHarakat(s) {
+  return (s || "").replace(/[\u064B-\u0652\u0670\u0640]/g, "");
+}
+function hasArabic(s) { return /[؀-ۿ]/.test(s || ""); }
+async function diacritizeForSpeech(text) {
+  if (!hasArabic(text)) return text;
+  const key = store.anthropicKey.trim();
+  if (!key) return text;
+  try {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 15000);
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: abort.signal,
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", // سريع — التشكيل مش محتاج العقل الكبير
+        max_tokens: 900,
+        system: DIACRITIZE_PROMPT,
+        messages: [{ role: "user", content: text }],
+      }),
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return text;
+    const data = await resp.json();
+    let out = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+    if (!out) return text;
+    // تحقّق السلامة: نفس الحروف بالظبط (بدون تشكيل/مسافات) — وإلا الأداة
+    // بدّلت الكلام أو ردّت رد محادثة، فنرجع للخام.
+    if (stripHarakat(out).replace(/\s+/g, "") !== stripHarakat(text).replace(/\s+/g, "")) return text;
+    // تصحيح نطق أسماء معروفة (منى تُنطق مُنى) — أيًا كان تشكيلها.
+    out = out.replace(/م[ـً-ْ]*ن[ـً-ْ]*ى/g, "مُنى");
+    return out;
+  } catch (_e) {
+    return text;
+  }
+}
+
 async function speak(text, emotion) {
   // نفس قاعدة اللابتوب: صوت واحد بس في نفس اللحظة
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
@@ -872,6 +921,8 @@ async function speak(text, emotion) {
   const voiceId = store.voiceId.trim();
   if (key && voiceId) {
     try {
+      // نشكّل النص قبل إرساله — بيصلّح النطق العربي (بيتعرض على الشاشة خام).
+      const ttsText = await diacritizeForSpeech(text);
       // مهلة ٢٠ ثانية — fetch من غير مهلة ممكن يعلّق طويل على شبكة سيئة.
       const abort = new AbortController();
       const abortTimer = setTimeout(() => abort.abort(), 20000);
@@ -880,7 +931,7 @@ async function speak(text, emotion) {
         {
           method: "POST",
           headers: { "content-type": "application/json", "xi-api-key": key },
-          body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+          body: JSON.stringify({ text: ttsText, model_id: "eleven_multilingual_v2" }),
           signal: abort.signal,
         },
       );
