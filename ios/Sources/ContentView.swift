@@ -22,6 +22,8 @@ final class AminWeb: NSObject, ObservableObject {
     private var lastLoad = Date()
     // جسر تنظيم الصور والملفات — الشيء الوحيد اللي محتاج كود أصلي.
     private let files: AminFiles
+    // متصفح أمين داخل التطبيق (يفتح/يقرأ/يضغط/يكتب في البوابة والمنظرة).
+    private let browser: AminBrowser
 
     override init() {
         let cfg = WKWebViewConfiguration()
@@ -35,11 +37,16 @@ final class AminWeb: NSObject, ObservableObject {
         let filesHandler = AminFiles()
         cfg.userContentController.addScriptMessageHandler(
             filesHandler, contentWorld: .page, name: "aminFiles")
+        // متصفح أمين: window.webkit.messageHandlers.aminBrowser
+        let browserHandler = AminBrowser()
+        cfg.userContentController.addScriptMessageHandler(
+            browserHandler, contentWorld: .page, name: "aminBrowser")
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.scrollView.bounces = true // لازم true عشان السحب-للتحديث يشتغل
         wv.allowsBackForwardNavigationGestures = false
         webView = wv
         files = filesHandler
+        browser = browserHandler
         super.init()
 
         // سحب لتحت = تحديث (يتجاهل الكاش عشان يجيب آخر نسخة ويب).
