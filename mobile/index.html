@@ -416,7 +416,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -538,17 +538,22 @@ function nativeCall(action, args) {
 const NATIVE_TOOL_DEFS = [
   {
     name: "photos_summary",
-    description: "Count Mona's photos and videos and how many photos per month (yyyy-MM). Ask for photo permission if needed.",
+    description: "Count Mona's photos and videos, plus photos per month by BOTH capture date (byMonthCaptured, original EXIF) and device-added date (byMonthAdded, when they landed on THIS phone). addedDateAvailable says if the device-added date could be read. Ask for photo permission if needed.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "photos_find_duplicates",
-    description: "Find duplicate photos (same capture time and dimensions). Returns groups and how many extra copies exist. Read-only.",
+    description: "FAST exact-duplicate check by metadata only (same capture time and dimensions). Instant. Returns groups and extra copies. Read-only. For visually-similar photos (resized/recompressed/slightly different), use photos_find_similar instead.",
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "photos_find_similar",
+    description: "DEEP visual duplicate detection: compares the actual pixels (perceptual hash), so it catches the same photo even if resized, cropped, recompressed, or taken moments apart. Each group carries a match percentage (minSimilarity). Read-only, and slower than photos_find_duplicates because it reads every photo. Show Mona the match % and get her agreement before deleting anything.",
+    input_schema: { type: "object", properties: { minSimilarity: { type: "number", description: "Minimum match %% to treat as duplicates (default 90). Higher = stricter/safer." } } },
+  },
+  {
     name: "photos_delete",
-    description: "Delete photos by their ids (from photos_find_duplicates). iOS shows Mona a system confirm dialog before anything is deleted. Only call after she agrees to remove duplicates.",
+    description: "Delete photos by their ids (from photos_find_duplicates or photos_find_similar). iOS shows Mona a system confirm dialog before anything is deleted. Only call after she agrees to remove duplicates — for photos_find_similar results, tell her the match %% first.",
     input_schema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } } }, required: ["ids"] },
   },
   {
@@ -558,8 +563,8 @@ const NATIVE_TOOL_DEFS = [
   },
   {
     name: "photos_organize_by_month",
-    description: "Create one album per month ('أمين — yyyy-MM') and put that month's photos in it. No photo is deleted. Confirm with Mona first.",
-    input_schema: { type: "object", properties: {} },
+    description: "Create one album per month and put that month's photos in it. No photo is deleted. dateField chooses which date defines the month: 'captured' (original photo date) or 'added' (when the photo was added to THIS device — right for photos that arrived from WhatsApp/Telegram/backup with an old original date). ALWAYS ask Mona which date she wants before calling this. Albums are named 'أمين — yyyy-MM' (captured) or 'أمين (أُضيفت) — yyyy-MM' (added).",
+    input_schema: { type: "object", properties: { dateField: { type: "string", enum: ["captured", "added"] } }, required: ["dateField"] },
   },
   {
     name: "files_pick_folder",
@@ -586,9 +591,12 @@ const NATIVE_TOOL_DEFS = [
 const NATIVE_PROMPT_ADDON = `
 
 أنت داخل تطبيق آيفون أصلي، فتقدر ترتّب صور منى وملفاتها:
-- الصور: photos_summary (جرد)، photos_find_duplicates (كشف المكرر)، photos_delete (حذف — iOS بيعرض تأكيد للنظام قبل أي حذف)، photos_create_album، photos_organize_by_month (ألبوم لكل شهر بدون حذف).
+- الصور: photos_summary (جرد بالتاريخين)، photos_find_duplicates (كشف سريع للمطابق تمامًا بالبيانات الوصفية)، photos_find_similar (كشف عميق للمتشابه بصريًا من البكسلات نفسها، بنسبة تطابق %)، photos_delete (حذف — iOS بيعرض تأكيد للنظام قبل أي حذف)، photos_create_album، photos_organize_by_month (ألبوم لكل شهر بدون حذف).
 - الملفات: لازم files_pick_folder الأول (منى تختار مجلد واحد)، بعدها files_list، files_find_duplicates، files_organize_by_type (ترتيب حسب النوع بدون حذف).
-قواعد: قبل أي حذف صور اعرض على منى عدد المكرر واسألها توافق قبل ما تنادي photos_delete. قبل ترتيب الملفات أو الصور بألبومات اشرح باختصار وخد موافقتها. مفيش وصول لكل ملفات التليفون — بس الصور والمجلد اللي هي تختاره، ده حد iOS نفسه.`;
+قواعد مهمة:
+١) كشف المكرر: للتأكد من التشابه البصري الحقيقي استخدم photos_find_similar (بيقارن الصورة نفسها مش وقت التصوير)، واعرض لمنى نسبة التطابق % لكل مجموعة، وما تحذفش إلا بعد موافقتها الصريحة — الحذف لازم يكون مضمون ١٠٠٪.
+٢) الترتيب بالشهور: في تاريخين مختلفين — تاريخ التصوير الأصلي (captured) وتاريخ إضافة الصورة للتليفون ده (added). الصور اللي جت من واتساب/تليجرام/نسخة احتياطية تاريخ تصويرها قديم لكن اتضافت حديثًا. لازم تسأل منى: "أرتّب بتاريخ التصوير ولا بتاريخ إضافتها للجهاز؟" قبل ما تنادي photos_organize_by_month، وتبعت dateField حسب ردها. لو حبيت وريها الفرق من photos_summary (byMonthCaptured مقابل byMonthAdded) قبل ما تقرر.
+٣) قبل أي ترتيب ملفات أو ألبومات اشرح باختصار وخد موافقتها. مفيش وصول لكل ملفات التليفون — بس الصور والمجلد اللي هي تختاره، ده حد iOS نفسه.`;
 
 async function runNativeTool(name, input) {
   return await nativeCall(name, input || {});
