@@ -16,20 +16,52 @@ struct WebViewContainer: UIViewRepresentable {
 }
 
 @MainActor
-final class AminWeb: ObservableObject {
+final class AminWeb: NSObject, ObservableObject {
     let webView: WKWebView
+    private let refresh = UIRefreshControl()
+    private var lastLoad = Date()
 
-    init() {
+    override init() {
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
         cfg.websiteDataStore = .default() // localStorage بيفضل محفوظ بين الجلسات
         let wv = WKWebView(frame: .zero, configuration: cfg)
-        wv.scrollView.bounces = false
+        wv.scrollView.bounces = true // لازم true عشان السحب-للتحديث يشتغل
         wv.allowsBackForwardNavigationGestures = false
         webView = wv
+        super.init()
+
+        // سحب لتحت = تحديث (يتجاهل الكاش عشان يجيب آخر نسخة ويب).
+        refresh.addTarget(self, action: #selector(pulled), for: .valueChanged)
+        wv.scrollView.refreshControl = refresh
+
+        // كل ما التطبيق يترجع للواجهة، يعيد تحميل آخر نسخة أوتوماتيك — فأي
+        // تحديث ويب بيظهر من غير ما منى تعمل حاجة.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(becameActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+
         if let url = URL(string: AMIN_WEB_URL) {
             webView.load(URLRequest(url: url))
+        }
+    }
+
+    @objc private func pulled() {
+        lastLoad = Date()
+        webView.reloadFromOrigin()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.refresh.endRefreshing()
+        }
+    }
+
+    @objc private func becameActive() {
+        // نعيد التحميل بس لو التطبيق كان بعيد أكتر من ٢٠ ثانية — عشان تبديل
+        // سريع للتطبيقات ما يقطعش محادثة شغالة، لكن الرجوع بعد فترة يجيب
+        // آخر نسخة. (التاريخ محفوظ في localStorage فمفيش رسايل بتضيع.)
+        if Date().timeIntervalSince(lastLoad) > 20 {
+            lastLoad = Date()
+            webView.reloadFromOrigin()
         }
     }
 
