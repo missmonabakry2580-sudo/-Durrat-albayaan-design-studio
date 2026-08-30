@@ -20,16 +20,26 @@ final class AminWeb: NSObject, ObservableObject {
     let webView: WKWebView
     private let refresh = UIRefreshControl()
     private var lastLoad = Date()
+    // جسر تنظيم الصور والملفات — الشيء الوحيد اللي محتاج كود أصلي.
+    private let files: AminFiles
 
     override init() {
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
         cfg.websiteDataStore = .default() // localStorage بيفضل محفوظ بين الجلسات
+        // بنركّب جسر الملفات قبل إنشاء الـ WebView: أمين في الويب بينده
+        // window.webkit.messageHandlers.aminFiles.postMessage({action,args})
+        // وبيرجعله Promise بالنتيجة. (متغير محلي عشان ما نلمسش self قبل
+        // super.init، وبعدين نخزّنه في الخاصية.)
+        let filesHandler = AminFiles()
+        cfg.userContentController.addScriptMessageHandler(
+            filesHandler, contentWorld: .page, name: "aminFiles")
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.scrollView.bounces = true // لازم true عشان السحب-للتحديث يشتغل
         wv.allowsBackForwardNavigationGestures = false
         webView = wv
+        files = filesHandler
         super.init()
 
         // سحب لتحت = تحديث (يتجاهل الكاش عشان يجيب آخر نسخة ويب).

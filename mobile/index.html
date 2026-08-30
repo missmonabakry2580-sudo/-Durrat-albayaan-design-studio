@@ -416,7 +416,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
@@ -520,6 +520,78 @@ function runTool(name, input) {
     default:
       return { error: "unknown tool " + name };
   }
+}
+
+/* ---------- أدوات الجوال الأصلية (بس داخل تطبيق TestFlight) ----------
+   تنظيم الصور والملفات — الشيء الوحيد اللي محتاج كود أصلي (Swift) لأن
+   صندوق iOS الرملي بيمنع الويب منه تمامًا. الجسر بيتركّب في التطبيق
+   الأصلي كـ window.webkit.messageHandlers.aminFiles، فلو مش موجود يبقى
+   إحنا في المتصفح العادي والأدوات دي مبتظهرش لأمين أصلًا. */
+const IS_NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.aminFiles);
+
+function nativeCall(action, args) {
+  if (!IS_NATIVE) return Promise.reject(new Error("ده بيشتغل بس في تطبيق الآيفون الأصلي، مش في المتصفح."));
+  // WKScriptMessageHandlerWithReply بيرجّع Promise بالنتيجة أو بالخطأ.
+  return window.webkit.messageHandlers.aminFiles.postMessage({ action, args: args || {} });
+}
+
+const NATIVE_TOOL_DEFS = [
+  {
+    name: "photos_summary",
+    description: "Count Mona's photos and videos and how many photos per month (yyyy-MM). Ask for photo permission if needed.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "photos_find_duplicates",
+    description: "Find duplicate photos (same capture time and dimensions). Returns groups and how many extra copies exist. Read-only.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "photos_delete",
+    description: "Delete photos by their ids (from photos_find_duplicates). iOS shows Mona a system confirm dialog before anything is deleted. Only call after she agrees to remove duplicates.",
+    input_schema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } } }, required: ["ids"] },
+  },
+  {
+    name: "photos_create_album",
+    description: "Create a photo album named `name` and optionally add photos by `ids`.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, ids: { type: "array", items: { type: "string" } } }, required: ["name"] },
+  },
+  {
+    name: "photos_organize_by_month",
+    description: "Create one album per month ('أمين — yyyy-MM') and put that month's photos in it. No photo is deleted. Confirm with Mona first.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "files_pick_folder",
+    description: "Ask Mona to pick ONE folder to organize (iOS opens the Files picker). Must be called before files_list / files_find_duplicates / files_organize_by_type.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "files_list",
+    description: "List the picked folder's contents with type and size, and a count per file type. Read-only.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "files_find_duplicates",
+    description: "Find duplicate files in the picked folder by content hash (SHA-256), even if names differ. Read-only.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "files_organize_by_type",
+    description: "Move each file in the picked folder into a subfolder by kind (صور/فيديو/PDF/مستندات/جداول/…). Nothing is deleted; name clashes get a number. Confirm with Mona first.",
+    input_schema: { type: "object", properties: {} },
+  },
+];
+
+const NATIVE_PROMPT_ADDON = `
+
+أنت داخل تطبيق آيفون أصلي، فتقدر ترتّب صور منى وملفاتها:
+- الصور: photos_summary (جرد)، photos_find_duplicates (كشف المكرر)، photos_delete (حذف — iOS بيعرض تأكيد للنظام قبل أي حذف)، photos_create_album، photos_organize_by_month (ألبوم لكل شهر بدون حذف).
+- الملفات: لازم files_pick_folder الأول (منى تختار مجلد واحد)، بعدها files_list، files_find_duplicates، files_organize_by_type (ترتيب حسب النوع بدون حذف).
+قواعد: قبل أي حذف صور اعرض على منى عدد المكرر واسألها توافق قبل ما تنادي photos_delete. قبل ترتيب الملفات أو الصور بألبومات اشرح باختصار وخد موافقتها. مفيش وصول لكل ملفات التليفون — بس الصور والمجلد اللي هي تختاره، ده حد iOS نفسه.`;
+
+async function runNativeTool(name, input) {
+  return await nativeCall(name, input || {});
 }
 
 /* تذكيرات: بتتفحص كل ٢٠ ثانية والتطبيق مفتوح — قيد حقيقي في iOS للويب
@@ -714,11 +786,13 @@ async function callClaude(key, messages) {
       system: SYSTEM_PROMPT
         + (schoolEnabled() ? SCHOOL_PROMPT_ADDON : "")
         + (sheetsEnabled() ? SHEETS_PROMPT_ADDON : "")
-        + (codeEnabled() ? CODE_PROMPT_ADDON : ""),
+        + (codeEnabled() ? CODE_PROMPT_ADDON : "")
+        + (IS_NATIVE ? NATIVE_PROMPT_ADDON : ""),
       tools: TOOL_DEFS
         .concat(schoolEnabled() ? window.SchoolAdmin.TOOL_DEFS : [])
         .concat(sheetsEnabled() ? window.SchoolSheets.TOOL_DEFS : [])
-        .concat(codeEnabled() ? window.SchoolCode.TOOL_DEFS : []),
+        .concat(codeEnabled() ? window.SchoolCode.TOOL_DEFS : [])
+        .concat(IS_NATIVE ? NATIVE_TOOL_DEFS : []),
       messages,
     }),
   });
@@ -793,6 +867,9 @@ async function sendToAmin(text) {
             } else if (window.SchoolCode && window.SchoolCode.isCodeTool(block.name)) {
               // أدوات كود المنصة — فتح PR بتأكيد.
               out = await window.SchoolCode.runTool(block.name, block.input || {}, confirmSchoolWrite);
+            } else if (IS_NATIVE && NATIVE_TOOL_DEFS.some((t) => t.name === block.name)) {
+              // تنظيم الصور والملفات — بيتنفذ في كود آيفون الأصلي عبر الجسر.
+              out = await runNativeTool(block.name, block.input || {});
             } else {
               out = runTool(block.name, block.input || {});
             }
