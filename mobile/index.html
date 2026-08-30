@@ -212,7 +212,7 @@
     <label>مفتاح Anthropic (إجباري — ده عقل أمين) <span class="badge" id="anthropic-badge"></span></label>
     <input id="anthropic-key" type="password" placeholder="sk-ant-..." />
     <label>مفتاح ElevenLabs (اختياري — صوت أمين الحقيقي) <span class="badge" id="eleven-badge"></span></label>
-    <input id="eleven-key" type="password" placeholder="xi-..." />
+    <input id="eleven-key" type="text" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sk_... أو الكود" />
     <label>ElevenLabs Voice ID (اختياري — نفس اللي على اللابتوب)</label>
     <input id="voice-id" type="text" placeholder="Voice ID" />
 
@@ -416,7 +416,7 @@ function confirmSchoolWrite(summary) {
 }
 // يظهر في الإعدادات — بيتزود مع كل تحديث للتطبيق ده، عشان نعرف فورًا
 // إذا كان التليفون واخد آخر نسخة ولا لسه على نسخة مخزنة قديمة.
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
 /* ---------- الأدوات الحقيقية (بتتنفذ على التليفون نفسه) ---------- */
 const TOOL_DEFS = [
