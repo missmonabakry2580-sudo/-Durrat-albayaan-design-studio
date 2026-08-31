@@ -137,8 +137,16 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
 
     // MARK: - WKNavigationDelegate
 
+    // العلة الحقيقية اللي كسّرت browse_open بالكامل: كان هنا نداء
+    // presentIfNeeded() من جوّه didFinish/didCommit "زيادة أمان" — بس
+    // didCommit بيتنفّذ أثناء تحميل الصفحة فعليًا (البيانات لسه بتوصل).
+    // لو النافذة كانت لسه مش متعرّضة، presentIfNeeded() بيبني شاشة متصفح
+    // جديدة وبينقل نفس WKWebView الشغّال داخلها (view.addSubview) — ونقل
+    // WKWebView لواجهة تانية أثناء تحميل نشط بيقطع الاتصال فورًا، وده
+    // بالظبط سبب "The network connection was lost" اللي ظهر مع كل رابط
+    // من غير استثناء. عرض النافذة الوحيد الآمن هو اللي بيحصل من open()
+    // نفسه قبل ما التحميل يبدأ أصلًا — فمفيش داعي نكرره هنا.
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        presentIfNeeded() // لو العرض الأول فشل مؤقتًا، نضمن ظهور النافذة لمنى الآن.
         browserVC?.setURL(webView.url?.absoluteString ?? "")
         finishPendingOpen([
             "ok": true,
@@ -148,7 +156,6 @@ final class AminBrowser: NSObject, WKScriptMessageHandlerWithReply, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        presentIfNeeded()
         browserVC?.setURL(webView.url?.absoluteString ?? "")
     }
 
