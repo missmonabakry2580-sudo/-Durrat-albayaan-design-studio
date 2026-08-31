@@ -347,7 +347,18 @@ final class AminBrowserViewController: UIViewController {
         urlLabel.lineBreakMode = .byTruncatingMiddle
         urlLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let bar = UIStackView(arrangedSubviews: [closeBtn, backBtn, reloadBtn, urlLabel])
+        // رقم البناء ظاهر دايمًا هنا — عشان أي بلاغ عطل يبقى معروف بالظبط
+        // أي نسخة شغالة فعليًا على الجهاز، من غير لبس "هل التحديث فعلاً
+        // نزل ولا لسه". القيمة جايه من project.yml (CURRENT_PROJECT_VERSION)
+        // اللي بتتزود مع كل رفعة لتيست فلايت.
+        let buildLabel = UILabel()
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "؟"
+        buildLabel.text = "بناء \(build)"
+        buildLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        buildLabel.textColor = .tertiaryLabel
+        buildLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        let bar = UIStackView(arrangedSubviews: [closeBtn, backBtn, reloadBtn, urlLabel, buildLabel])
         bar.axis = .horizontal
         bar.spacing = 12
         bar.alignment = .center
