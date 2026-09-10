@@ -264,8 +264,26 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
 
     const jaw = { current: 0 };
     const sil = { current: 1 };
-    const blink = { value: 0, timer: 1 + Math.random() * 2, phase: "waiting" as "waiting" | "closing" | "opening" };
+    const blink = {
+      value: 0,
+      timer: 1 + Math.random() * 2,
+      phase: "waiting" as "waiting" | "closing" | "opening",
+      // A real blink is often a quick double. Tracking one pending repeat
+      // is the whole trick: a single, perfectly regular blink is one of
+      // the strongest "this is a computer" tells there is.
+      double: false,
+    };
     const gaze = { x: 0, y: 0, targetX: 0, targetY: 0, timer: 1 };
+    // Speech emphasis: the audio level with a fast attack and a slow
+    // release, so it spikes on a stressed syllable and eases off rather
+    // than tracking every wobble. This is what Mona's reference footage
+    // (Engineered Arts' Ameca) actually does that this avatar did not:
+    // almost none of its aliveness while talking is the mouth. It is the
+    // brows lifting on emphasis, the head punctuating, the eyes moving —
+    // all of it keyed off the same stress the voice is putting on the
+    // words. We already receive that signal 25x/second (audioLevelBus);
+    // it was only ever wired to the jaw.
+    const emphasis = { current: 0 };
     // This frame's smoothed value per expression blendshape (brows, mouth
     // shape — never blink/gaze/jaw/viseme, which stay owned by the logic
     // below). Persists across frames within this one mount so each morph
@@ -404,7 +422,19 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
         blink.value = Math.max(0, blink.value - dt / 0.11);
         if (blink.timer <= 0) {
           blink.phase = "waiting";
-          blink.timer = 2.5 + Math.random() * (isListening ? 2.2 : 3.5);
+          if (blink.double) {
+            // Second half of a double blink: back almost immediately.
+            blink.double = false;
+            blink.timer = 0.12;
+          } else {
+            // People blink markedly more while they talk and while they
+            // are being talked to; a flat idle rate reads as a mannequin
+            // staring. Roughly 2x the rate when speaking.
+            const base = isSpeaking ? 1.3 : isListening ? 2.5 : 2.9;
+            const spread = isSpeaking ? 1.6 : isListening ? 2.2 : 3.5;
+            blink.timer = base + Math.random() * spread;
+            blink.double = Math.random() < 0.28;
+          }
         }
       }
       setMorph(faceMeshes, "eyeBlinkLeft", blink.value);
@@ -412,15 +442,36 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       if (leftCornea) leftCornea.visible = blink.value < 0.6;
       if (rightCornea) rightCornea.visible = blink.value < 0.6;
 
-      // --- Eye saccades (real bones, small idle gaze shifts) ---
+      // --- Eye saccades (real bones) ---
+      // These were smooth glides over roughly a third of a second, which
+      // no eye has ever done: a real saccade is ballistic, ~40ms, and the
+      // time is spent FIXATED between them. That slow drift is a large
+      // part of why this face read as animation rather than as someone
+      // present — the reference footage's eyes snap and hold.
+      //
+      // While thinking, gaze also breaks away and wanders wider (looking
+      // "up and away" is what people do while composing an answer); while
+      // speaking or listening it stays near the viewer with small,
+      // frequent shifts, which is where eye contact actually lives.
       gaze.timer -= dt;
       if (gaze.timer <= 0) {
-        gaze.targetX = (Math.random() - 0.5) * (isThinking ? 0.35 : 0.55);
-        gaze.targetY = (Math.random() - 0.5) * 0.3;
-        gaze.timer = 1.4 + Math.random() * 2.4;
+        if (isThinking) {
+          gaze.targetX = (Math.random() - 0.5) * 0.7;
+          gaze.targetY = 0.18 + Math.random() * 0.3;
+          gaze.timer = 0.8 + Math.random() * 1.4;
+        } else {
+          // Mostly small shifts around the viewer, occasionally a bigger
+          // glance away — an unbroken stare is as unsettling as a drift.
+          const big = Math.random() < 0.22;
+          gaze.targetX = (Math.random() - 0.5) * (big ? 0.6 : 0.22);
+          gaze.targetY = (Math.random() - 0.5) * (big ? 0.32 : 0.14);
+          gaze.timer = (isSpeaking ? 0.45 : 0.7) + Math.random() * (big ? 1.6 : 1.1);
+        }
       }
-      gaze.x = lerp(gaze.x, gaze.targetX, 1 - Math.pow(0.001, dt));
-      gaze.y = lerp(gaze.y, gaze.targetY, 1 - Math.pow(0.001, dt));
+      // ~40ms to reach the new fixation instead of ~300ms of gliding.
+      const saccade = 1 - Math.pow(1e-22, dt);
+      gaze.x = lerp(gaze.x, gaze.targetX, saccade);
+      gaze.y = lerp(gaze.y, gaze.targetY, saccade);
       const eyeYaw = gaze.x * 0.3;
       const eyePitch = gaze.y * 0.2;
       if (leftEyeBone) {
@@ -434,14 +485,37 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
           .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(eyePitch, eyeYaw, 0)));
       }
 
-      // --- Head sway (real Head bone, kept under ~2 degrees) ---
+      // --- Speech emphasis envelope ---
+      // Fast attack (a stressed syllable should register immediately),
+      // slow release (so the face settles rather than flickering at
+      // syllable rate). Everything expressive below keys off this.
+      const rawLevel = isSpeaking ? getAudioLevel() : 0;
+      const emphasisTarget = Math.min(1, Math.sqrt(rawLevel) * 1.15);
+      emphasis.current =
+        emphasisTarget > emphasis.current
+          ? lerp(emphasis.current, emphasisTarget, 1 - Math.pow(1e-9, dt))
+          : lerp(emphasis.current, emphasisTarget, 1 - Math.pow(0.02, dt));
+
+      // --- Head (real Head bone) ---
+      // The idle sway stays as it was — two slow sines, under ~2 degrees.
+      // What is new is that the head now PUNCTUATES: a small chin-down
+      // nod on each stressed syllable, and a slight turn that follows the
+      // eyes so gaze and head don't disagree. Both are what a person does
+      // without noticing, and their absence is most of the "electronic"
+      // look Mona is pointing at in the reference footage.
       if (headBone) {
         const thinkTilt = isThinking ? 0.05 : 0;
         const swayY = Math.sin(t * 0.55) * 0.018 + Math.sin(t * 0.21 + 1) * 0.01;
         const swayX = Math.sin(t * 0.37 + 2) * 0.012;
+        // Chin down on emphasis (positive X pitches the head forward on
+        // this rig, same axis the arm-drop fix used).
+        const nod = emphasis.current * 0.035;
+        // Head follows gaze at about a fifth of the eyes' amplitude —
+        // enough to read as one movement, not enough to swing the face.
+        const follow = gaze.x * 0.12;
         headBone.quaternion
           .copy(headBaseQuat)
-          .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(swayX, swayY, thinkTilt)));
+          .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(swayX + nod, swayY + follow, thinkTilt)));
       }
 
       // --- Mouth: amplitude-reactive while speaking, closed otherwise ---
@@ -454,11 +528,25 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       // the opposite treatment for the same reason: real conversational
       // mouths barely reach a third of a full jaw drop. sqrt() keeps
       // quiet syllables visible without letting loud ones slam the cap.
-      const level = isSpeaking ? getAudioLevel() : 0;
-      const targetJaw = isSpeaking ? Math.min(1, Math.sqrt(level) * 1.1) * 0.3 : 0;
+      // WIDENED 0.30 -> 0.42, but only together with the noise gate below,
+      // which is what makes that safe. The 0.55 that once looked like a
+      // scream was not too high a PEAK — it was pinned near the top the
+      // whole time, because a flat sqrt() of a continuous loudness signal
+      // never comes back down between words. Gating the quiet third to
+      // zero restores the closures that separate one word from the next,
+      // and only real stressed syllables now reach the ceiling. Range
+      // where speech actually lives, instead of a permanent half-open
+      // mouth.
+      const gated = rawLevel <= 0.12 ? 0 : (rawLevel - 0.12) / 0.88;
+      const targetJaw = isSpeaking ? Math.min(1, Math.sqrt(gated) * 1.15) * 0.42 : 0;
       const targetSil = isSpeaking ? Math.max(0, 1 - targetJaw * 2.6) : 1;
-      jaw.current = lerp(jaw.current, targetJaw, 1 - Math.pow(0.0005, dt));
-      sil.current = lerp(sil.current, targetSil, 1 - Math.pow(0.0005, dt));
+      // Asymmetric, like a jaw: opens fast, closes a little slower, but
+      // both quick enough that a syllable is a distinct movement rather
+      // than a smear. The old symmetric damping blurred adjacent
+      // syllables into one continuous hover.
+      const jawDamp = targetJaw > jaw.current ? 1 - Math.pow(1e-7, dt) : 1 - Math.pow(1e-5, dt);
+      jaw.current = lerp(jaw.current, targetJaw, jawDamp);
+      sil.current = lerp(sil.current, targetSil, 1 - Math.pow(1e-5, dt));
       setMorph(faceMeshes, "jawOpen", jaw.current);
       setMorph(faceMeshes, "viseme_sil", sil.current);
       const wobble = 0.5 + 0.5 * Math.sin(t * 9);
@@ -475,11 +563,35 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
         STATE_EXPRESSIONS[currentState],
         isSpeaking,
       );
+      // Brows ride ON TOP of whatever the emotion/state expression is
+      // doing, added after its slow easing rather than mixed into it —
+      // an emphasis lift has to be as fast as the syllable that caused
+      // it, and the expression damping is deliberately slow. This is the
+      // single largest contributor to a talking face looking alive: in
+      // the reference footage the brows are never still while the mouth
+      // is moving, and here they were completely motionless.
+      const browLift = emphasis.current;
+      const speechBrows: Record<string, number> = isSpeaking
+        ? {
+            browInnerUp: browLift * 0.34,
+            browOuterUpLeft: browLift * 0.42,
+            // Very slightly less on the right: perfectly symmetric brows
+            // are another thing real faces never do.
+            browOuterUpRight: browLift * 0.36,
+          }
+        : {};
       for (const name of ALL_EXPRESSION_NAMES) {
         const target = expressionTargets.get(name) ?? 0;
         const current = lerp(expressionCurrent.get(name) ?? 0, target, 1 - Math.pow(0.0006, dt));
         expressionCurrent.set(name, current);
-        setMorph(faceMeshes, name, current);
+        setMorph(faceMeshes, name, Math.min(1, current + (speechBrows[name] ?? 0)));
+      }
+      // browInnerUp/browOuterUp* may not appear in ALL_EXPRESSION_NAMES if
+      // no emotion or state map happens to use them, in which case the
+      // loop above never writes them — apply those directly so the lift
+      // isn't silently dropped.
+      for (const [name, value] of Object.entries(speechBrows)) {
+        if (!ALL_EXPRESSION_NAMES.includes(name)) setMorph(faceMeshes, name, value);
       }
 
       renderer.render(scene, camera);

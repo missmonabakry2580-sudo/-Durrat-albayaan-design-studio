@@ -645,6 +645,21 @@ const DIACRITIZATION_SYSTEM_PROMPT: &str = "\
 /// reply Mona already saw in the chat log, only how it's read aloud. Callers
 /// must treat an `Err` as "speak the undiacritized text instead", never as a
 /// reason to stay silent.
+///
+/// DO NOT REMOVE THIS STEP FOR LATENCY. It is the most obvious thing to cut
+/// when chasing time-to-first-word: it is a whole extra round trip on the
+/// critical path, and the diacritics it adds inflate the text ElevenLabs
+/// then has to synthesize by around half again (measured on one real
+/// sentence in Mona's own voice: 99 -> 156 credits, 8.48s -> 10.4s of
+/// audio). That is a genuine cost and it was genuinely proposed.
+///
+/// It was settled by listening instead of arguing: on 2026-09-10 the same
+/// Arabic sentence was synthesized twice with her chosen voice, once plain
+/// and once with exactly the diacritics this function produces, and both
+/// were sent to her. Her verdict, unambiguous: "ملف (ب) افضل طبعا عشان
+/// المخارج فيه صحيحه" — the diacritized one, because the articulation is
+/// correct. She is the only person who can hear the difference, so her ear
+/// decides this, not a benchmark. The step stays.
 /// Diacritics roughly double a word's character count at most; 4x plus a
 /// fixed floor comfortably covers even very short inputs. Pure so the
 /// budget itself is unit-testable without a network call.
