@@ -1227,7 +1227,7 @@ pub async fn speak_text(
     // to the REST endpoint before giving up on ElevenLabs entirely avoids
     // a regression: something that worked over plain HTTPS shouldn't stop
     // working just because the WebSocket path had a bad day.
-    let audio = match elevenlabs::synthesize_streaming(
+    let (audio, visemes) = match elevenlabs::synthesize_streaming(
         &key,
         &text,
         voice_id.as_deref(),
@@ -1236,7 +1236,7 @@ pub async fn speak_text(
     )
     .await
     {
-        Ok(a) => a,
+        Ok(s) => (s.audio, s.visemes),
         Err(streaming_err) => {
             match elevenlabs::synthesize(
                 &key,
@@ -1247,7 +1247,10 @@ pub async fn speak_text(
             )
             .await
             {
-                Ok(a) => a,
+                // The REST fallback carries no character timings, so the
+                // avatar falls back to the loudness-driven mouth for this
+                // one reply rather than freezing — see ThreeDAvatar.
+                Ok(a) => (a, Vec::new()),
                 Err(e) => {
                     // Both ElevenLabs paths failed (bad key, quota,
                     // network) — fall back to the on-device voice rather
@@ -1270,6 +1273,10 @@ pub async fn speak_text(
     // real barge-in (see AminVoice.swift's SELF-HEARING note and
     // isLikelySelfEcho).
     voice::set_hands_free_speaking(Some(&text));
+    // The mouth-shape timeline goes out BEFORE speaking-started, so the
+    // avatar already has it in hand at the instant it starts counting
+    // playback time against it (see ThreeDAvatar's viseme track).
+    let _ = app.emit("voice://visemes", &visemes);
     let _ = app.emit("voice://speaking-started", text.clone());
     // Real-time mouth movement for whichever visual mode the frontend is
     // showing (see audio_level.rs) — decoded from the exact same MP3 bytes

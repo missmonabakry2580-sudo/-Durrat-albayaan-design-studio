@@ -430,6 +430,85 @@ fn close_message() -> serde_json::Value {
     serde_json::json!({ "text": "" })
 }
 
+/// One mouth shape, and the moment in the utterance it belongs at.
+/// `viseme` is an Oculus/ARKit viseme name that exists on Amin's rig
+/// (verified against amin_facial_rig.glb's own morphTargetDictionary:
+/// viseme_sil/PP/FF/TH/DD/kk/CH/SS/nn/RR/aa/E/ih/oh/ou — the full set).
+#[derive(Clone, serde::Serialize)]
+pub struct VisemeCue {
+    pub at_ms: u32,
+    pub viseme: &'static str,
+}
+
+/// Which mouth shape an Arabic character puts on the face.
+///
+/// Leans Egyptian, deliberately, because the voice reading it is Egyptian
+/// (see DEFAULT_VOICE_ID): ج is /g/ here, not /dʒ/, so it takes the
+/// back-of-tongue shape rather than the CH one; ث/ذ/ظ are sibilants in
+/// Egyptian speech rather than interdentals. Mapping them the Modern
+/// Standard way would put a visible tongue-between-teeth shape on sounds
+/// the voice is not making.
+///
+/// Returns None for characters that carry no mouth shape of their own
+/// (sukun, shadda, tatweel, Latin text, digits) — the previous shape
+/// simply holds through them, which is what a mouth actually does.
+fn viseme_for_arabic_char(c: char) -> Option<&'static str> {
+    Some(match c {
+        // --- Vowels: these are what actually shape the lips, and the
+        // reason the diacritization step matters visually as well as
+        // audibly. An undiacritized consonant string gives the mouth
+        // almost nothing to do.
+        'َ' | 'ً' | 'ا' | 'آ' | 'أ' | 'إ' | 'ٰ' | 'ى' | 'ة' => "viseme_aa",
+        'ِ' | 'ٍ' | 'ي' | 'ئ' => "viseme_ih",
+        'ُ' | 'ٌ' | 'و' | 'ؤ' => "viseme_ou",
+        // --- Consonants
+        'ب' | 'م' | 'پ' => "viseme_PP",
+        'ف' | 'ڤ' => "viseme_FF",
+        'س' | 'ص' | 'ز' | 'ث' | 'ذ' | 'ظ' => "viseme_SS",
+        'ش' => "viseme_CH",
+        'د' | 'ت' | 'ط' | 'ض' => "viseme_DD",
+        'ل' | 'ن' => "viseme_nn",
+        'ر' => "viseme_RR",
+        'ك' | 'ق' | 'غ' | 'خ' | 'ج' | 'ح' | 'ه' | 'ع' | 'ء' => "viseme_kk",
+        // --- Everything that closes the mouth
+        ' ' | '.' | '،' | ',' | '؟' | '?' | '!' | '\n' | ':' | '؛' | ';' => "viseme_sil",
+        _ => return None,
+    })
+}
+
+/// Turns ElevenLabs' character timings into a mouth-shape timeline.
+///
+/// THE POINT, in Mona's words: "حركات الشفايف و تفاعلها مع الكلمات كإنهم
+/// طالعين من الشفايف بالضبط" — the lips have to look like the words are
+/// coming out of them. What this replaces was never that and could never
+/// have been: the mouth was driven by a loudness envelope with a sine
+/// wobble between two shapes, so a loud "م" (lips shut) opened the jaw
+/// wide, and no shape ever corresponded to the sound being made. It read
+/// as a mouth flapping near some audio.
+///
+/// The timings are exact, not estimated: ElevenLabs' stream-input socket
+/// publishes `normalizedAlignment` alongside every audio chunk, giving a
+/// start time in milliseconds for every character it synthesized. We have
+/// been receiving that on every single reply and discarding it.
+pub fn visemes_from_alignment(chars: &[(char, u32)]) -> Vec<VisemeCue> {
+    let mut cues: Vec<VisemeCue> = Vec::new();
+    for &(c, at_ms) in chars {
+        let Some(viseme) = viseme_for_arabic_char(c) else { continue };
+        // Collapse repeats: holding one shape is one cue, not twenty.
+        if cues.last().map(|l| l.viseme) == Some(viseme) {
+            continue;
+        }
+        cues.push(VisemeCue { at_ms, viseme });
+    }
+    cues
+}
+
+/// Audio plus the mouth-shape timeline that goes with it.
+pub struct Synthesis {
+    pub audio: Vec<u8>,
+    pub visemes: Vec<VisemeCue>,
+}
+
 /// Streaming counterpart to `synthesize`: opens ElevenLabs' plain
 /// stream-input WebSocket (no agent, no server of ours to host — see
 /// `ELEVENLABS_WS_URL`'s doc comment) and returns the fully assembled
@@ -449,7 +528,7 @@ pub async fn synthesize_streaming(
     voice_id: Option<&str>,
     emotion: Option<&str>,
     pronunciation_dictionary: Option<&PronunciationDictionary>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Synthesis, String> {
     let voice_id = effective_voice_id(voice_id);
     let url = format!("{ELEVENLABS_WS_URL}/{voice_id}/stream-input?model_id={MODEL_ID}");
 
@@ -466,6 +545,19 @@ pub async fn synthesize_streaming(
     }
 
     let mut audio = Vec::new();
+    // Character timings, accumulated across chunks. ElevenLabs publishes a
+    // `normalizedAlignment` (and an `alignment`) with every audio message,
+    // automatically — no parameter to opt in, no extra request, no extra
+    // cost. Every reply Amin has ever spoken over this socket carried the
+    // exact millisecond each character was voiced at, and this loop threw
+    // it on the floor while the avatar's mouth guessed from loudness.
+    //
+    // `normalizedAlignment` is the one to use: its times are relative to
+    // the start of the utterance, which is what a mouth animating against
+    // playback needs. Times arrive per-chunk and restart at 0 each chunk,
+    // so they are offset by however much audio has already been described.
+    let mut timed_chars: Vec<(char, u32)> = Vec::new();
+    let mut chunk_offset_ms: u32 = 0;
     while let Some(msg) = read.next().await {
         let msg = msg.map_err(|e| format!("ElevenLabs stream error: {e}"))?;
         let Message::Text(payload) = msg else { continue };
@@ -477,6 +569,30 @@ pub async fn synthesize_streaming(
                 .map_err(|e| format!("couldn't decode ElevenLabs audio chunk: {e}"))?;
             audio.extend_from_slice(&bytes);
         }
+        let alignment = parsed
+            .get("normalizedAlignment")
+            .filter(|v| !v.is_null())
+            .or_else(|| parsed.get("alignment").filter(|v| !v.is_null()));
+        if let Some(a) = alignment {
+            let chars = a.get("chars").and_then(|v| v.as_array());
+            let starts = a.get("charStartTimesMs").and_then(|v| v.as_array());
+            let durations = a.get("charDurationsMs").and_then(|v| v.as_array());
+            if let (Some(chars), Some(starts)) = (chars, starts) {
+                let mut chunk_end = chunk_offset_ms;
+                for (i, ch) in chars.iter().enumerate() {
+                    let Some(text) = ch.as_str() else { continue };
+                    let Some(c) = text.chars().next() else { continue };
+                    let start = starts.get(i).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    let dur = durations
+                        .and_then(|d| d.get(i))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    timed_chars.push((c, chunk_offset_ms + start));
+                    chunk_end = chunk_end.max(chunk_offset_ms + start + dur);
+                }
+                chunk_offset_ms = chunk_end;
+            }
+        }
         if parsed.get("isFinal").and_then(|v| v.as_bool()) == Some(true) {
             break;
         }
@@ -485,7 +601,7 @@ pub async fn synthesize_streaming(
     if audio.is_empty() {
         return Err("ElevenLabs streaming returned no audio".to_string());
     }
-    Ok(audio)
+    Ok(Synthesis { visemes: visemes_from_alignment(&timed_chars), audio })
 }
 
 /// Plays MP3 bytes through the system's default output via macOS's
@@ -614,6 +730,92 @@ mod tests {
                     "{emotion}'s {key} out of range: {value}"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod viseme_tests {
+    use super::*;
+
+    /// Helper: lay characters out at 100ms each, like a slow reading.
+    fn timed(text: &str) -> Vec<(char, u32)> {
+        text.chars().enumerate().map(|(i, c)| (c, i as u32 * 100)).collect()
+    }
+
+    fn shapes(text: &str) -> Vec<&'static str> {
+        visemes_from_alignment(&timed(text)).into_iter().map(|c| c.viseme).collect()
+    }
+
+    #[test]
+    fn bilabials_close_the_lips() {
+        // The exact case the old loudness-driven mouth got backwards: "م"
+        // is loud AND lips-shut, so volume alone opened the jaw on it.
+        assert_eq!(shapes("مَ"), vec!["viseme_PP", "viseme_aa"]);
+        assert_eq!(shapes("بِ"), vec!["viseme_PP", "viseme_ih"]);
+    }
+
+    #[test]
+    fn short_vowels_drive_the_lip_shape() {
+        // Same consonant, three different mouths — which is the whole
+        // reason the diacritization step matters visually too.
+        assert_eq!(shapes("كَ"), vec!["viseme_kk", "viseme_aa"]);
+        assert_eq!(shapes("كِ"), vec!["viseme_kk", "viseme_ih"]);
+        assert_eq!(shapes("كُ"), vec!["viseme_kk", "viseme_ou"]);
+    }
+
+    #[test]
+    fn egyptian_jim_is_a_g_not_a_j() {
+        // The voice reading this is Egyptian (see DEFAULT_VOICE_ID), so ج
+        // is /g/. Mapping it the Modern Standard way would put a visible
+        // CH shape on a sound the voice never makes.
+        assert_eq!(shapes("جَ"), vec!["viseme_kk", "viseme_aa"]);
+        assert_eq!(shapes("شَ"), vec!["viseme_CH", "viseme_aa"]);
+    }
+
+    #[test]
+    fn punctuation_and_spaces_close_the_mouth() {
+        let s = shapes("مَ لَ");
+        assert_eq!(s, vec!["viseme_PP", "viseme_aa", "viseme_sil", "viseme_nn", "viseme_aa"]);
+        assert_eq!(shapes("مَ."), vec!["viseme_PP", "viseme_aa", "viseme_sil"]);
+    }
+
+    #[test]
+    fn shadda_and_sukun_hold_the_previous_shape() {
+        // Neither mark is a sound of its own; the mouth should not move
+        // for them. They produce no cue at all.
+        assert_eq!(shapes("بّ"), vec!["viseme_PP"]);
+        assert_eq!(shapes("بْ"), vec!["viseme_PP"]);
+    }
+
+    #[test]
+    fn latin_and_digits_are_skipped_rather_than_guessed() {
+        assert!(shapes("PDF").is_empty());
+        assert!(shapes("123").is_empty());
+    }
+
+    #[test]
+    fn repeated_shapes_collapse_into_one_hold() {
+        // "بم" is two different letters that share one mouth shape — the
+        // lips stay shut across both rather than re-closing.
+        assert_eq!(shapes("بم"), vec!["viseme_PP"]);
+    }
+
+    #[test]
+    fn timings_are_carried_through_untouched() {
+        let cues = visemes_from_alignment(&timed("مَ لَ"));
+        assert_eq!(cues[0].at_ms, 0);
+        assert_eq!(cues[1].at_ms, 100);
+        assert_eq!(cues[2].at_ms, 200);
+    }
+
+    #[test]
+    fn a_real_sentence_produces_a_usable_track() {
+        let cues = visemes_from_alignment(&timed("صَبَاح الْخَيْر يَا مُنَى"));
+        assert!(cues.len() > 8, "expected a dense track, got {}", cues.len());
+        // Strictly non-decreasing in time — a mouth cannot go backwards.
+        for w in cues.windows(2) {
+            assert!(w[1].at_ms >= w[0].at_ms);
         }
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getAudioLevel } from "../../lib/visual/audioLevelBus";
+import { currentViseme, hasVisemeTrack } from "../../lib/visual/visemeTrack";
 import type { AminState } from "./types";
 
 interface ThreeDAvatarProps {
@@ -132,6 +133,61 @@ const ALL_EXPRESSION_NAMES = [
  * animation for the duration of the utterance; brow/eye/cheek expression
  * keeps running underneath the whole time, so "happy while talking" still
  * reads in the eyes and brows, just not fighting over the mouth shape. */
+/** Every mouth shape this rig can make, confirmed against
+ * public/models/amin_facial_rig.glb's own morphTargetDictionary rather
+ * than assumed from the Oculus spec — the full set is present on both the
+ * face mesh and the lower teeth, which is what lets the teeth follow the
+ * lips instead of sitting still behind them. `viseme_sil` is deliberately
+ * NOT in this list: it is the resting shape, driven separately. */
+const VISEME_NAMES = [
+  "viseme_PP",
+  "viseme_FF",
+  "viseme_TH",
+  "viseme_DD",
+  "viseme_kk",
+  "viseme_CH",
+  "viseme_SS",
+  "viseme_nn",
+  "viseme_RR",
+  "viseme_aa",
+  "viseme_E",
+  "viseme_ih",
+  "viseme_oh",
+  "viseme_ou",
+] as const;
+
+/** How far the jaw is allowed to drop while each shape is on the face.
+ *
+ * REAL DEFECT this fixes, caught by photographing every shape rather than
+ * trusting the design: with the jaw still driven purely by loudness, a
+ * loud "م" — lips pressed shut — rendered with the mouth hanging open. The
+ * viseme was correct and the jaw was contradicting it, which is the very
+ * bug the viseme track was built to end. Loudness may modulate the jaw
+ * WITHIN what a shape allows; it may not overrule the shape. A bilabial
+ * closes the lips no matter how loudly it is said.
+ *
+ * Values are articulatory, not tuned by taste: bilabials and labiodentals
+ * close, sibilants and alveolars sit nearly closed, back consonants and
+ * close vowels open a little, rounded vowels a little more, and only the
+ * open vowel "aa" gets the full range. */
+const VISEME_JAW_CEILING: Record<string, number> = {
+  viseme_sil: 0,
+  viseme_PP: 0,
+  viseme_FF: 0.08,
+  viseme_nn: 0.12,
+  viseme_SS: 0.14,
+  viseme_TH: 0.16,
+  viseme_DD: 0.18,
+  viseme_CH: 0.2,
+  viseme_RR: 0.24,
+  viseme_ih: 0.24,
+  viseme_E: 0.32,
+  viseme_kk: 0.34,
+  viseme_ou: 0.36,
+  viseme_oh: 0.55,
+  viseme_aa: 1,
+};
+
 const MOUTH_SHAPE_NAMES = new Set([
   "mouthSmileLeft",
   "mouthSmileRight",
@@ -289,6 +345,9 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
     // below). Persists across frames within this one mount so each morph
     // eases toward its target instead of snapping.
     const expressionCurrent = new Map<string, number>(ALL_EXPRESSION_NAMES.map((name) => [name, 0]));
+    // This frame's smoothed value per viseme, so each mouth shape eases in
+    // and out instead of snapping on the frame its letter starts.
+    const visemeCurrent = new Map<string, number>(VISEME_NAMES.map((name) => [name, 0]));
     const clock = new THREE.Clock();
 
     function resize() {
@@ -538,8 +597,18 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       // where speech actually lives, instead of a permanent half-open
       // mouth.
       const gated = rawLevel <= 0.12 ? 0 : (rawLevel - 0.12) / 0.88;
-      const targetJaw = isSpeaking ? Math.min(1, Math.sqrt(gated) * 1.15) * 0.42 : 0;
-      const targetSil = isSpeaking ? Math.max(0, 1 - targetJaw * 2.6) : 1;
+      // Loudness still drives the JAW — how far the mouth opens really is
+      // a function of how much sound is coming out — but it no longer
+      // decides the SHAPE. That comes from the viseme track below.
+      const loudnessJaw = isSpeaking ? Math.min(1, Math.sqrt(gated) * 1.15) * 0.42 : 0;
+      // The shape currently on the face caps how far the jaw may drop —
+      // see VISEME_JAW_CEILING. Without a track (the REST fallback path)
+      // there is no shape to respect, so loudness has the jaw to itself.
+      const activeCue = currentViseme();
+      const jawCeiling =
+        hasVisemeTrack() && activeCue ? (VISEME_JAW_CEILING[activeCue.viseme] ?? 0.42) : 1;
+      const targetJaw = loudnessJaw * jawCeiling;
+      const targetSil = isSpeaking && !hasVisemeTrack() ? Math.max(0, 1 - targetJaw * 2.6) : 0;
       // Asymmetric, like a jaw: opens fast, closes a little slower, but
       // both quick enough that a syllable is a distinct movement rather
       // than a smear. The old symmetric damping blurred adjacent
@@ -548,10 +617,45 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       jaw.current = lerp(jaw.current, targetJaw, jawDamp);
       sil.current = lerp(sil.current, targetSil, 1 - Math.pow(1e-5, dt));
       setMorph(faceMeshes, "jawOpen", jaw.current);
-      setMorph(faceMeshes, "viseme_sil", sil.current);
-      const wobble = 0.5 + 0.5 * Math.sin(t * 9);
-      setMorph(faceMeshes, "viseme_aa", jaw.current * wobble * 0.6);
-      setMorph(faceMeshes, "viseme_oh", jaw.current * (1 - wobble) * 0.5);
+
+      // --- Mouth SHAPE: the actual letters being spoken ---
+      // What was here before was a sine wobble crossfading viseme_aa and
+      // viseme_oh in time with the volume. It had no relationship to the
+      // words at all: a loud "م", which is lips pressed shut, produced a
+      // wide-open "aa" — the mouth was flapping near some audio rather
+      // than forming speech. Mona's brief was that the lips should look
+      // like the words are coming out of them, and that is not reachable
+      // from a loudness signal, however it is tuned.
+      //
+      // This rig carries the full Oculus viseme set (verified against the
+      // .glb's own morphTargetDictionary: sil/PP/FF/TH/DD/kk/CH/SS/nn/RR/
+      // aa/E/ih/oh/ou), and ElevenLabs hands us the exact millisecond
+      // every character is voiced at. So each shape now goes on the face
+      // when its letter is actually said.
+      const active = activeCue;
+      for (const name of VISEME_NAMES) {
+        // Ease in over the first third of the hold and back out over the
+        // last third, so consecutive shapes flow into each other. Snapping
+        // between them reads as a puppet.
+        let target = 0;
+        if (active && name === active.viseme && isSpeaking) {
+          const p = active.progress;
+          target = p < 0.33 ? p / 0.33 : p > 0.72 ? Math.max(0, (1 - p) / 0.28) : 1;
+        }
+        const cur = visemeCurrent.get(name) ?? 0;
+        // Fast, but not instant — roughly a 45ms move, which is about how
+        // quickly a real articulator gets to its target.
+        visemeCurrent.set(name, lerp(cur, target, 1 - Math.pow(1e-14, dt)));
+        setMorph(faceMeshes, name, visemeCurrent.get(name) ?? 0);
+      }
+      // Silence shape only when there is no real track to follow (the REST
+      // fallback path carries no timings — see commands::speak_text).
+      if (!hasVisemeTrack()) {
+        setMorph(faceMeshes, "viseme_sil", sil.current);
+        const wobble = 0.5 + 0.5 * Math.sin(t * 9);
+        setMorph(faceMeshes, "viseme_aa", jaw.current * wobble * 0.6);
+        setMorph(faceMeshes, "viseme_oh", jaw.current * (1 - wobble) * 0.5);
+      }
 
       // --- Facial expression: emotion + cognitive state, on real brow/
       // mouth-shape blendshapes (see EMOTION_EXPRESSIONS/STATE_EXPRESSIONS

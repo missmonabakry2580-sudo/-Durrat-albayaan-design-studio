@@ -7,6 +7,7 @@ import { Splash } from "./components/splash/Splash";
 import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
 import { resetAudioLevel, setAudioLevel } from "./lib/visual/audioLevelBus";
+import { clearVisemeTrack, setVisemeTrack, startVisemeTrack, type VisemeCue } from "./lib/visual/visemeTrack";
 import { speakViaSimli } from "./lib/simli/simliSession";
 import { getStoredVisualMode, setStoredVisualMode, type VisualMode } from "./lib/visual/visualMode";
 import {
@@ -449,14 +450,23 @@ function App() {
       // that starts playback (commands::speak_text). Nothing listened to
       // this event before 0.2.41, which is why the avatar's mouth was
       // driven by a guess made ~30 seconds too early — see speak().
+      // The mouth-shape timeline for this reply, sent just before playback
+      // begins (see commands::speak_text). Empty on the REST fallback path,
+      // which carries no character timings — the avatar then falls back to
+      // its loudness-driven mouth rather than freezing.
+      listen<VisemeCue[]>("voice://visemes", (e) => setVisemeTrack(e.payload ?? [])),
       listen("voice://speaking-started", () => {
         clearSpeakWatchdog();
+        // Zero point for every timestamp in the track: the instant audio
+        // is actually audible, not when the text arrived.
+        startVisemeTrack();
         setAminState("speaking");
       }),
       listen("voice://speaking-finished", () => {
         clearSpeakWatchdog();
         setAminState((s) => (s === "speaking" || s === "thinking" ? (handsFreeEnabled ? "armed" : "idle") : s));
         resetAudioLevel();
+        clearVisemeTrack();
       }),
       // Real-time loudness of the audio Mona is actually hearing (see
       // src-tauri/src/audio_level.rs) — drives ThreeDAvatar's mouth via
