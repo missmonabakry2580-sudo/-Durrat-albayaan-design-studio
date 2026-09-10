@@ -547,6 +547,25 @@ private final class HandsFreeListener {
     private let voiceBuffer = RollingPCMBuffer()
     private var voiceResampler: AudioResampler?
 
+    /// REAL BUG found 2026-09-10: Mona re-enrolled her voiceprint on a real
+    /// Mac and verification still scored ~0.013 (effectively no similarity
+    /// at all, not just "below an unmeasured threshold") on a phrase
+    /// Developer Mode confirmed was transcribed correctly — recognition
+    /// worked, the identity check didn't. Root cause: every `verifyWithScore`
+    /// call site used to read `voiceBuffer.snapshot()` live, at the moment
+    /// verification runs — which is up to `silenceTimeout` (1.2s) *after*
+    /// she stopped talking, because that's how long `runRecognition` waits
+    /// before treating a partial as final (see its own REAL BUG comment).
+    /// `voiceBuffer` is only a 3-second ring, so for anything but a long
+    /// utterance, that silence tail ate a meaningful chunk of the window —
+    /// the embedding was computed on a buffer that was partly or mostly
+    /// trailing silence instead of her voice, nothing like the continuous
+    /// speech her enrollment recording was. This snapshot is refreshed on
+    /// every partial inside `runRecognition` instead (see there), so it
+    /// always holds the buffer from the moment speech was last actually
+    /// heard, not from whenever the silence timer happens to fire afterward.
+    private var lastUtteranceVoiceSnapshot: [Float] = []
+
     private enum Mode: Equatable { case passive, active }
 
     /// REAL BUG found 2026-08-28, minutes after hands-free first worked on
@@ -807,7 +826,7 @@ private final class HandsFreeListener {
                     // own words back to himself. Verify it's actually
                     // Mona's voice before treating it as a barge-in; a
                     // mismatch is discarded exactly like an echo.
-                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.lastUtteranceVoiceSnapshot)
                     if result.matched {
                         self.verifiedModeLastCommandAt = Date()
                         self.emit(9, text)
@@ -836,7 +855,7 @@ private final class HandsFreeListener {
                 self.runVerifiedListening(recognizer: recognizer)
                 return
             }
-            let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+            let result = VoicePrintEngine.shared.verifyWithScore(samples: self.lastUtteranceVoiceSnapshot)
             if result.matched {
                 self.verifiedModeLastCommandAt = Date()
                 self.emit(1, trimmed)
@@ -899,7 +918,7 @@ private final class HandsFreeListener {
                 // runVerifiedListening's comment for the self-conversation
                 // loop an ungated barge-in caused on a real Mac.
                 if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.lastUtteranceVoiceSnapshot)
                     if result.matched {
                         self.emit(9, text)
                         self.openActiveSession(recognizer: recognizer)
@@ -911,7 +930,7 @@ private final class HandsFreeListener {
                 return
             }
             if self.heard(self.wakePhrase, in: text) {
-                let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                let result = VoicePrintEngine.shared.verifyWithScore(samples: self.lastUtteranceVoiceSnapshot)
                 if result.matched {
                     self.openActiveSession(recognizer: recognizer)
                     return
@@ -975,7 +994,7 @@ private final class HandsFreeListener {
                 // see the comment there for the self-conversation loop an
                 // ungated barge-in caused on a real Mac.
                 if isFinal, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.voiceBuffer.snapshot())
+                    let result = VoicePrintEngine.shared.verifyWithScore(samples: self.lastUtteranceVoiceSnapshot)
                     if result.matched {
                         self.emit(9, text)
                     } else {
@@ -1077,6 +1096,12 @@ private final class HandsFreeListener {
             guard let self = self, !self.stopped, self.currentTask === task, !finished else { return }
             if let result = result {
                 lastPartialText = result.bestTranscription.formattedString
+                // See lastUtteranceVoiceSnapshot's comment: captured here,
+                // on every partial, so it reflects the buffer from when she
+                // was actually still talking — not a live read taken by
+                // fireFinal up to silenceTimeout later, by which point the
+                // 3-second ring may hold mostly trailing silence.
+                self.lastUtteranceVoiceSnapshot = self.voiceBuffer.snapshot()
                 if result.isFinal {
                     fireFinal(lastPartialText)
                 } else {
