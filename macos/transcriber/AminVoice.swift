@@ -582,21 +582,75 @@ private final class HandsFreeListener {
     /// ends lets `isLikelySelfEcho` keep catching exactly that tail.
     private var recentlySpokenText: String?
     private var recentlySpokenClearedAt: Date?
-    /// Widened 3.0 -> 5.0 on 2026-09-10: this used to be one of two
-    /// defences (the voiceprint check was the other, and it caught whatever
-    /// slipped past the grace window). It is now the only one — see
-    /// `aminIsAudible` — so it gets real margin: recognition of Amin's own
-    /// tail can finalise up to `silenceTimeout` after his last audible
-    /// word, and the ElevenLabs path plays through a separate `afplay`
-    /// process whose finish notification isn't instant either.
-    private let echoGracePeriod: TimeInterval = 5.0
+    /// 3.0 -> 5.0 -> 1.5. The 5.0 widening was compensating for something
+    /// this class was doing wrong rather than fixing it: the recognition
+    /// task that ran all through Amin's reply is still holding a
+    /// transcript of Amin's own voice when playback ends, so the window
+    /// had to stay open long enough to catch that buffer finalising. It
+    /// no longer has to, because that buffer is now thrown away outright
+    /// the instant playback ends (`discardEchoAndRearm`) instead of being
+    /// judged after the fact.
+    ///
+    /// What 5.0 cost Mona, and why it had to come down: `aminIsAudible`
+    /// discards EVERYTHING while this window is open. Five seconds of
+    /// deafness starting the moment Amin stops talking is precisely when a
+    /// person answers — so her reply, the most likely utterance in the
+    /// whole session, was the one guaranteed to be thrown away. 1.5s now
+    /// covers only what it must: the gap between `afplay` exiting and the
+    /// last audio actually leaving the speaker, plus the hop to the main
+    /// queue that re-arms recognition.
+    private let echoGracePeriod: TimeInterval = 1.5
 
     func setSpeakingText(_ text: String?) {
+        let wasSpeaking = currentlySpeakingText != nil
         if let ending = currentlySpeakingText, text == nil || text?.isEmpty == true {
             recentlySpokenText = ending
             recentlySpokenClearedAt = Date()
         }
         currentlySpeakingText = (text?.isEmpty == false) ? text : nil
+        if wasSpeaking && currentlySpeakingText == nil {
+            discardEchoAndRearm()
+        }
+    }
+
+    /// Playback just ended. The live recognition task has had Amin's own
+    /// voice in its ear for the entire reply, so whatever it finalises
+    /// next is a transcript of Amin, not of Mona — and every self-
+    /// conversation loop this file has hit came from trying to *judge*
+    /// that transcript (is this an echo or a real interruption?) instead
+    /// of refusing to accept it. That judgement has failed twice.
+    ///
+    /// So stop producing the thing that has to be judged: abandon the task
+    /// holding the contaminated buffer and start a clean one. Nothing it
+    /// heard during playback can reach `onUpdate` afterwards — the
+    /// `currentTask === task` guard in `runRecognition` sees a different
+    /// task and drops it. Everything the fresh task hears is audio that
+    /// arrived after Amin stopped, which is the only audio that could be
+    /// Mona.
+    ///
+    /// This is also what lets `echoGracePeriod` come back down from the
+    /// five seconds of total deafness that made answering Amin the moment
+    /// he finished — the normal thing to do — impossible.
+    private func discardEchoAndRearm() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.stopped else { return }
+            guard let recognizer = self.recognizer, recognizer.isAvailable else { return }
+            self.currentTask?.cancel()
+            self.currentTask = nil
+            self.currentRequest?.endAudio()
+            self.currentRequest = nil
+            // Same phase-preserving re-arm as runRecognition's error
+            // branch, and for the same reason recorded there: re-arming
+            // the wrong phase would silently downgrade verified listening
+            // to "anyone in earshot commands Amin".
+            if self.mode == .passive {
+                self.armPassive(recognizer: recognizer)
+            } else if VoicePrintEngine.shared.hasEnrolledSpeaker() {
+                self.runVerifiedListening(recognizer: recognizer)
+            } else {
+                self.listenForCommand(recognizer: recognizer)
+            }
+        }
     }
 
     init(wakePhrase: String, closePhrase: String, callback: @escaping AminVoiceCallback) {
