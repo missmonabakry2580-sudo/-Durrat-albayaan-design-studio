@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getAudioLevel } from "../../lib/visual/audioLevelBus";
 import { currentViseme, hasVisemeTrack } from "../../lib/visual/visemeTrack";
+import { attention } from "../../lib/visual/attentionBus";
 import type { AminState } from "./types";
 
 interface ThreeDAvatarProps {
@@ -330,6 +331,10 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       double: false,
     };
     const gaze = { x: 0, y: 0, targetX: 0, targetY: 0, timer: 1 };
+    // Last frame's attention value. The gaze block runs before this
+    // frame's is computed, and one frame of lag on "is she talking" is
+    // imperceptible — far better than reordering the whole loop.
+    const attentionRef = { current: 0 };
     // Speech emphasis: the audio level with a fast attack and a slow
     // release, so it spikes on a stressed syllable and eases off rather
     // than tracking every wobble. This is what Mona's reference footage
@@ -340,6 +345,10 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
     // words. We already receive that signal 25x/second (audioLevelBus);
     // it was only ever wired to the jaw.
     const emphasis = { current: 0 };
+    // A listener's nod — the small "go on, I'm with you" dip of the head
+    // people make while someone else is mid-sentence. Runs only while Mona
+    // is actually talking (see attentionBus) and never while Amin is.
+    const backchannel = { value: 0, timer: 1.5 + Math.random() };
     // This frame's smoothed value per expression blendshape (brows, mouth
     // shape — never blink/gaze/jaw/viseme, which stay owned by the logic
     // below). Persists across frames within this one mount so each morph
@@ -521,9 +530,14 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
         } else {
           // Mostly small shifts around the viewer, occasionally a bigger
           // glance away — an unbroken stare is as unsettling as a drift.
-          const big = Math.random() < 0.22;
-          gaze.targetX = (Math.random() - 0.5) * (big ? 0.6 : 0.22);
-          gaze.targetY = (Math.random() - 0.5) * (big ? 0.32 : 0.14);
+          // While Mona is mid-sentence the glances away are suppressed and
+          // the shifts shrink: looking at someone is how a face says it is
+          // listening, and looking around is how it says it is not.
+          const listeningNow = attentionRef.current > 0.35;
+          const big = !listeningNow && Math.random() < 0.22;
+          const spread = listeningNow ? 0.1 : big ? 0.6 : 0.22;
+          gaze.targetX = (Math.random() - 0.5) * spread;
+          gaze.targetY = (Math.random() - 0.5) * (listeningNow ? 0.07 : big ? 0.32 : 0.14);
           gaze.timer = (isSpeaking ? 0.45 : 0.7) + Math.random() * (big ? 1.6 : 1.1);
         }
       }
@@ -555,6 +569,31 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
           ? lerp(emphasis.current, emphasisTarget, 1 - Math.pow(1e-9, dt))
           : lerp(emphasis.current, emphasisTarget, 1 - Math.pow(0.02, dt));
 
+      // --- Attention: Mona is mid-sentence ---
+      // Decays over ~1.5s of silence, so the face settles when she pauses
+      // instead of flipping between two poses. Only meaningful while Amin
+      // is listening; his own speech clears it.
+      const attn = isListening ? attention() : 0;
+      attentionRef.current = attn;
+
+      // Backchannel nod: a small dip of the head every couple of seconds
+      // while she is actually saying something. This is the single most
+      // recognisable thing a listening face does, and its absence is a
+      // large part of why Amin read as a screen rather than someone
+      // paying attention.
+      if (attn > 0.35) {
+        backchannel.timer -= dt;
+        if (backchannel.timer <= 0) {
+          backchannel.value = 1;
+          backchannel.timer = 1.8 + Math.random() * 1.6;
+        }
+      } else {
+        backchannel.timer = Math.min(backchannel.timer, 0.9);
+      }
+      // One dip, ~0.4s, then back.
+      backchannel.value = Math.max(0, backchannel.value - dt / 0.4);
+      const nodDip = Math.sin(backchannel.value * Math.PI) * 0.03 * attn;
+
       // --- Head (real Head bone) ---
       // The idle sway stays as it was — two slow sines, under ~2 degrees.
       // What is new is that the head now PUNCTUATES: a small chin-down
@@ -568,7 +607,7 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
         const swayX = Math.sin(t * 0.37 + 2) * 0.012;
         // Chin down on emphasis (positive X pitches the head forward on
         // this rig, same axis the arm-drop fix used).
-        const nod = emphasis.current * 0.035;
+        const nod = emphasis.current * 0.035 + nodDip;
         // Head follows gaze at about a fifth of the eyes' amplitude —
         // enough to read as one movement, not enough to swing the face.
         const follow = gaze.x * 0.12;
@@ -683,7 +722,18 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
             // are another thing real faces never do.
             browOuterUpRight: browLift * 0.36,
           }
-        : {};
+        : attn > 0
+          ? {
+              // Listening: an open, attentive brow that lifts while she is
+              // actually speaking and settles when she stops. Much smaller
+              // than the speech lift — a listener's face is interested,
+              // not startled, and this rig bares the whites of the eyes
+              // past a low threshold (see STATE_EXPRESSIONS' armed note).
+              browInnerUp: attn * 0.22,
+              browOuterUpLeft: attn * 0.16,
+              browOuterUpRight: attn * 0.13,
+            }
+          : {};
       for (const name of ALL_EXPRESSION_NAMES) {
         const target = expressionTargets.get(name) ?? 0;
         const current = lerp(expressionCurrent.get(name) ?? 0, target, 1 - Math.pow(0.0006, dt));

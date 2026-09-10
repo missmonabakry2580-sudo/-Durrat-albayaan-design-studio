@@ -8,6 +8,7 @@ import { CREATOR_ATTRIBUTION_AR, CREATOR_ATTRIBUTION_EN } from "./lib/branding";
 import { checkForUpdate, installUpdateAndRestart } from "./lib/updater";
 import { resetAudioLevel, setAudioLevel } from "./lib/visual/audioLevelBus";
 import { clearVisemeTrack, setVisemeTrack, startVisemeTrack, type VisemeCue } from "./lib/visual/visemeTrack";
+import { clearAttention, markHeardSpeech } from "./lib/visual/attentionBus";
 import { speakViaSimli } from "./lib/simli/simliSession";
 import { getStoredVisualMode, setStoredVisualMode, type VisualMode } from "./lib/visual/visualMode";
 import {
@@ -390,6 +391,9 @@ function App() {
     if (!inTauri) return;
     const unlistenPromises = [
       listen<string>("voice://partial", (e) => {
+        // She is mid-sentence. Keeps Amin's face engaged while she talks
+        // rather than only while he does — see attentionBus.
+        markHeardSpeech();
         setAgentInput(e.payload);
         setHandsFreeLastPartial(e.payload);
       }),
@@ -460,6 +464,8 @@ function App() {
         // Zero point for every timestamp in the track: the instant audio
         // is actually audible, not when the text arrived.
         startVisemeTrack();
+        // His turn now; stop reacting to hers.
+        clearAttention();
         setAminState("speaking");
       }),
       listen("voice://speaking-finished", () => {
