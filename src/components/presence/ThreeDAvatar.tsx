@@ -55,6 +55,56 @@ type ExpressionTargets = Record<string, number>;
  * glance here; these values are calibrated against actual screenshots of
  * this model, not a generic assumption about what "0.6" should look
  * like. */
+/** How fast each emotion arrives on the face, in seconds to essentially
+ * complete.
+ *
+ * From Mona's Engineered Arts reference (an 11-minute Ameca compilation,
+ * fetched from her Drive): its signature moment is a jump from a neutral
+ * face to full shock — eyes wide, brows up, jaw dropped, head back —
+ * inside a couple of frames, which then HOLDS and relaxes slowly. Every
+ * expression here used to arrive at one uniform, leisurely rate (a flat
+ * ~400ms crossfade for all eight), and an emotion that fades in gently is
+ * not that emotion. A slow surprise is not surprise; it reads as the face
+ * drifting.
+ *
+ * So the fast, reactive emotions snap and the settled ones ease. Decay is
+ * always slower than onset, which is how real expressions behave: they
+ * arrive suddenly and leave gradually. */
+const EMOTION_ONSET_SECONDS: Record<string, number> = {
+  excited: 0.11,
+  concerned: 0.15,
+  apologetic: 0.3,
+  happy: 0.22,
+  playful: 0.18,
+  serious: 0.25,
+  calm: 0.6,
+  neutral: 0.5,
+};
+const EMOTION_DECAY_SECONDS = 0.75;
+
+/** The parts of an emotion that are not blendshapes: how far the jaw
+ * drops and what the head does. Ameca's shock is not a brow pose — the
+ * jaw falls open and the head pulls back at the same instant, and it is
+ * the coordination that sells it. This avatar's emotions previously lived
+ * entirely in the brows and lip corners, so even a correct expression had
+ * no body behind it.
+ *
+ * `jaw` applies only when Amin is NOT speaking; while he talks the mouth
+ * belongs to the viseme track (see VISEME_JAW_CEILING) and an emotion
+ * must not fight it. `pitch` is head rotation in radians — negative pulls
+ * the chin up and back, positive dips it. `tilt` is the sideways cock of
+ * the head that reads as curiosity or sympathy. */
+const EMOTION_POSTURE: Record<string, { jaw?: number; pitch?: number; tilt?: number }> = {
+  excited: { jaw: 0.3, pitch: -0.05 },
+  concerned: { jaw: 0.05, pitch: 0.03, tilt: 0.05 },
+  apologetic: { pitch: 0.06, tilt: 0.07 },
+  happy: { jaw: 0.12, pitch: -0.02 },
+  playful: { jaw: 0.08, tilt: -0.06 },
+  serious: { pitch: 0.02 },
+  calm: {},
+  neutral: {},
+};
+
 const EMOTION_EXPRESSIONS: Record<string, ExpressionTargets> = {
   happy: { mouthSmileLeft: 0.9, mouthSmileRight: 0.9, cheekSquintLeft: 0.6, cheekSquintRight: 0.6 },
   excited: {
@@ -349,6 +399,10 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
     // people make while someone else is mid-sentence. Runs only while Mona
     // is actually talking (see attentionBus) and never while Amin is.
     const backchannel = { value: 0, timer: 1.5 + Math.random() };
+    // Smoothed emotional posture (jaw drop, head pitch, head tilt), eased
+    // on the same per-emotion clock as the blendshapes so the whole face
+    // and head arrive together rather than the brows leading the body.
+    const posture = { jaw: 0, pitch: 0, tilt: 0 };
     // This frame's smoothed value per expression blendshape (brows, mouth
     // shape — never blink/gaze/jaw/viseme, which stay owned by the logic
     // below). Persists across frames within this one mount so each morph
@@ -569,6 +623,21 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
           ? lerp(emphasis.current, emphasisTarget, 1 - Math.pow(1e-9, dt))
           : lerp(emphasis.current, emphasisTarget, 1 - Math.pow(0.02, dt));
 
+      // --- Emotional posture (jaw + head), eased with the expression ---
+      const postureTarget = EMOTION_POSTURE[emotionRef.current ?? "neutral"] ?? {};
+      const postureOnset = EMOTION_ONSET_SECONDS[emotionRef.current ?? "neutral"] ?? 0.3;
+      const pDamp = 1 - Math.pow(0.01, dt / postureOnset);
+      const pDecay = 1 - Math.pow(0.01, dt / EMOTION_DECAY_SECONDS);
+      const easePosture = (cur: number, tgt: number) =>
+        lerp(cur, tgt, Math.abs(tgt) > Math.abs(cur) ? pDamp : pDecay);
+      // The jaw half only applies when Amin is silent: while he talks the
+      // mouth belongs to the viseme track and an emotion must not fight
+      // it (that contradiction is exactly the bug VISEME_JAW_CEILING
+      // exists to prevent).
+      posture.jaw = easePosture(posture.jaw, isSpeaking ? 0 : (postureTarget.jaw ?? 0));
+      posture.pitch = easePosture(posture.pitch, postureTarget.pitch ?? 0);
+      posture.tilt = easePosture(posture.tilt, postureTarget.tilt ?? 0);
+
       // --- Attention: Mona is mid-sentence ---
       // Decays over ~1.5s of silence, so the face settles when she pauses
       // instead of flipping between two poses. Only meaningful while Amin
@@ -602,12 +671,12 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       // without noticing, and their absence is most of the "electronic"
       // look Mona is pointing at in the reference footage.
       if (headBone) {
-        const thinkTilt = isThinking ? 0.05 : 0;
+        const thinkTilt = (isThinking ? 0.05 : 0) + posture.tilt;
         const swayY = Math.sin(t * 0.55) * 0.018 + Math.sin(t * 0.21 + 1) * 0.01;
         const swayX = Math.sin(t * 0.37 + 2) * 0.012;
         // Chin down on emphasis (positive X pitches the head forward on
         // this rig, same axis the arm-drop fix used).
-        const nod = emphasis.current * 0.035 + nodDip;
+        const nod = emphasis.current * 0.035 + nodDip + posture.pitch;
         // Head follows gaze at about a fifth of the eyes' amplitude —
         // enough to read as one movement, not enough to swing the face.
         const follow = gaze.x * 0.12;
@@ -655,7 +724,10 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       const jawDamp = targetJaw > jaw.current ? 1 - Math.pow(1e-7, dt) : 1 - Math.pow(1e-5, dt);
       jaw.current = lerp(jaw.current, targetJaw, jawDamp);
       sil.current = lerp(sil.current, targetSil, 1 - Math.pow(1e-5, dt));
-      setMorph(faceMeshes, "jawOpen", jaw.current);
+      // An emotion can open the mouth too — Ameca's shock drops the jaw at
+      // the same instant the brows go up, and it is the coordination that
+      // sells it. Additive, and zero while speaking (see posture.jaw).
+      setMorph(faceMeshes, "jawOpen", Math.min(1, jaw.current + posture.jaw));
 
       // --- Mouth SHAPE: the actual letters being spoken ---
       // What was here before was a sine wobble crossfading viseme_aa and
@@ -734,9 +806,16 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
               browOuterUpRight: attn * 0.13,
             }
           : {};
+      // Onset is per-emotion and always faster than decay — see
+      // EMOTION_ONSET_SECONDS. `1 - 0.01^(dt/seconds)` reaches ~99% of the
+      // target in `seconds`, so these numbers mean what they say.
+      const onsetSeconds = EMOTION_ONSET_SECONDS[emotionRef.current ?? "neutral"] ?? 0.3;
+      const onsetDamp = 1 - Math.pow(0.01, dt / onsetSeconds);
+      const decayDamp = 1 - Math.pow(0.01, dt / EMOTION_DECAY_SECONDS);
       for (const name of ALL_EXPRESSION_NAMES) {
         const target = expressionTargets.get(name) ?? 0;
-        const current = lerp(expressionCurrent.get(name) ?? 0, target, 1 - Math.pow(0.0006, dt));
+        const previous = expressionCurrent.get(name) ?? 0;
+        const current = lerp(previous, target, target > previous ? onsetDamp : decayDamp);
         expressionCurrent.set(name, current);
         setMorph(faceMeshes, name, Math.min(1, current + (speechBrows[name] ?? 0)));
       }
