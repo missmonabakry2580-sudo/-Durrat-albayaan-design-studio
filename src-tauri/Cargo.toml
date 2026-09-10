@@ -1,6 +1,6 @@
 [package]
 name = "amin"
-version = "0.2.40"
+version = "0.2.41"
 description = "Amin — personal executive AI agent (desktop, macOS)"
 authors = ["Mona AlSayed Studio"]
 edition = "2021"

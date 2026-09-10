@@ -1317,15 +1317,21 @@ function App() {
                   {elevenLabsKeySaved && (
                     <>
                       <p className="text-muted">
-                        مهم: من غير ما تحطي هنا صوت عربي حقيقي من مكتبتك في ElevenLabs، هيتكلم
-                        بصوت إنجليزي افتراضي حتى وهو بيقول كلام عربي — وده سبب النطق المكسور اللي
-                        سمعتيه. روحي elevenlabs.io ← Voices، اختاري صوت عربي، وانسخي الـ Voice ID
-                        بتاعه هنا.
+                        سيبي الخانة دي فاضية وأمين هيتكلم بصوت عربي مصري (Adam — Warm &amp; Classic)
+                        من مكتبتك. لو عايزة صوت تاني، الصقي الـ Voice ID بتاعه هنا وهو اللي هيتغلب
+                        على الافتراضي. صوتين جاهزين من مكتبتك:
+                        <br />
+                        <code>zthCTrnZpSGUnbO0tTzN</code> — مصطفى العجمي، عُماني.
+                        <br />
+                        <code>wxweiHvoC2r2jFM7mS8b</code> — هيثم، مصري أهدى.
+                        <br />
+                        أو روحي elevenlabs.io ← Voices واختاري أي صوت عربي وانسخي الـ Voice ID بتاعه.
+                        متحطيش هنا صوت إنجليزي — ده كان سبب النطق المكسور اللي سمعتيه قبل كده.
                       </p>
                       <div className="field-row">
                         <input
                           type="text"
-                          placeholder="مثال: 21m00Tcm4TlvDq8ikWAM — ده Voice ID، مش المفتاح اللي فوق"
+                          placeholder="سيبيها فاضية للصوت العربي الافتراضي — أو الصقي Voice ID، مش المفتاح اللي فوق"
                           value={elevenLabsVoiceIdInput}
                           onChange={(e) => {
                             setElevenLabsVoiceIdInput(e.currentTarget.value);
@@ -1538,7 +1544,7 @@ function App() {
                       </div>
                       <p className="text-muted">
                         قاموس حقيقي عند ElevenLabs (مش استبدال نص هنا) بيصحّح نطق كلمات زي "منى"
-                        و"أمين" و"درة البيان" بالتشكيل الصحيح. لازم يتحط الـ Voice ID العربي الأول.
+                        و"أمين" و"درة البيان" بالتشكيل الصحيح.
                       </p>
                       <div className="field-row">
                         <button onClick={handleCreatePronunciationDictionary} disabled={!inTauri || dictBusy}>
