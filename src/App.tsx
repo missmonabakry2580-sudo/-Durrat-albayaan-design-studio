@@ -238,6 +238,26 @@ function App() {
   // time, was the actual fix Mona asked for instead of a manual-download
   // workaround.
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+
+  /** Rescue timer for the one case the real audio events can't cover:
+   * speaking never starts at all (a synthesis path that fails without
+   * throwing, a stuck request), which would otherwise strand Amin in
+   * "thinking" forever with no way back to armed/idle. Deliberately longer
+   * than the whole reply→diacritize→synthesize chain can reasonably take,
+   * because the previous 25s version was firing DURING normal replies and
+   * sealing the avatar's mouth for the entire utterance (see speak()).
+   * Cancelled by "voice://speaking-started" the moment audio is real. */
+  const speakWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSpeakWatchdog = () => {
+    if (speakWatchdogRef.current !== null) {
+      clearTimeout(speakWatchdogRef.current);
+      speakWatchdogRef.current = null;
+    }
+  };
+  const armSpeakWatchdog = (onGiveUp: () => void) => {
+    clearSpeakWatchdog();
+    speakWatchdogRef.current = setTimeout(onGiveUp, 90000);
+  };
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [upToDateMessage, setUpToDateMessage] = useState(false);
@@ -425,8 +445,17 @@ function App() {
       listen<string>("voice://state", (e) => {
         setAminState(e.payload === "listening" ? "listening" : "idle");
       }),
+      // The real "audio is now audible" moment, straight from the thread
+      // that starts playback (commands::speak_text). Nothing listened to
+      // this event before 0.2.41, which is why the avatar's mouth was
+      // driven by a guess made ~30 seconds too early — see speak().
+      listen("voice://speaking-started", () => {
+        clearSpeakWatchdog();
+        setAminState("speaking");
+      }),
       listen("voice://speaking-finished", () => {
-        setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+        clearSpeakWatchdog();
+        setAminState((s) => (s === "speaking" || s === "thinking" ? (handsFreeEnabled ? "armed" : "idle") : s));
         resetAudioLevel();
       }),
       // Real-time loudness of the audio Mona is actually hearing (see
@@ -732,9 +761,30 @@ function App() {
   function speak(text: string, emotion?: string | null) {
     if (!inTauri) return;
     const finishSpeaking = () => {
-      setAminState((s) => (s === "speaking" ? (handsFreeEnabled ? "armed" : "idle") : s));
+      clearSpeakWatchdog();
+      setAminState((s) => (s === "speaking" || s === "thinking" ? (handsFreeEnabled ? "armed" : "idle") : s));
       resetAudioLevel();
     };
+    // THE BUG THIS REPLACES (found in a 2-minute video from Mona, 0.2.40):
+    // this used to be a flat `setTimeout(finishSpeaking, 25000)` that ran
+    // no matter what, while `aminState` was flipped to "speaking" the
+    // instant Claude's reply text arrived — long before a single sample of
+    // audio existed. Everything between those two moments (the
+    // diacritization round trip, then ElevenLabs synthesizing the WHOLE
+    // reply before returning a byte) is dead time, and on her machine it
+    // ran ~30 seconds. So the 25s net fired first: the state left
+    // "speaking" and only THEN did the audio start playing. ThreeDAvatar
+    // gates its entire mouth on `state === "speaking"` (targetJaw is a
+    // hard 0 otherwise), so Amin talked for 33 straight seconds with his
+    // lips sealed — exactly what she filmed and what no amount of tuning
+    // the blendshapes would ever have fixed.
+    //
+    // Rust already emits "voice://speaking-started" at the real moment
+    // playback begins, and nothing listened to it. Now the avatar follows
+    // that event instead of a guess, and this watchdog only rescues the
+    // case where speaking never starts at all — it is cancelled the
+    // moment it does, so it can no longer cut a reply short mid-sentence.
+    armSpeakWatchdog(finishSpeaking);
     const attempt =
       visualMode === "portrait"
         ? speakViaSimli(text, emotion)
@@ -750,7 +800,6 @@ function App() {
       setVoiceError(`تعذّر نطق الرد: ${String(e)}`);
       finishSpeaking();
     });
-    setTimeout(finishSpeaking, 25000);
   }
 
   /** `overrideText` lets hands-free mode send a just-heard command straight
@@ -768,7 +817,10 @@ function App() {
     try {
       const reply = await sendAgentMessage(text);
       setLastEmotion(reply.emotion);
-      setAminState("speaking");
+      // Stays "thinking" on purpose until audio actually starts (see
+      // speak()): synthesis is still running here, and claiming
+      // "speaking" while nothing is audible is what desynced the mouth
+      // from the voice in the first place.
       speak(reply.text, reply.emotion);
     } catch (e) {
       // Voice-only now — with no chat log to show this in, staying silent
@@ -897,7 +949,7 @@ function App() {
     try {
       const reply = await sendAgentMessage(prompt);
       setLastEmotion(reply.emotion);
-      setAminState("speaking");
+      // See handleSendToAgent: "speaking" is set by the real audio event.
       speak(reply.text, reply.emotion);
     } catch (e) {
       setAminState("warning");
