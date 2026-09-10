@@ -173,7 +173,55 @@ final class VoicePrintEngine {
     /// number through kind 10 specifically so the *next* rejection (if any)
     /// comes with real data to tune this against, instead of another blind
     /// guess.
+    ///
+    /// AND THE MEASUREMENT FINALLY ARRIVED (2026-09-10), on a real Mac,
+    /// from Developer Mode's kind-10 score — twice:
+    ///
+    ///   - 0.0133 — before AminVoice.swift's snapshot-timing fix, i.e. with
+    ///     the window partly trailing silence.
+    ///   - 0.1004 — after that fix, on a correctly-aligned window of Mona's
+    ///     own voice, freshly re-enrolled minutes earlier on the same Mac,
+    ///     same mic, same room.
+    ///
+    /// 0.10 is what THE ENROLLED SPEAKER HERSELF scores. A working
+    /// ECAPA-TDNN pipeline puts same-speaker cosine similarity far higher
+    /// (typically 0.5-0.9); a number this low means this integration is not
+    /// yet producing embeddings that separate anyone from anyone. There is
+    /// no threshold that "fixes" that: set it under 0.10 and a stranger
+    /// passes just as easily as Mona; set it above and Mona is locked out
+    /// of her own app — which is exactly what happened, twice, for days.
+    /// A gate that cannot tell its owner apart from a stranger provides no
+    /// security; it only provides an outage plus the false belief that
+    /// voice identity is being checked.
+    ///
+    /// So the gate no longer blocks by default — see `gateEnforced` and
+    /// `verifyWithScore`. The real score is still computed and reported on
+    /// every utterance (Developer Mode keeps showing it), so the data
+    /// needed to calibrate this properly keeps accumulating instead of the
+    /// feature being deleted. Nothing else about Amin's security posture
+    /// depends on this number: the banking/payments exclusion
+    /// (src-tauri/src/policy.rs) and confirm-before-destructive have never
+    /// been gated on the voiceprint and are untouched.
     private let matchThreshold: Float = 0.25
+
+    /// Whether a voiceprint mismatch is allowed to actually *block* an
+    /// utterance. Off unless the stored voiceprint.json explicitly says
+    /// `"enforced": true` — see `matchThreshold`'s note for the real
+    /// measurements behind that default. Deliberately a stored flag rather
+    /// than a deleted feature: once the embedding pipeline produces numbers
+    /// that genuinely separate speakers, turning enforcement back on is a
+    /// one-line change to that file, with a threshold chosen from measured
+    /// scores instead of another guess.
+    private func gateEnforced() -> Bool {
+        guard
+            let data = try? Data(contentsOf: storageURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let enforced = json["enforced"] as? Bool
+        else {
+            return false
+        }
+        return enforced
+    }
 
     private var model: MLModel?
     private var modelLoadAttempted = false
@@ -341,6 +389,13 @@ final class VoicePrintEngine {
         guard let enrolled = loadEnrolledEmbedding() else { return (true, nil) }
         guard let candidate = embedding(for: samples) else { return (true, nil) }
         let score = cosineSimilarity(enrolled, candidate)
+        // The score is always computed and always reported, enforced or
+        // not — that's what keeps Developer Mode's number real and the
+        // calibration data coming. What changed is that a low score no
+        // longer silently swallows Mona's command by default; see
+        // `matchThreshold` and `gateEnforced` for the measurements behind
+        // that.
+        guard gateEnforced() else { return (true, score) }
         return (score >= matchThreshold, score)
     }
 }
