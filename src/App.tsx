@@ -232,6 +232,12 @@ function App() {
   const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  // null = downloading but no percentage yet (or the server never sent a
+  // content-length) — see installUpdateAndRestart's REAL BUG comment for
+  // why a real number here, not just a static "جاري التحديث…" the whole
+  // time, was the actual fix Mona asked for instead of a manual-download
+  // workaround.
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [upToDateMessage, setUpToDateMessage] = useState(false);
@@ -345,11 +351,13 @@ function App() {
     if (!availableUpdate) return;
     setUpdateBusy(true);
     setUpdateError(null);
+    setUpdateProgress(null);
     try {
-      await installUpdateAndRestart(availableUpdate);
+      await installUpdateAndRestart(availableUpdate, setUpdateProgress);
     } catch (e) {
       setUpdateError(String(e));
       setUpdateBusy(false);
+      setUpdateProgress(null);
     }
   }
 
@@ -955,7 +963,11 @@ function App() {
                 onClick={handleInstallUpdate}
                 disabled={updateBusy}
               >
-                {updateBusy ? "جاري التحديث…" : "حدّثي الآن"}
+                {updateBusy
+                  ? updateProgress != null
+                    ? `جاري التحديث… ${updateProgress}%`
+                    : "جاري التحديث…"
+                  : "حدّثي الآن"}
               </button>
             </p>
           )}
