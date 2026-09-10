@@ -1077,16 +1077,23 @@ fn load_pronunciation_dictionary(conn: &rusqlite::Connection) -> Option<elevenla
 
 /// Developer Mode debug info (Mona's explicit request, 2026-08-28, item 8):
 /// original text / TTS text / pronunciation_dictionary_id / model_id /
-/// language_code for whichever engine actually spoke this reply. Fired on
-/// every speak_text call, on-device fallback included (with the
-/// ElevenLabs-only fields as `null`) — the frontend's Developer Mode panel
-/// decides whether to show it, not this function.
+/// voice_id / language_code for whichever engine actually spoke this
+/// reply. Fired on every speak_text call, on-device fallback included
+/// (with the ElevenLabs-only fields as `null`) — the frontend's Developer
+/// Mode panel decides whether to show it, not this function.
+///
+/// `voice_id` was added 2026-09-10 and is the whole reason this panel
+/// failed at its job: Amin was speaking Arabic in an English voice for
+/// weeks, and this event faithfully reported the model, the dictionary and
+/// the exact text — every field except the one that was wrong. A diagnostic
+/// that can't show the bug is decoration.
 fn emit_tts_debug(
     app: &AppHandle,
     original_text: &str,
     tts_text: &str,
     pronunciation_dictionary_id: Option<&str>,
     model_id: Option<&str>,
+    voice_id: Option<&str>,
     language_code: Option<&str>,
 ) {
     let _ = app.emit(
@@ -1096,6 +1103,7 @@ fn emit_tts_debug(
             "tts_text": tts_text,
             "pronunciation_dictionary_id": pronunciation_dictionary_id,
             "model_id": model_id,
+            "voice_id": voice_id,
             "language_code": language_code,
         }),
     );
@@ -1183,7 +1191,7 @@ pub async fn speak_text(
         // this narrow, hand-written fix is the only protection this path
         // has.
         let on_device_text = agent::fix_pronunciation_for_speech(&text);
-        emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
+        emit_tts_debug(&app, &original_text, &on_device_text, None, None, None, None);
         return voice::speak(app, &on_device_text);
     };
 
@@ -1203,6 +1211,10 @@ pub async fn speak_text(
         &text,
         pronunciation_dictionary.as_ref().map(|d| d.id.as_str()),
         Some(elevenlabs::model_id()),
+        // The voice that will actually speak — her Settings value if she
+        // set one, otherwise elevenlabs.rs's Arabic default. Reported
+        // rather than assumed: this is the field that was silently wrong.
+        Some(elevenlabs::effective_voice_id(voice_id.as_deref())),
         None, // language_code: never sent — see elevenlabs.rs's MODEL_ID audit comment.
     );
 
@@ -1244,7 +1256,7 @@ pub async fn speak_text(
                     let _ = app.emit("voice://error", combined.clone());
                     error_report::report_in_background(&app, "elevenlabs_tts", &combined);
                     let on_device_text = agent::fix_pronunciation_for_speech(&text);
-                    emit_tts_debug(&app, &original_text, &on_device_text, None, None, None);
+                    emit_tts_debug(&app, &original_text, &on_device_text, None, None, None, None);
                     return voice::speak(app, &on_device_text);
                 }
             }

@@ -76,6 +76,11 @@ export interface TtsDebugInfo {
   tts_text: string;
   pronunciation_dictionary_id: string | null;
   model_id: string | null;
+  /** The ElevenLabs voice that actually spoke — Settings' Voice ID when
+   * set, else the built-in Arabic default. The field that was silently
+   * wrong (an English voice reading Arabic) while every other field here
+   * looked fine. */
+  voice_id: string | null;
   language_code: string | null;
 }
 

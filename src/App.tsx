@@ -1594,6 +1594,8 @@ function App() {
                           <br />
                           model_id: {ttsDebug.model_id ?? "null"}
                           <br />
+                          voice_id: {ttsDebug.voice_id ?? "null"}
+                          <br />
                           language_code: {ttsDebug.language_code ?? "null"}
                         </>
                       ) : (

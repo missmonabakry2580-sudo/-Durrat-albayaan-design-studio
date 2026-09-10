@@ -20,12 +20,45 @@ const ELEVENLABS_TTS_URL: &str = "https://api.elevenlabs.io/v1/text-to-speech";
 /// docs/ARCHITECTURE.md's "Realtime voice" section for why that's ruled
 /// out). Just an `xi-api-key`, same as the REST call above.
 const ELEVENLABS_WS_URL: &str = "wss://api.elevenlabs.io/v1/text-to-speech";
-/// "Rachel" — one of ElevenLabs' premade voices, available on every
-/// account without any extra setup. Not chosen for Arabic specifically;
-/// swap it once Mona picks a voice she prefers from her own ElevenLabs
-/// library. `eleven_multilingual_v2` is the model, not the voice — it's
-/// what lets this voice read Arabic text at all.
-const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
+/// "Adam - Warm & Classic" — an Arabic (Egyptian) male voice that is
+/// already in Mona's own ElevenLabs workspace (`is_library_voice: false`,
+/// checked against her account on 2026-09-10, so it needs no "add from
+/// library" step before it will synthesize).
+///
+/// THE BUG THIS FIXES, in her words: "شايف طريقه كلامه؟؟؟ احنا كده مش
+/// بنعمل مساعد ذكي احنا كده بنعك". The value here used to be
+/// "21m00Tcm4TlvDq8ikWAM" — ElevenLabs' premade "Rachel", an
+/// English-trained voice. Every reply Mona has ever heard from Amin
+/// without a Voice ID set in Settings was an English voice sounding out
+/// Arabic letter by letter. That is not a tuning problem and no model,
+/// `voice_settings` value or pronunciation rule fixes it — this file's own
+/// earlier audit note (below) said as much and then left Rachel in place
+/// because this sandbox had no way to read her voice library. It does now.
+///
+/// Why this one specifically, out of the Arabic voices in her workspace:
+/// male (Amin is), deep and middle-aged rather than a young call-centre
+/// read, and its card is the only one that promises "clear pronunciation
+/// with strong emotional range" — which is what `voice_settings_for_emotion`
+/// below actually steers. Two alternates, both also already in her
+/// workspace, if she prefers a different feel — one line to change here,
+/// or she can paste either into Settings → Voice ID without a rebuild:
+///   - "zthCTrnZpSGUnbO0tTzN" — Mustafa Ajmi, Omani (her own dialect),
+///     deep and confident.
+///   - "wxweiHvoC2r2jFM7mS8b" — Haytham, Egyptian, calm and warm.
+/// This is only the fallback for when Settings → Voice ID is empty; a
+/// voice she sets there still wins (see `effective_voice_id`).
+const DEFAULT_VOICE_ID: &str = "9SPZl4Mlgwj7QT4gVprb";
+
+/// The voice that will actually speak: Mona's Settings → Voice ID when
+/// she's set one, else `DEFAULT_VOICE_ID`. Was inlined three times (once
+/// per synthesis path) with no way for anything outside this file to know
+/// the answer — which is how Rachel spoke every Arabic reply for weeks
+/// while Developer Mode showed model_id and dictionary id but never the
+/// one field that was wrong. commands::speak_text now reports this.
+pub fn effective_voice_id(voice_id: Option<&str>) -> &str {
+    voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID)
+}
+
 /// Audit finding, 2026-08-28 (Mona: Arabic pronunciation "سيئ جدًا... معظم
 /// الجمل تُنطق بشكل غير طبيعي" — bad, most sentences pronounced
 /// unnaturally), checked against ElevenLabs' own docs rather than assumed:
@@ -65,6 +98,23 @@ const DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
 /// Voice Library — no model choice fixes an English-trained voice reading
 /// Arabic, and this sandbox has no access to her account's voice library
 /// to pick one on her behalf.
+///
+/// 2026-09-10 follow-up: that last sentence is no longer true — her voice
+/// library IS readable from here now, and DEFAULT_VOICE_ID above is an
+/// Arabic voice from it instead of Rachel. Leaving the paragraph as
+/// written because the finding it records is exactly what shipped broken
+/// for another two weeks: knowing the cause and not being able to fix it
+/// is not the same as fixing it.
+///
+/// `language_code` is still NOT sent, and that is deliberate rather than
+/// an oversight: ElevenLabs' own reference documents the field but names
+/// no restriction beyond multilingual_v2, and their model page does not
+/// mention the parameter at all — so whether `eleven_v3` accepts it is
+/// unverified, and there is no API key in this sandbox to settle it. An
+/// unsupported field here would 400 every single synthesis call and drop
+/// Mona to the on-device voice, i.e. trade a real fix for a regression on
+/// a guess. The voice was the bug; the language tag is at most a nicety
+/// on top of an Arabic voice reading Arabic text.
 const MODEL_ID: &str = "eleven_v3";
 
 /// The model_id every synthesis call actually sends — exposed so
@@ -264,7 +314,7 @@ pub async fn synthesize(
     emotion: Option<&str>,
     pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
-    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
+    let voice_id = effective_voice_id(voice_id);
     let client = reqwest::Client::new();
     let mut body = serde_json::json!({
         "text": text,
@@ -311,7 +361,7 @@ pub async fn synthesize_pcm16(
     emotion: Option<&str>,
     pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
-    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
+    let voice_id = effective_voice_id(voice_id);
     let client = reqwest::Client::new();
     let mut body = serde_json::json!({
         "text": text,
@@ -400,7 +450,7 @@ pub async fn synthesize_streaming(
     emotion: Option<&str>,
     pronunciation_dictionary: Option<&PronunciationDictionary>,
 ) -> Result<Vec<u8>, String> {
-    let voice_id = voice_id.filter(|v| !v.trim().is_empty()).unwrap_or(DEFAULT_VOICE_ID);
+    let voice_id = effective_voice_id(voice_id);
     let url = format!("{ELEVENLABS_WS_URL}/{voice_id}/stream-input?model_id={MODEL_ID}");
 
     let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
