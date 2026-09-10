@@ -362,6 +362,8 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
     let faceMeshes: THREE.SkinnedMesh[] = [];
     let leftCornea: THREE.Object3D | null = null;
     let rightCornea: THREE.Object3D | null = null;
+    let upperTeeth: THREE.Object3D | null = null;
+    let lowerTeeth: THREE.Object3D | null = null;
     let headBone: THREE.Object3D | null = null;
     let leftEyeBone: THREE.Object3D | null = null;
     let rightEyeBone: THREE.Object3D | null = null;
@@ -446,6 +448,38 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
         // broken, without touching or re-exporting the model.
         leftCornea = root.getObjectByName("AvatarLeftCornea") ?? null;
         rightCornea = root.getObjectByName("AvatarRightCornea") ?? null;
+        // REAL DEFECT, photographed by Mona on her own Mac ("حركة الفم
+        // والاسنان عاملين كده ليه") and then reproduced here exactly: a
+        // ragged grey-white strip sawing across the mouth, and at wider
+        // openings a crumbling band sitting on top of the lower lip.
+        //
+        // Diagnosed by elimination in the harness rather than guessed —
+        // four separate experiments, each rendered and photographed:
+        //   1. Hide AvatarTeethUpper (which the .glb gives ZERO morph
+        //      targets, versus 66 on AvatarHead) — fixed the thin sliver
+        //      at small openings, band at wide openings unchanged.
+        //   2. Drop jawOpen and let the visemes carry the jaw — the mouth
+        //      barely opened at all; these visemes are lip-shape only.
+        //   3. Stop applying viseme morphs to the teeth mesh — unchanged.
+        //   4. Hide both teeth meshes — completely clean at every opening.
+        //
+        // So the teeth do not fit these lips at ANY speaking opening: the
+        // upper set cannot deform at all, and the lower set's jawOpen does
+        // not track the head's, so it pushes through the lower lip. That
+        // is a defect in the exported model, not something this code can
+        // correct — nothing here can deform a mesh that has no shapes, and
+        // silently re-exporting her avatar is not a rendering fix.
+        //
+        // Until the model is corrected, the mouth interior reads far
+        // better empty than full of broken geometry: a dark open mouth is
+        // what a real one looks like at conversational scale, and it is
+        // certainly what she should see instead of what she photographed.
+        // Same remedy, for the same class of export gap, that the corneas
+        // above already use.
+        upperTeeth = root.getObjectByName("AvatarTeethUpper") ?? null;
+        lowerTeeth = root.getObjectByName("AvatarTeethLower") ?? null;
+        if (upperTeeth) upperTeeth.visible = false;
+        if (lowerTeeth) lowerTeeth.visible = false;
         headBone = root.getObjectByName("Head") ?? null;
         leftEyeBone = root.getObjectByName("LeftEye") ?? null;
         rightEyeBone = root.getObjectByName("RightEye") ?? null;
@@ -715,7 +749,12 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       const activeCue = currentViseme();
       const jawCeiling =
         hasVisemeTrack() && activeCue ? (VISEME_JAW_CEILING[activeCue.viseme] ?? 0.42) : 1;
-      const targetJaw = loudnessJaw * jawCeiling;
+      // 0.42 -> 0.34 overall. With the broken teeth no longer filling it,
+      // the opening itself is what reads, and 0.42 at full loudness gave a
+      // wide oval rather than speech. Real conversational mouths barely
+      // reach a third of a full jaw drop — the same finding the earlier
+      // 0.55 -> 0.30 recalibration recorded ("more scream than speech").
+      const targetJaw = loudnessJaw * jawCeiling * 0.81;
       const targetSil = isSpeaking && !hasVisemeTrack() ? Math.max(0, 1 - targetJaw * 2.6) : 0;
       // Asymmetric, like a jaw: opens fast, closes a little slower, but
       // both quick enough that a syllable is a distinct movement rather
@@ -727,7 +766,8 @@ export function ThreeDAvatar({ state, emotion, className, onFailure }: ThreeDAva
       // An emotion can open the mouth too — Ameca's shock drops the jaw at
       // the same instant the brows go up, and it is the coordination that
       // sells it. Additive, and zero while speaking (see posture.jaw).
-      setMorph(faceMeshes, "jawOpen", Math.min(1, jaw.current + posture.jaw));
+      const mouthOpenness = Math.min(1, jaw.current + posture.jaw);
+      setMorph(faceMeshes, "jawOpen", mouthOpenness);
 
       // --- Mouth SHAPE: the actual letters being spoken ---
       // What was here before was a sine wobble crossfading viseme_aa and
