@@ -124,6 +124,15 @@ function arabicLabel(map: Record<string, string>, value: string): string {
 
 type PanelKey = "brief" | "tasks" | "followups" | "files" | "browser" | "audit" | "settings";
 
+/** The sentence the silent-test button sends. Written as something Mona
+ * would plausibly say herself, because it travels the identical path a
+ * spoken command does — so a reply to it proves the real pipeline works,
+ * not a test harness. It asks for a short spoken answer specifically:
+ * what she is checking is the voice, the lip movement and the face, and
+ * a long reply would only make her wait longer to see them. */
+const SILENT_TEST_PROMPT =
+  "يا أمين، ده اختبار للصوت والصورة. ردّي عليا بجملة قصيرة واحدة عشان أتأكد إن صوتك وحركة شفايفك وتعبيرات وشك شغالين.";
+
 const NAV_ITEMS: { key: PanelKey; icon: string; label: string }[] = [
   { key: "brief", icon: "◈", label: "ملخص التغييرات" },
   { key: "tasks", icon: "✓", label: "المهام" },
@@ -979,6 +988,16 @@ function App() {
 
   const activeNavItem = NAV_ITEMS.find((n) => n.key === activePanel) ?? null;
 
+  /** Runs SILENT_TEST_PROMPT through the exact same path a spoken command
+   * takes — handleSendToAgent, the one voice://final also calls — so what
+   * it exercises is the real pipeline (reply, diacritization, ElevenLabs,
+   * the viseme track, the avatar) and not a special test mode that could
+   * pass while the real thing is broken. */
+  function handleSilentTest() {
+    if (agentBusy) return;
+    handleSendToAgent(SILENT_TEST_PROMPT);
+  }
+
   return (
     <>
       {showSplash && <Splash onDone={() => setShowSplash(false)} />}
@@ -1010,6 +1029,25 @@ function App() {
             🖼
           </button>
         </div>
+
+        {/* Mona, 2026-09-10: she can only ever test Amin alone, because
+            testing means saying "إزيك يا أمين، سامعني؟" out loud, and she
+            is often sitting with people. So every check of the voice, the
+            lip-sync and the face was gated on her being by herself. One
+            button that types the sentence for her removes that entirely.
+            Deliberately one button and no options panel — she has been
+            explicit that she would rather have less that works than a
+            screen of controls that mostly do nothing. */}
+        <button
+          type="button"
+          className="chip silent-test-chip"
+          onClick={handleSilentTest}
+          disabled={!inTauri || agentBusy}
+          title="اختبار من غير ما تتكلمي — يبعت لأمين جملة جاهزة ويخليه يرد بصوته"
+          aria-label="اختبار صامت"
+        >
+          {agentBusy ? "…" : "🔇 جرّبيه"}
+        </button>
 
         <div className="amin-world-stage">
           {!inTauri && (

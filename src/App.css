@@ -30,6 +30,30 @@
   pointer-events: auto;
 }
 
+/* The silent-test button — see App.tsx's SILENT_TEST_PROMPT for why it
+   exists. Sits directly under the visual-mode chips at the same left
+   edge, so it reads as part of the same small cluster of controls rather
+   than as a new region of UI. */
+.silent-test-chip {
+  position: fixed;
+  /* Stacks under the status pill in the same left-hand column. The first
+     attempt sat at top:56px and landed straight on top of that pill —
+     caught by screenshotting the real window rather than trusting the
+     numbers, since .status-pill positions itself with inset-inline-end,
+     which in this RTL document resolves to the same physical edge as the
+     mode chips' `left`. */
+  top: 84px;
+  inset-inline-end: var(--space-4, 16px);
+  z-index: 5;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.silent-test-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* Real complaint from a real Mac screenshot (2026-08-28): "الخلفية فاضية
    بشكل غير احترافي... أمين ظاهر وكأنه معلق في فراغ" (the background reads
    as an unprofessional void, like Amin is floating in nothing). The two
