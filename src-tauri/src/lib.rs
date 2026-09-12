@@ -16,6 +16,7 @@ mod notify;
 #[cfg(test)]
 mod pipeline_test;
 mod policy;
+mod school;
 mod secrets;
 mod simli;
 mod tasks;
@@ -201,6 +202,10 @@ pub fn run() {
             commands::has_github_token,
             commands::save_github_token,
             commands::clear_github_token,
+            commands::has_school_credentials,
+            commands::get_school_base_url,
+            commands::save_school_credentials,
+            commands::clear_school_credentials,
             commands::has_bridge_passphrase,
             commands::save_bridge_passphrase,
             commands::clear_bridge_passphrase,

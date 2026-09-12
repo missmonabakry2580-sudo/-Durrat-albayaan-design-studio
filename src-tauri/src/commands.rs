@@ -10,8 +10,8 @@ use crate::policy::{self, AutonomyLevel, RiskTier};
 use crate::tasks::Task;
 use crate::voice::{HandsFreeSession, VoiceSession};
 use crate::{
-    agent, audio_level, audit, brief, browser, elevenlabs, files, followups, memory, notify, simli,
-    tasks, tools, verification, voice,
+    agent, audio_level, audit, brief, browser, elevenlabs, files, followups, memory, notify, school,
+    simli, tasks, tools, verification, voice,
 };
 
 const ANTHROPIC_KEY_NAME: &str = "anthropic_api_key";
@@ -349,6 +349,89 @@ pub fn clear_github_token(db: State<Db>) -> Result<(), String> {
         &conn,
         "user",
         "clear_github_token",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        None,
+        None,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// حساب أمين في منصة المدرسة (`school.rs`).
+//
+// بنصّ منى: «من ضمن مهامه أنه يشتغل في كل المهام في المنصة». وبهذا الحساب
+// يقرأ المعلَّق وينفّذ ما تأذن به — **بصلاحية ذلك الحساب وحدها**.
+//
+// **وتوصيتي المكتوبة: حسابٌ إداريّ خاصّ بأمين، لا حساب المديرة نفسه.**
+// فسحبُ صلاحيته يومًا لا يمسّ دخولها هي، وسجلُّ المنصة يُظهر من فعل ماذا
+// بلا اختلاطٍ بينها وبينه.
+//
+// والتخزين في جدول `settings` على القرص — لا في Keychain — وهو **القرار
+// القائم الموثَّق في `docs/SECURITY.md`** بعد فشل `keyring` على ماك حقيقي،
+// لا تبسيطٌ جديد أُقحم هنا.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn has_school_credentials(db: State<Db>) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(school::has_credentials(&conn))
+}
+
+/// عنوان المنصة المستخدم فعلًا — تعرضه الإعدادات فلا تُخمَّن الجهة.
+#[tauri::command]
+pub fn get_school_base_url(db: State<Db>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(school::base_url(&conn))
+}
+
+/// حفظُ بيانات الحساب. **ويُنسى الرمز المخزَّن دائمًا** بعد الحفظ: رمزُ
+/// الحساب القديم يبقى صالحًا ساعةً كاملة، فلو بقي لَظلّ أمين يعمل بالحساب
+/// الذي استُبدل — وهذا يُقرأ «الحفظ لم ينفّذ».
+#[tauri::command]
+pub fn save_school_credentials(
+    email: String,
+    password: String,
+    base_url: Option<String>,
+    db: State<Db>,
+) -> Result<(), String> {
+    if email.trim().is_empty() || password.is_empty() {
+        return Err("البريد وكلمة السرّ مطلوبان.".to_string());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    set_setting(&conn, school::SCHOOL_EMAIL_KEY, email.trim())?;
+    set_setting(&conn, school::SCHOOL_PASSWORD_KEY, &password)?;
+    if let Some(url) = base_url {
+        let trimmed = url.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            set_setting(&conn, school::SCHOOL_BASE_URL_KEY, trimmed)?;
+        }
+    }
+    school::forget_token(&conn);
+    // البريد يُسجَّل، **وكلمة السرّ لا** — والسجل يُقرأ ويُصدَّر.
+    audit::record(
+        &conn,
+        "user",
+        "save_school_credentials",
+        RiskTier::TrustedDelegation,
+        audit::Decision::Confirmed,
+        Some(email.trim()),
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn clear_school_credentials(db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM settings WHERE key IN (?1, ?2)",
+        [school::SCHOOL_EMAIL_KEY, school::SCHOOL_PASSWORD_KEY],
+    )
+    .map_err(|e| e.to_string())?;
+    school::forget_token(&conn);
+    audit::record(
+        &conn,
+        "user",
+        "clear_school_credentials",
         RiskTier::TrustedDelegation,
         audit::Decision::Confirmed,
         None,
@@ -1763,10 +1846,39 @@ pub fn set_follow_up_status(id: String, status: String, db: State<Db>) -> Result
 
 /// Local Delta Brief (Phase 3 slice that needs no Gmail/Calendar) — a
 /// "what changed" summary of Amin's own local activity. See brief.rs.
+///
+/// **ويُضاف إليه ما ينتظرها في منصة المدرسة** إن كان حساب المنصة مُعدًّا:
+/// هذا هو «يبلّغني المهمة الموجودة» بعينه، وموجزٌ يعدّ مهام الماك ويُسكت
+/// عن ستّ أسرٍ تنتظر اعتماد خطة أطفالها ليس موجزًا.
+///
+/// **وتعذُّرُ القراءة يُقال ولا يُسقط الموجز:** جزءٌ محليٌّ صحيح أنفع من
+/// شاشةٍ فارغة، والسبب يُحمل في `school_error` فتقرأه منى بدل أن تخمّن.
 #[tauri::command]
-pub fn generate_delta_brief(db: State<Db>) -> Result<DeltaBrief, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    brief::generate(&conn)
+pub async fn generate_delta_brief(db: State<Db>) -> Result<DeltaBrief, String> {
+    // القفل يُفتح قبل الشبكة — والإعداد يُقرأ فيه.
+    let (mut delta, cfg) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let delta = brief::generate(&conn)?;
+        let cfg = if school::has_credentials(&conn) {
+            Some(school::load_config(&conn)?)
+        } else {
+            None
+        };
+        (delta, cfg)
+    };
+    if let Some(cfg) = cfg {
+        match school::pending(&cfg).await {
+            Ok((pending, token)) => {
+                delta.school_pending = Some(school::summarize(&pending));
+                if let Some(t) = token {
+                    let conn = db.0.lock().map_err(|e| e.to_string())?;
+                    school::store_token(&conn, &t)?;
+                }
+            }
+            Err(e) => delta.school_error = Some(e),
+        }
+    }
+    Ok(delta)
 }
 
 #[derive(serde::Serialize)]

@@ -186,6 +186,37 @@ in one system from becoming a foothold in the other, and keeps Amin's
 audit log the single source of truth for what Amin itself did, rather than
 mixing in the school platform's own internal actions.
 
+**"Fully external" means narrow, not forbidden — a note added 2026-09-12**
+because the distinction was misread once. Working the platform *is* part of
+Amin's job, in Mona's own words: *«من ضمن مهامه إنه يشتغل في كل المهام في
+المنصة، بس يبلّغني المهمة الموجودة وبعطيه قرار ينفّذ، وينفّذ ع طول.»* Every
+rule in this document protects **Amin's own data** — her mail, calendar and
+files stay on the Mac — and `connect-src 'self'` constrains **his
+frontend**, not him: outbound calls leave from the Rust side, where policy
+and the audit log are. Reading that as "Amin must never touch the platform"
+gets the conclusion backwards and, worse, attributes a decision to her that
+she never made.
+
+What the narrowness actually requires, and what is enforced in code
+(`mobile/school-admin.js` for admin accounts, `src-tauri/src/school.rs`
+for pending work):
+- **Her account, never a service key.** Sign-in is Identity Toolkit REST
+  with an admin account of the platform; every call runs through the
+  platform's own role checks and audit trail. No master credential that
+  bypasses `firestore.rules`.
+- **Named tools only.** A fixed list of read/action tools — never
+  arbitrary queries, never SQL, never a code path into the other system.
+- **Every write waits for her word**, at any autonomy level, and is
+  recorded here as well as there.
+- **Some actions are refused outright** because a tool would lie about
+  them — a physical handover Amin cannot witness, or marking a family's
+  message read without answering it. See ARCHITECTURE.md for the two.
+- **Recommended: a dedicated admin account for Amin**, not Mona's own
+  login. Revoking his access then never touches hers, and the platform's
+  own audit shows which of them did what. His password lives in the local
+  `settings` table (§13's Keychain finding applies — it is the same
+  accepted trade-off, not a new one).
+
 ## 13. Speaker recognition: voice print, not recordings — and never a household wiretap
 
 Added 2026-08-25, ahead of Phase 1 implementation. Amin recognizes Mona's

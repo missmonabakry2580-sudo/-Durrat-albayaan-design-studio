@@ -3,7 +3,7 @@ use tauri::{AppHandle, Runtime};
 
 use crate::commands::task_title;
 use crate::policy::RiskTier;
-use crate::{browser, files, followups, memory, notify, tasks};
+use crate::{browser, files, followups, memory, notify, school, tasks};
 
 /// Amin's real tool registry for the Anthropic API's tool-use feature.
 /// Three things live here, deliberately kept together rather than spread
@@ -274,6 +274,41 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["id"]
             }
         }),
+        // ── منصة المدرسة ─────────────────────────────────────────────────
+        // «من ضمن مهامه أنه يشتغل في كل المهام في المنصة، بس يبلّغني المهمة
+        // الموجودة وبعطيه قرار ينفّذ — وينفّذ على طول» (منى). فأداتان: واحدة
+        // تُبلِّغ وواحدة تنفّذ، ولا ثالثة تخترع قرارًا بينهما.
+        json!({
+            "name": "school_pending_tasks",
+            "description": "Read what is currently pending on Mona in the Durrat Al Bayaan school platform — plans awaiting her approval, paid-but-undelivered uniforms, unread parent messages, overdue fee installments, students not registered with the ministry, incomplete staff files, students with no class. Returns items ALREADY ORDERED by who is waiting: tier 0 = a family or child is actually waiting, tier 1 = money, tier 2 = paperwork. Each item carries `count`, a few `names`, the screen `to` that closes it, and `actions` — the ones Amin can execute himself once Mona says so. Call this whenever she asks what's waiting, what's on her, or to go through the school's pending work; also call it before claiming nothing is pending. Lead with tier 0 and say the count, then name what can be executed.",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "school_execute_action",
+            "description": "Execute ONE pending action in the school platform, using an action object exactly as it came back from school_pending_tasks. Never invent or edit the `match` fingerprint — pass it through verbatim; the platform re-finds the row by it on a fresh read, so a stale row index can never approve the wrong plan. Kinds: `approve_weekly_plan` (approves an internal weekly plan — this is what releases it to the families at 3pm and notifies the teacher), `return_weekly_plan` (returns it to the teacher for revision; pass `note` with Mona's reason when she gave one), `send_fee_reminder` (sends the family an in-app reminder about their overdue installment, in the school's own official wording). The reply's `status` says what really happened: `done` = executed, `already` = it was no longer pending so nothing was changed, `gone` = the row no longer exists. Report that status to Mona as it is; never call `already` a success she asked for.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["approve_weekly_plan", "return_weekly_plan", "send_fee_reminder"]
+                    },
+                    "match": {
+                        "type": "object",
+                        "description": "The action's `match` object, copied verbatim from school_pending_tasks."
+                    },
+                    "row_index_hint": {
+                        "type": "integer",
+                        "description": "The action's `rowIndexHint`, copied verbatim. A hint only — the fingerprint decides."
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Mona's own note to the teacher, in her words. Required in spirit for return_weekly_plan: a plan returned with no reason sends the teacher back to guess."
+                    }
+                },
+                "required": ["kind", "match"]
+            }
+        }),
     ]
 }
 
@@ -305,6 +340,14 @@ pub fn risk_for(name: &str) -> RiskTier {
         | "create_follow_up" | "remember_fact" | "search_memory" | "forget_fact"
         | "get_daily_overview" | "get_evening_review" => RiskTier::Auto,
         "escalate_follow_up" => RiskTier::TrustedDelegation,
+        // قراءةُ المعلَّق في المنصة: لا تكتب شيئًا، وهي **جوهرُ عمله** —
+        // «يبلّغني المهمة الموجودة». ولو انتظرت كلمةً لَما بلَّغ أبدًا.
+        // (تخرج بيانات مدرسية إلى واجهة أمين نفسه — لا إلى طرفٍ ثالث.)
+        "school_pending_tasks" => RiskTier::Auto,
+        // والتنفيذ **يقف دائمًا** حتى تقول «نفّذ»، ولو كان مستوى الاستقلال
+        // أعلى: اعتمادُ خطةٍ يصل بيوت صفٍّ كامل، والتذكير المالي يصل أسرة —
+        // أثرٌ خارج الماك لا يُرجَع.
+        "school_execute_action" => RiskTier::ConfirmHighRisk,
         "list_workspace_files"
         | "read_workspace_file"
         | "write_workspace_file"
@@ -386,7 +429,70 @@ pub fn describe(name: &str, input: &Value) -> String {
         "forget_fact" => format!("نسيان المعلومة رقم {}", s("id")),
         "get_daily_overview" => "تجميع نظرة عامة على اليوم (مهام، متابعات، ذاكرة)".to_string(),
         "get_evening_review" => "تجميع مراجعة نهاية اليوم (منجز، مفتوح، متابعات مستحقة)".to_string(),
+        "school_pending_tasks" => "قراءة ما هو معلَّق في منصة المدرسة".to_string(),
+        "school_execute_action" => describe_school_action(input),
         other => format!("تنفيذ إجراء غير معروف: {other} — يُنصح بعدم الموافقة"),
+    }
+}
+
+/// نصُّ الموافقة الذي تقرأه منى قبل أن تقول «نفّذ» على إجراءٍ في المنصة.
+///
+/// **ويُبنى من `match` وحدها** — أي من بيانات المنصة التي جاءت في القائمة —
+/// لا من جملةٍ يصوغها النموذج. لأن هذه الجملة هي كل ما تستند إليه موافقتها:
+/// وصفٌ يصفه المُنفِّذ عن نفسه يستطيع أن يصف غير ما سيفعل. **والأثر يُقال
+/// صريحًا** (تصل البيوت · تصل الأسرة) فالموافقة تكون على النتيجة لا على
+/// اسم الإجراء.
+fn describe_school_action(input: &Value) -> String {
+    let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+    let m = |k: &str| {
+        input
+            .get("match")
+            .and_then(|v| v.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let note = input.get("note").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let plan = || {
+        let track = m("المسار");
+        let grade = m("الصف");
+        let week = m("الأسبوع");
+        let teacher = m("بريد المعلمة");
+        format!(
+            "{} · {} · {}{}",
+            if track.is_empty() { "؟" } else { &track },
+            if grade.is_empty() { "بدون صف" } else { &grade },
+            if week.is_empty() { "؟" } else { &week },
+            if teacher.is_empty() {
+                String::new()
+            } else {
+                format!(" — المعلمة {teacher}")
+            }
+        )
+    };
+    match kind {
+        "approve_weekly_plan" => format!(
+            "اعتماد الخطة الأسبوعية الداخلية: {} — **وتصل بيوت الصف كلها** الثالثة عصرًا، والمعلمة تُشعَر.",
+            plan()
+        ),
+        "return_weekly_plan" => format!(
+            "إعادة الخطة الأسبوعية للمراجعة: {} — والمعلمة تُشعَر{}.",
+            plan(),
+            if note.is_empty() {
+                " **بلا سببٍ مكتوب**".to_string()
+            } else {
+                format!(" بملاحظتك: «{note}»")
+            }
+        ),
+        "send_fee_reminder" => format!(
+            "إرسال تذكير مالي رسمي **إلى أسرة** الطالب ذي الرقم المدني {} بقسطه المتأخّر.",
+            if m("civilId").is_empty() {
+                "؟".to_string()
+            } else {
+                m("civilId")
+            }
+        ),
+        other => format!("إجراء غير معروف في المنصة: {other} — يُنصح بعدم الموافقة"),
     }
 }
 
@@ -650,6 +756,49 @@ pub async fn execute<R: Runtime>(
                 "still_open": still_open,
                 "due_follow_ups": due_follow_ups,
             }))
+        }
+        // ── منصة المدرسة ─────────────────────────────────────────────────
+        // **ثلاث خطوات مقصودة، لا اثنتان:** يُقرأ الإعداد بقفلٍ قصير ويُفتح،
+        // ثم يُنادى الشبكيّ **بلا قفل**، ثم يُحفظ الرمز الجديد بقفلٍ ثانٍ.
+        // فلا `MutexGuard` مُمسَكٌ عبر `.await` (وهو ما كان سيمنع التصميف
+        // أصلًا — نفس درس الذراع الأخرى في هذه الدالة).
+        "school_pending_tasks" => {
+            let cfg = {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                school::load_config(&conn)?
+            };
+            let (pending, token) = school::pending(&cfg).await?;
+            if let Some(t) = token {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                school::store_token(&conn, &t)?;
+            }
+            serde_json::to_value(pending).map_err(|e| e.to_string())
+        }
+        "school_execute_action" => {
+            let kind = required_str(input, "kind", "school_execute_action")?;
+            let match_ = input
+                .get("match")
+                .cloned()
+                .ok_or_else(|| "school_execute_action: البصمة (match) مطلوبة".to_string())?;
+            let hint = input
+                .get("row_index_hint")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1);
+            let note = input
+                .get("note")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let cfg = {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                school::load_config(&conn)?
+            };
+            let (outcome, token) =
+                school::execute(&cfg, &kind, &match_, hint, note.as_deref()).await?;
+            if let Some(t) = token {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                school::store_token(&conn, &t)?;
+            }
+            serde_json::to_value(outcome).map_err(|e| e.to_string())
         }
         other => Err(format!("unknown tool: {other}")),
     }

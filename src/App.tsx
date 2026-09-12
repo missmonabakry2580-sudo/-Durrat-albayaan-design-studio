@@ -1139,6 +1139,17 @@ function App() {
                         <span className="badge">✓{deltaBrief.tasks_completed_last_24h} خلصت (24 ساعة)</span>
                         <span className="badge">{deltaBrief.due_follow_ups} متابعة مستحقة</span>
                       </div>
+                      {/* منصة المدرسة: تُعرض **قبل** زرّ السرد، لأنها ما
+                          ينتظره الناس لا ما ينتظره الماك. والخطأ يُعرض ولا
+                          يُخفى — «لم تُقرأ» ليست «لا شيء معلَّق». */}
+                      {deltaBrief.school_pending && (
+                        <pre className="brief-school">{deltaBrief.school_pending}</pre>
+                      )}
+                      {deltaBrief.school_error && (
+                        <p className="brief-school-error">
+                          منصة المدرسة: {deltaBrief.school_error}
+                        </p>
+                      )}
                       <button className="chip" onClick={handleNarrateBrief} disabled={!inTauri || briefBusy}>
                         {briefBusy ? "..." : "🎙️ اطلبي من أمين يحكيلك الملخص"}
                       </button>

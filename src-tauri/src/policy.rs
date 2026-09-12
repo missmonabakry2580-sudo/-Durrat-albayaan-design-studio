@@ -78,6 +78,29 @@ const HIGH_RISK_KEYWORDS: &[&str] = &["send_email", "post_public", "delete", "pu
 /// on its own, subject to the Follow-up Engine and audit log.
 const DELEGATED_KEYWORDS: &[&str] = &["draft", "schedule", "reminder", "research"];
 
+/// إجراءاتُ منصة المدرسة (`school.rs`) — تُسجَّل **صريحةً** هنا كما يقول
+/// تعليق `classify` أدناه، لا تُترك لمطابقة كلمةٍ عامة.
+///
+/// **وكلها تقف حتى تقول منى «نفّذ»**، ولو رُفع مستوى الاستقلال إلى
+/// Autopilot: اعتمادُ خطةٍ **يصل بيوت صفٍّ كامل** الثالثة عصرًا، والتذكيرُ
+/// المالي **يصل أسرةً بعينها**، وإعادةُ خطةٍ تُعيد عمل معلمة. آثارٌ خارج
+/// الماك **لا تُرجَع** بضغطة، فلا تُقاس بقياس مهمةٍ محليّة.
+///
+/// ⚠️ **ولهذه القائمة سببٌ تقنيّ لا تنظيميّ فقط:** `send_fee_reminder`
+/// يحتوي حرفيًّا كلمة `reminder`، وهي في `DELEGATED_KEYWORDS` — فبلا هذا
+/// الفحص **قبلها** كان تذكيرٌ ماليّ يُرسَل إلى أسرةٍ بتصنيف
+/// «تفويض موثوق»، أي **بلا سؤالها**. فالترتيب هنا جزءٌ من الحكم.
+///
+/// ولاحظ ما **ليس** هنا: «تأكيد تسليم الزي» و«تعليم رسالة أسرة مقروءة».
+/// الأول فعلٌ ماديّ بيد إنسان (وشاشةُ الاستلام تخصم مخزونًا لا تقلب خانة)،
+/// والثاني يُخفي أسرةً من القائمة بلا أن يُجيبها. وقد قُصد تركهما.
+const SCHOOL_PLATFORM_ACTIONS: &[&str] = &[
+    "approve_weekly_plan",
+    "return_weekly_plan",
+    "send_fee_reminder",
+    "school_execute_action",
+];
+
 /// Classify an action domain (e.g. "send_email", "draft_reminder") into a
 /// risk tier. This is a stub for Phase 0 — each later phase registers its
 /// real tool names here as it adds them, rather than inventing ad hoc
@@ -86,6 +109,9 @@ pub fn classify(domain: &str) -> RiskTier {
     let d = domain.to_lowercase();
     if EXCLUDED_DOMAINS.iter().any(|kw| d.contains(kw)) {
         RiskTier::Excluded
+    } else if SCHOOL_PLATFORM_ACTIONS.iter().any(|kw| d.contains(kw)) {
+        // قبل `DELEGATED_KEYWORDS` بالضبط — انظر تعليق القائمة.
+        RiskTier::ConfirmHighRisk
     } else if HIGH_RISK_KEYWORDS.iter().any(|kw| d.contains(kw)) {
         RiskTier::ConfirmHighRisk
     } else if DELEGATED_KEYWORDS.iter().any(|kw| d.contains(kw)) {
@@ -119,6 +145,27 @@ mod tests {
         // through as merely "confirm" — Excluded is checked first and
         // must stay that way as more keywords are added later.
         assert_eq!(classify("delete_banking_data"), RiskTier::Excluded);
+    }
+
+    #[test]
+    fn a_fee_reminder_to_a_family_is_never_merely_delegated() {
+        // الفخّ بعينه: `send_fee_reminder` يحتوي `reminder`، فلو فُحصت
+        // `DELEGATED_KEYWORDS` أولًا لَأُرسل تذكيرٌ ماليّ إلى أسرةٍ **بلا
+        // سؤال منى**. هذا الاختبار يُثبّت الترتيب، لا التصنيف وحده.
+        assert_eq!(classify("send_fee_reminder"), RiskTier::ConfirmHighRisk);
+        // والكلمة العامة تبقى كما كانت لغير إجراءات المنصة.
+        assert_eq!(classify("draft_reminder"), RiskTier::TrustedDelegation);
+    }
+
+    #[test]
+    fn every_school_platform_action_waits_for_her_word() {
+        for action in SCHOOL_PLATFORM_ACTIONS {
+            assert_eq!(
+                classify(action),
+                RiskTier::ConfirmHighRisk,
+                "إجراء المنصة {action} يجب أن ينتظر كلمتها"
+            );
+        }
     }
 
     #[test]

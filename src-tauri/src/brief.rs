@@ -15,6 +15,17 @@ pub struct DeltaBrief {
     pub tasks_completed_last_24h: i64,
     pub due_follow_ups: i64,
     pub recent_audit_events: Vec<String>,
+    /// ما ينتظر منى **في منصة المدرسة**، سطرًا لكل بند (`school::summarize`).
+    ///
+    /// وهي «يبلّغني المهمة الموجودة» بعينها: لا معنى لموجزٍ يقول «مهمّتان
+    /// مفتوحتان على الماك» وستّ أسرٍ تنتظر اعتماد خطة أطفالها لا تُذكر.
+    ///
+    /// `None` تعني **لم تُقرأ**، لا «لا شيء معلَّق» — وبينهما فرقٌ تقرؤه منى:
+    /// الأولى تعني أن الوصلة لم تُعدّ أو تعذّر الوصول، والثانية اطمئنان.
+    /// ولذلك يحملها `school_error` صريحةً بدل أن تُخفى في صمت.
+    pub school_pending: Option<String>,
+    /// سببُ تعذُّر القراءة، إن تعذّرت — بالعربية كما تقوله المنصة.
+    pub school_error: Option<String>,
 }
 
 pub fn generate(conn: &Connection) -> Result<DeltaBrief, String> {
@@ -67,6 +78,11 @@ pub fn generate(conn: &Connection) -> Result<DeltaBrief, String> {
         tasks_completed_last_24h,
         due_follow_ups,
         recent_audit_events,
+        // تُملأ في `commands::generate_delta_brief` بعد نداءٍ شبكيّ — وهذه
+        // الدالة تبقى **متزامنة وبلا شبكة** عن قصد: قفلُ القاعدة لا يُمسَك
+        // عبر `.await` (نفس درس `school.rs`).
+        school_pending: None,
+        school_error: None,
     })
 }
 

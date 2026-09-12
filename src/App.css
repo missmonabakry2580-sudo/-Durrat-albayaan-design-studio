@@ -541,6 +541,26 @@
   gap: var(--space-2);
 }
 
+/* منصة المدرسة داخل الموجز. `pre` لأن `school::summarize` يُرجع سطورًا،
+   و`white-space: pre-wrap` تحفظ السطور وتسمح بالالتفاف في نافذةٍ ضيّقة —
+   وهي نافذةُ شريط قوائم، أضيق من أي شاشة. */
+.brief-school {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.08);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.brief-school-error {
+  margin: var(--space-2) 0 0;
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
 .agent-log {
   list-style: none;
   margin: 0;

@@ -292,7 +292,18 @@ export interface DeltaBrief {
   tasks_completed_last_24h: number;
   due_follow_ups: number;
   recent_audit_events: string[];
+  /** ما ينتظر منى في منصة المدرسة، سطرًا لكل بند. `null` = لم تُقرأ. */
+  school_pending: string | null;
+  /** سببُ تعذُّر القراءة، إن تعذّرت — يُعرض ولا يُخفى. */
+  school_error: string | null;
 }
+
+/** بيانات حساب أمين في منصة المدرسة (`src-tauri/src/school.rs`). */
+export const hasSchoolCredentials = () => invoke<boolean>("has_school_credentials");
+export const getSchoolBaseUrl = () => invoke<string>("get_school_base_url");
+export const saveSchoolCredentials = (email: string, password: string, baseUrl?: string) =>
+  invoke<void>("save_school_credentials", { email, password, baseUrl });
+export const clearSchoolCredentials = () => invoke<void>("clear_school_credentials");
 
 /**
  * Local-only "what changed" summary (Phase 3 slice that needs no Gmail/

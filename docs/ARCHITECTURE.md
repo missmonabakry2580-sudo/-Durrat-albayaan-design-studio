@@ -1825,7 +1825,7 @@ overlap fixes apply to.
 | 2 | Task management + Quick Capture, scoped file access, minimal browser control *(all shipped — see Phase 2 notes above for what's still a conservative default vs. a settled decision)* |
 | 3 | Local Delta Brief *(shipped — see Phase 3 notes below)*; Gmail, Calendar, real Morning Brief still blocked on Mona creating a Google OAuth client — see the account-setup checklist |
 | 4 | Follow-up Engine *(local logic shipped — see Phase 4 notes above)*, delivery channels + Executive Delegate Mode still ahead |
-| 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) |
+| 5 | Durrat Al-Bayaan school platform connector (specific read/action tools only — see SECURITY.md on why this is never a direct DB/code link) *(admin-accounts tools shipped in `mobile/` 2026-08-29; **pending-work tools shipped in the desktop core 2026-09-12** — see "Amin works the school platform" below)* |
 | 6 | Ads, Drive, developer workflows, Smart Home connector (Philips Hue-style lighting/outlets — same connector pattern as Gmail/Calendar) |
 | 7 | Mobile Companion (iOS, personal install only) — remote control over a private VPN mesh to the same core; see "Mobile Companion" above |
 
@@ -2556,6 +2556,95 @@ pass `node --check`. **Not verified**: a live call against the real
 platform (needs Mona's admin login in the app). **Next**: after she
 tries the admin model, extend to the other portals (finance/academic/
 admissions) the same way, each write gated.
+
+## Amin works the school platform: pending-work tools in the desktop core (2026-09-12)
+
+This is the "extend to the other portals" step the admin-accounts section
+above ends on — built where Amin's own loop, morning brief and audit log
+live, rather than in the phone PWA.
+
+Mona's own framing, which corrected mine: *«ما قررت إنه ما يشتغل في المنصة
+— بالعكس، من ضمن مهامه إنه يشتغل في كل المهام في المنصة، بس يبلّغني المهمة
+الموجودة وبعطيه قرار ينفّذ، وينفّذ ع طول.»* The `connect-src 'self'` rule
+and the local-SQLite decisions protect **Amin's own data**; they were never
+a ban on working the platform. An outbound call leaves from the Rust side,
+where policy and the append-only audit log already are — which is exactly
+what makes this both permitted and recorded.
+
+**The platform end** (`durrat-bayaan-connect`): a new stable HTTP route,
+`/api/amin`. `GET` returns everything pending on Mona, already ordered by
+who is waiting (tier 0 family → 1 money → 2 paperwork); `POST` executes one
+action. It is deliberately a **route, not a server-function call** —
+TanStack server functions live at generated paths that change on every
+deploy, and Amin is built once and runs for months. The pending list itself
+is computed in one shared pure module (`src/lib/amin/pending.ts`) read by
+both `/admin/amin` (what Mona sees) and this route (what Amin sees), so the
+two can never drift.
+
+**This end** (`src-tauri/src/school.rs` + two tools in `tools.rs`):
+- `school_pending_tasks` — read, Auto tier. Reading is the *point* («يبلّغني
+  المهمة الموجودة»); a read that waited for her word would never report.
+- `school_execute_action` — **ConfirmHighRisk, always**, at any autonomy
+  level including Autopilot. Approving a plan reaches every home in a
+  class at 3pm; a fee reminder reaches one family. Those don't come back.
+- Three action kinds: `approve_weekly_plan` (sheet + teacher notification +
+  the family-release marker — the whole chain the approvals screen runs,
+  not one cell), `return_weekly_plan` (with her note), `send_fee_reminder`
+  (in the platform's own shared `reminderMessage` wording).
+- Sign-in is the same model as `mobile/school-admin.js`: Identity Toolkit
+  REST with an admin account, `Bearer` ID token, hourly token cached with a
+  2-minute safety margin, one automatic retry on 401.
+- `school::summarize` feeds the **Delta Brief**, so the morning brief says
+  "19 items a family is actually waiting on" next to Amin's local tasks.
+
+**Two actions were deliberately refused**, and that is half the work:
+- *Mark a uniform delivered.* The pickup screen doesn't flip a cell — it
+  appends a handover row **and decrements stock piece by piece**. Flipping
+  the cell would record a handover with no stock decrement, and the stock
+  number is what the next order is built on. Handover is also a physical
+  act by a human; Amin cannot know it happened.
+- *Mark a parent message read.* Marking it read without reading or
+  answering it **hides the family from the list** and leaves their question
+  unanswered — worse than doing nothing.
+Both stay in the list so Amin **reports** them, with no action attached.
+
+**Fingerprints, not row indices.** Minutes pass between Amin reading the
+list and her saying "نفّذ", and a sheet row index is not a stable id — a row
+added or deleted in between makes the same index point elsewhere, so the
+wrong plan gets approved. Every action carries a fingerprint of the row's
+own values; the platform re-finds the row by it on a fresh read and
+re-checks the item is still pending. If she approved it herself in the
+meantime the answer is `already` and **nothing is written**. A student's
+uniform has several rows, so its fingerprint is civil id + category + size
++ receipt — never the name.
+
+**A policy-ordering bug caught in code:** `send_fee_reminder` literally
+contains `reminder`, which is in `DELEGATED_KEYWORDS`. Without checking the
+school-action list *before* that, a fee reminder to a family would classify
+as TrustedDelegation — i.e. **sent without asking her**. A test now pins
+the order, not just the classification.
+
+**Verified live** against the real platform with the admin account: 3
+items, **19 of them with a family actually waiting** (13 paid-undelivered
+uniforms, 6 plans awaiting approval, 10 families with an overdue
+installment); a bogus fingerprint returns `gone` with no write; an invented
+action kind is rejected. Two defects surfaced only there, with `tsc`,
+`eslint` and the build all clean on both: the whole `lovable.app` domain
+302-redirects to `portal.durratalbayaan.edu.om`, and reqwest **drops the
+`Authorization` header across a host change** — an eternal silent 401, now
+fixed by defaulting to the real domain; and the platform's `authDenied`
+throws a `Response`, not an `Error`, so an unauthenticated request answered
+`"[object Response]"` with status 500 — which stops Amin's retry instead of
+triggering it, since he only re-signs-in on 401.
+
+**Not verified**: this repo's Rust does not compile in the session's Linux
+container (no GTK; it's a macOS app), so `school.rs` and `policy.rs` were
+compiled and tested in an isolated crate — 18 tests, all passing, covering
+the token margin, credential completeness, base-URL normalization, the
+summary text, the policy ordering, and the approval text Mona reads. The
+`tools.rs` arms and `commands.rs` commands compile on her Mac at first
+build. **Also not built**: no equivalent of these two tools in `mobile/`
+yet, so Amin on the phone does not see pending work.
 
 ## Non-goals (Phase 0, and generally)
 
